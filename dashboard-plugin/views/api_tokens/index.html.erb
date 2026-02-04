@@ -1,0 +1,99 @@
+<% content_for :title, t('dashboard.api_tokens.title') %>
+
+<div class="row">
+  <div class="col-md-12">
+    <h1><%= t('dashboard.api_tokens.title') %></h1>
+    <p class="lead"><%= t('dashboard.api_tokens.description') %></p>
+  </div>
+</div>
+
+<% if @new_token.present? %>
+  <div class="alert alert-success alert-dismissible" role="alert">
+    <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    <h4 class="alert-heading"><%= t('dashboard.api_tokens.token_created') %></h4>
+    <% if flash[:notice].present? %>
+      <p><%= flash[:notice] %></p>
+    <% end %>
+    <p><%= t('dashboard.api_tokens.copy_warning') %></p>
+    <hr>
+    <div class="input-group mb-3">
+      <input type="text" class="form-control font-monospace" id="new-token-value" value="<%= h(@new_token) %>" readonly>
+      <button class="btn btn-outline-secondary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('new-token-value').value)">
+        <%= t('dashboard.api_tokens.copy') %>
+      </button>
+    </div>
+  </div>
+<% end %>
+
+<div class="row">
+  <div class="col-md-8">
+    <div class="card mb-4">
+      <div class="card-header">
+        <h5 class="mb-0"><%= t('dashboard.api_tokens.your_tokens') %></h5>
+      </div>
+      <% if @tokens.any? %>
+        <table class="table table-striped mb-0">
+          <thead>
+            <tr>
+              <th><%= t('dashboard.api_tokens.name') %></th>
+              <th><%= t('dashboard.api_tokens.created') %></th>
+              <th><%= t('dashboard.api_tokens.last_used') %></th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <% @tokens.each do |token| %>
+              <tr>
+                <td><%= token.name %></td>
+                <td><%= token.created_at ? Time.parse(token.created_at).strftime('%Y-%m-%d %H:%M') : '-' %></td>
+                <td><%= token.last_used_at ? Time.parse(token.last_used_at).strftime('%Y-%m-%d %H:%M') : t('dashboard.api_tokens.never') %></td>
+                <td class="text-end">
+                  <%= button_to api_token_path(token.id),
+                      method: :delete,
+                      class: 'btn btn-sm btn-danger',
+                      data: { turbo_confirm: t('dashboard.api_tokens.revoke_confirm') } do %>
+                    <%= t('dashboard.api_tokens.revoke') %>
+                  <% end %>
+                </td>
+              </tr>
+            <% end %>
+          </tbody>
+        </table>
+      <% else %>
+        <div class="card-body">
+          <p class="text-muted mb-0"><%= t('dashboard.api_tokens.no_tokens') %></p>
+        </div>
+      <% end %>
+    </div>
+  </div>
+
+  <div class="col-md-4">
+    <div class="card">
+      <div class="card-header">
+        <h5 class="mb-0"><%= t('dashboard.api_tokens.create_new') %></h5>
+      </div>
+      <div class="card-body">
+        <%= form_with url: api_tokens_path, method: :post, local: true do |f| %>
+          <div class="mb-3">
+            <%= f.label :name, t('dashboard.api_tokens.token_name'), class: 'form-label' %>
+            <%= f.text_field :name, class: 'form-control', name: 'api_token[name]',
+                placeholder: t('dashboard.api_tokens.name_placeholder'), required: true %>
+            <div class="form-text"><%= t('dashboard.api_tokens.name_help') %></div>
+          </div>
+          <%= f.submit t('dashboard.api_tokens.generate'), class: 'btn btn-primary' %>
+        <% end %>
+      </div>
+    </div>
+
+    <div class="card mt-4">
+      <div class="card-header">
+        <h5 class="mb-0"><%= t('dashboard.api_tokens.usage') %></h5>
+      </div>
+      <div class="card-body">
+        <p><%= t('dashboard.api_tokens.usage_description') %></p>
+        <pre class="bg-light p-2 rounded"><code>curl -H "Authorization: Bearer YOUR_TOKEN" \
+  <%= request.base_url %>/pun/sys/ood-api/api/v1/clusters</code></pre>
+      </div>
+    </div>
+  </div>
+</div>

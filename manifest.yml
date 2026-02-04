@@ -1,0 +1,8 @@
+---
+name: OOD API
+description: REST API for HPC cluster management
+icon: fa://cog
+category: System
+url: /pun/sys/ood-api
+# Hidden from app navigation - API only
+hidden: true

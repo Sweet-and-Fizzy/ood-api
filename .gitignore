@@ -1,0 +1,17 @@
+# Ruby
+vendor/
+.bundle/
+
+# Python
+mcp/venv/
+mcp/__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
