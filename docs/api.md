@@ -9,6 +9,7 @@ The Open OnDemand REST API provides programmatic access to HPC resources through
 - [API Reference](#api-reference)
   - [Clusters](#clusters)
   - [Jobs](#jobs)
+  - [Files](#files)
 - [Error Handling](#error-handling)
 - [Examples](#examples)
 - [Security Considerations](#security-considerations)
@@ -19,7 +20,8 @@ The API provides:
 
 - **Cluster Discovery**: List available HPC clusters and their configurations
 - **Job Management**: Submit, monitor, and cancel batch jobs
-- **Token Authentication**: Secure, user-scoped API tokens
+- **File Operations**: Read, write, and manage files on the cluster
+- **Flexible Authentication**: Apache JWT validation or application-level tokens
 
 Key characteristics:
 
@@ -29,9 +31,36 @@ Key characteristics:
 
 ## Authentication
 
-The API uses Bearer token authentication. Users generate tokens through the OOD web interface and include them in API requests.
+The API supports two authentication methods. Choose based on your site's identity provider.
 
-### Generating a Token
+### Option 1: Apache JWT Validation (Recommended)
+
+For sites using CILogon, Keycloak, or other OIDC providers that publish a JWKS endpoint, Apache can validate JWT bearer tokens directly. This requires configuration in `ood_portal.yml`:
+
+```yaml
+oidc_settings:
+  OIDCOAuthVerifyJwksUri: "https://cilogon.org/oauth2/certs"
+  OIDCOAuthRemoteUserClaim: "sub"
+```
+
+With this configuration:
+1. Obtain a JWT from your identity provider
+2. Include it in the `Authorization` header:
+
+```bash
+curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  https://ondemand.example.com/pun/sys/ood-api/api/v1/clusters
+```
+
+Apache validates the JWT, sets `REMOTE_USER`, and the request proceeds to the API. No browser session is required.
+
+### Option 2: Application-Level Tokens
+
+For sites using Dex or other IdPs without JWKS support, the API provides its own token management.
+
+**Note:** This requires an active browser session to spawn the user's PUN.
+
+#### Generating a Token
 
 1. Log in to Open OnDemand
 2. Navigate to **Settings > API Tokens** (`/settings/api_tokens`)
@@ -39,16 +68,16 @@ The API uses Bearer token authentication. Users generate tokens through the OOD 
 4. Click **Generate Token**
 5. **Copy the token immediately** - it will only be shown once
 
-### Using a Token
+#### Using a Token
 
 Include the token in the `Authorization` header of all API requests:
 
 ```bash
 curl -H "Authorization: Bearer YOUR_TOKEN_HERE" \
-  https://ondemand.example.com/api/v1/clusters
+  https://ondemand.example.com/pun/sys/ood-api/api/v1/clusters
 ```
 
-### Token Storage
+#### Token Storage
 
 Tokens are stored in the user's home directory at `~/.config/ondemand/tokens.json` with `600` permissions (readable only by the owner). Each token includes:
 
@@ -57,7 +86,7 @@ Tokens are stored in the user's home directory at `~/.config/ondemand/tokens.jso
 - Creation timestamp
 - Last used timestamp
 
-### Revoking Tokens
+#### Revoking Tokens
 
 Tokens can be revoked through the web interface at **Settings > API Tokens**. Revoked tokens are immediately invalidated.
 
@@ -332,6 +361,231 @@ curl -X DELETE \
   "https://ondemand.example.com/api/v1/jobs/12345?cluster=owens"
 ```
 
+### Files
+
+The Files API provides access to files on the cluster. Access is restricted to the user's home directory and system temp directories.
+
+**Limits (configurable via environment variables):**
+
+| Limit | Default | Environment Variable |
+|-------|---------|---------------------|
+| Maximum file read | 10 MB | `OOD_API_MAX_FILE_READ` |
+| Maximum file write | 50 MB | `OOD_API_MAX_FILE_WRITE` |
+
+Values must be specified in bytes. Example: To allow 100 MB uploads, set `OOD_API_MAX_FILE_WRITE=104857600`.
+
+#### List Directory / Get File Info
+
+List contents of a directory or get metadata for a single file.
+
+```
+GET /api/v1/files?path=:path
+```
+
+**Parameters:**
+- `path` (query, required) - Path to list. Supports `~` expansion.
+
+**Response (directory):**
+```json
+{
+  "data": [
+    {
+      "path": "/home/alice/project/script.sh",
+      "name": "script.sh",
+      "directory": false,
+      "size": 1234,
+      "mode": 33188,
+      "owner": "alice",
+      "group": "users",
+      "mtime": "2024-01-15T10:30:00Z"
+    },
+    {
+      "path": "/home/alice/project/data",
+      "name": "data",
+      "directory": true,
+      "size": null,
+      "mode": 16877,
+      "owner": "alice",
+      "group": "users",
+      "mtime": "2024-01-14T09:00:00Z"
+    }
+  ]
+}
+```
+
+**Response (single file):**
+```json
+{
+  "data": {
+    "path": "/home/alice/script.sh",
+    "name": "script.sh",
+    "directory": false,
+    "size": 1234,
+    "mode": 33188,
+    "owner": "alice",
+    "group": "users",
+    "mtime": "2024-01-15T10:30:00Z"
+  }
+}
+```
+
+**Example:**
+```bash
+# List home directory
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/files?path=~"
+
+# Get info for specific file
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/files?path=/home/alice/script.sh"
+```
+
+#### Read File
+
+Read the contents of a file.
+
+```
+GET /api/v1/files/content?path=:path
+```
+
+**Parameters:**
+- `path` (query, required) - Path to the file
+
+**Response:**
+- Content-Type: `application/octet-stream`
+- Body: Raw file contents
+
+**Errors:**
+- 400 - Cannot read directory, or file too large (exceeds configured max, default 10 MB)
+- 403 - Permission denied or path not in allowed directories
+- 404 - File not found
+
+**Example:**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/files/content?path=~/script.sh"
+```
+
+#### Write File
+
+Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Parent directories are created automatically.
+
+```
+PUT /api/v1/files?path=:path
+Content-Type: application/octet-stream
+```
+
+**Parameters:**
+- `path` (query, required) - Path to the file
+
+**Request Body:** Raw file contents (max 50 MB)
+
+**Response:**
+```json
+{
+  "data": {
+    "path": "/home/alice/newfile.txt",
+    "name": "newfile.txt",
+    "directory": false,
+    "size": 42,
+    ...
+  }
+}
+```
+
+**Errors:**
+- 400 - Cannot write to directory
+- 403 - Permission denied or path not in allowed directories
+- 413 - File too large (exceeds configured max, default 50 MB)
+- 507 - No space left on device
+
+**Example:**
+```bash
+curl -X PUT \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-binary @local_file.txt \
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/files?path=~/remote_file.txt"
+```
+
+#### Create Directory
+
+Create a new directory.
+
+```
+POST /api/v1/files?path=:path&type=directory
+```
+
+**Parameters:**
+- `path` (query, required) - Path for the new directory
+- `type` (query, required) - Must be `directory`
+
+**Response (201 Created):**
+```json
+{
+  "data": {
+    "path": "/home/alice/new_folder",
+    "name": "new_folder",
+    "directory": true,
+    ...
+  }
+}
+```
+
+**Example:**
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/files?path=~/new_folder&type=directory"
+```
+
+#### Delete File or Directory
+
+Delete a file or directory.
+
+```
+DELETE /api/v1/files?path=:path[&recursive=true]
+```
+
+**Parameters:**
+- `path` (query, required) - Path to delete
+- `recursive` (query, optional) - Set to `true` to delete non-empty directories
+
+**Response:**
+```json
+{
+  "data": {
+    "path": "/home/alice/old_file.txt",
+    "deleted": true
+  }
+}
+```
+
+**Errors:**
+- 400 - Directory not empty (when `recursive` is not `true`)
+- 403 - Permission denied or path not in allowed directories
+- 404 - Path not found
+
+**Example:**
+```bash
+# Delete a file
+curl -X DELETE \
+  -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/files?path=~/old_file.txt"
+
+# Delete a directory recursively
+curl -X DELETE \
+  -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/files?path=~/old_folder&recursive=true"
+```
+
+#### Path Restrictions
+
+For security, file operations are restricted to:
+- User's home directory (`~` or `/home/username`)
+- System temp directories (`/tmp`)
+
+Attempts to access paths outside these directories return 403 Forbidden.
+
 ## Error Handling
 
 The API uses standard HTTP status codes:
@@ -339,13 +593,16 @@ The API uses standard HTTP status codes:
 | Code | Meaning |
 |------|---------|
 | 200 | Success |
-| 201 | Created (job submitted) |
+| 201 | Created (job submitted, directory created) |
 | 400 | Bad Request (missing/invalid parameters) |
 | 401 | Unauthorized (missing/invalid token) |
-| 404 | Not Found (cluster/job doesn't exist) |
+| 403 | Forbidden (permission denied, path not allowed) |
+| 404 | Not Found (resource doesn't exist) |
+| 413 | Payload Too Large (file exceeds size limit) |
 | 422 | Unprocessable Entity (job submission/cancellation failed) |
 | 500 | Internal Server Error |
 | 503 | Service Unavailable (scheduler communication error) |
+| 507 | Insufficient Storage (no space left on device) |
 
 **Error Response Format:**
 ```json
@@ -361,9 +618,12 @@ The API uses standard HTTP status codes:
 |-------|-----------|-------------|
 | `bad_request` | 400 | Missing or invalid parameters |
 | `unauthorized` | 401 | Invalid or missing API token |
+| `forbidden` | 403 | Permission denied or path not in allowed directories |
 | `not_found` | 404 | Resource not found |
+| `payload_too_large` | 413 | File exceeds maximum size limit |
 | `unprocessable_entity` | 422 | Request understood but could not be processed |
 | `service_unavailable` | 503 | Scheduler communication error |
+| `insufficient_storage` | 507 | No space left on device |
 
 ## Examples
 

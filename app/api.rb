@@ -3,13 +3,16 @@
 require 'sinatra/base'
 require 'json'
 require 'etc'
+require 'fileutils'
 require 'ood_core'
 require_relative '../lib/api_token'
 
 module OodApi
   class App < Sinatra::Base
-    # Load clusters from OOD_CLUSTERS environment variable or default location
+    # Configuration via environment variables
     CLUSTERS_PATH = ENV.fetch('OOD_CLUSTERS', '/etc/ood/config/clusters.d')
+    MAX_FILE_READ = ENV.fetch('OOD_API_MAX_FILE_READ', 10 * 1024 * 1024).to_i   # Default 10 MB
+    MAX_FILE_WRITE = ENV.fetch('OOD_API_MAX_FILE_WRITE', 50 * 1024 * 1024).to_i # Default 50 MB
 
     def self.clusters
       @clusters ||= OodCore::Clusters.load_file(CLUSTERS_PATH)
@@ -23,7 +26,7 @@ module OodApi
     # CORS headers for API access
     before do
       headers['Access-Control-Allow-Origin'] = '*'
-      headers['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS'
+      headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
       headers['Access-Control-Allow-Headers'] = 'Authorization, Content-Type'
     end
 
@@ -148,11 +151,145 @@ module OodApi
       halt_unprocessable("Failed to cancel job: #{e.message}")
     end
 
+    # ============ Files ============
+
+    # List directory contents or get file metadata
+    get '/api/v1/files' do
+      halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
+
+      path = normalize_path(params[:path])
+      validate_path!(path)
+      halt_not_found('Path not found') unless path.exist?
+
+      if path.directory?
+        # Sort: directories first, then by name (case-insensitive)
+        children = path.children.select(&:readable?).sort_by { |p| [p.directory? ? 0 : 1, p.basename.to_s.downcase] }
+        files = children.map { |p| file_json(p) }
+        { data: files }.to_json
+      else
+        { data: file_json(path) }.to_json
+      end
+    rescue Errno::ENOENT
+      halt_not_found('Path not found')
+    rescue Errno::EACCES
+      halt_forbidden('Permission denied')
+    end
+
+    # Read file contents
+    get '/api/v1/files/content' do
+      halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
+
+      path = normalize_path(params[:path])
+      validate_path!(path)
+      halt_not_found('File not found') unless path.exist?
+      halt_bad_request('Cannot read directory contents') if path.directory?
+      halt_forbidden('Permission denied') unless path.readable?
+
+      # Limit file size to prevent memory issues
+      halt_bad_request("File too large (max #{MAX_FILE_READ} bytes)") if path.size > MAX_FILE_READ
+
+      content_type 'application/octet-stream'
+      path.read
+    rescue Errno::ENOENT
+      halt_not_found('File not found')
+    rescue Errno::EACCES
+      halt_forbidden('Permission denied')
+    end
+
+    # Create file or directory
+    post '/api/v1/files' do
+      halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
+
+      path = normalize_path(params[:path])
+      validate_path!(path)
+
+      if params[:type] == 'directory'
+        halt_bad_request('Path already exists') if path.exist?
+        path.mkpath
+      else
+        halt_bad_request('Use PUT to write file contents') unless params[:touch]
+        FileUtils.touch(path)
+      end
+
+      status 201
+      { data: file_json(path) }.to_json
+    rescue Errno::EACCES
+      halt_forbidden('Permission denied')
+    rescue Errno::EEXIST
+      halt_bad_request('Path already exists')
+    end
+
+    # Write file contents
+    put '/api/v1/files' do
+      halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
+
+      path = normalize_path(params[:path])
+      validate_path!(path)
+      halt_bad_request('Cannot write to directory') if path.exist? && path.directory?
+
+      # Limit request body size to prevent memory exhaustion
+      content_length = request.content_length.to_i
+      if content_length > MAX_FILE_WRITE
+        halt_error(413, 'payload_too_large', "File too large (max #{MAX_FILE_WRITE} bytes)")
+      end
+
+      # Ensure parent directory exists
+      path.parent.mkpath unless path.parent.exist?
+
+      content = request.body.read(MAX_FILE_WRITE + 1) || ''
+      if content.bytesize > MAX_FILE_WRITE
+        halt_error(413, 'payload_too_large', "File too large (max #{MAX_FILE_WRITE} bytes)")
+      end
+      path.write(content)
+
+      { data: file_json(path) }.to_json
+    rescue Errno::EACCES
+      halt_forbidden('Permission denied')
+    rescue Errno::ENOSPC
+      halt_error(507, 'insufficient_storage', 'No space left on device')
+    end
+
+    # Delete file or directory
+    delete '/api/v1/files' do
+      halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
+
+      path = normalize_path(params[:path])
+      validate_path!(path)
+      halt_not_found('Path not found') unless path.exist?
+
+      if path.directory?
+        if params[:recursive] == 'true'
+          FileUtils.rm_rf(path)
+        else
+          halt_bad_request('Directory not empty') unless path.children.empty?
+          path.rmdir
+        end
+      else
+        path.delete
+      end
+
+      { data: { path: path.to_s, deleted: true } }.to_json
+    rescue Errno::ENOENT
+      halt_not_found('Path not found')
+    rescue Errno::EACCES
+      halt_forbidden('Permission denied')
+    rescue Errno::ENOTEMPTY
+      halt_bad_request('Directory not empty')
+    end
+
     # ============ Helpers ============
 
     private
 
     def authenticate!
+      # Option 1: Apache already validated JWT and set REMOTE_USER
+      # In this case, we trust Apache's authentication
+      if request.env['REMOTE_USER'] && !request.env['REMOTE_USER'].empty?
+        @authenticated_via = :apache
+        return
+      end
+
+      # Option 2: Application-level token authentication
       auth_header = request.env['HTTP_AUTHORIZATION']
       halt_unauthorized unless auth_header&.start_with?('Bearer ')
 
@@ -162,6 +299,7 @@ module OodApi
 
       # Update last used timestamp (async would be better but keep it simple)
       OodApi::ApiToken.touch(@current_token)
+      @authenticated_via = :token
     end
 
     def current_user
@@ -227,6 +365,83 @@ module OodApi
 
     def halt_service_unavailable(message)
       halt_error(503, 'service_unavailable', message)
+    end
+
+    def halt_forbidden(message)
+      halt_error(403, 'forbidden', message)
+    end
+
+    # ============ File Helpers ============
+
+    def normalize_path(path_str)
+      # Expand ~ to home directory, normalize path
+      expanded = File.expand_path(path_str)
+      Pathname.new(expanded)
+    end
+
+    def validate_path!(path)
+      # Security: prevent path traversal and restrict to safe locations
+      # By default, allow access to user's home directory and temp directories
+      allowed_roots = allowed_path_roots
+
+      # Check if path is under an allowed root
+      real_path = path.exist? ? path.realpath : find_real_parent(path)
+      allowed = allowed_roots.any? { |root| path_under?(real_path, root) }
+      halt_forbidden('Access denied: path not in allowed directories') unless allowed
+    end
+
+    def allowed_path_roots
+      roots = []
+
+      # Home directory
+      home = Pathname.new(Dir.home)
+      roots << (home.exist? ? home.realpath : home)
+
+      # System temp directories - resolve symlinks for cross-platform compatibility
+      ['/tmp', Dir.tmpdir].each do |tmp|
+        tmp_path = Pathname.new(tmp)
+        roots << (tmp_path.exist? ? tmp_path.realpath : tmp_path)
+      end
+
+      roots.uniq
+    end
+
+    def path_under?(child, parent)
+      child_str = child.to_s
+      parent_str = parent.to_s
+      return true if child_str == parent_str
+
+      child_str.start_with?(parent_str) && child_str[parent_str.length] == '/'
+    end
+
+    def find_real_parent(path)
+      # For non-existent paths, find the first existing parent's realpath
+      path.ascend do |p|
+        return p.realpath if p.exist?
+      end
+      Pathname.new('/')
+    end
+
+    def file_json(path)
+      stat = path.stat
+      build_file_hash(path, stat)
+    rescue Errno::ENOENT
+      { path: path.to_s, name: path.basename.to_s, error: 'not found' }
+    rescue ArgumentError
+      build_file_hash(path, stat, use_ids: true)
+    end
+
+    def build_file_hash(path, stat, use_ids: false)
+      {
+        path:      path.to_s,
+        name:      path.basename.to_s,
+        directory: path.directory?,
+        size:      path.directory? ? nil : stat.size,
+        mode:      stat.mode,
+        owner:     use_ids ? stat.uid.to_s : Etc.getpwuid(stat.uid).name,
+        group:     use_ids ? stat.gid.to_s : Etc.getgrgid(stat.gid).name,
+        mtime:     stat.mtime.iso8601
+      }
     end
   end
 end

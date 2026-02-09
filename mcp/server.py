@@ -12,6 +12,10 @@ Tools provided:
 - get_job: Get details about a specific job
 - submit_job: Submit a new batch job
 - cancel_job: Cancel a running/queued job
+- list_files: List directory contents
+- read_file: Read file contents
+- write_file: Write content to a file
+- delete_file: Delete a file or directory
 
 Configuration (environment variables):
 - OOD_API_URL: Base URL of OOD instance (default: http://localhost:9292)
@@ -40,7 +44,7 @@ if not OOD_API_TOKEN:
 # Initialize FastMCP server
 mcp = FastMCP(
     "ood-hpc",
-    instructions="Open OnDemand HPC cluster management tools. Use these tools to list clusters, view and submit jobs, and manage HPC workloads."
+    instructions="Open OnDemand HPC cluster management tools. Use these tools to list clusters, view and submit jobs, manage HPC workloads, and access files on the cluster."
 )
 
 
@@ -228,6 +232,156 @@ def cancel_job(cluster_id: str, job_id: str) -> str:
     if "data" in result:
         return f"Job {job_id} has been cancelled."
     return f"Error cancelling job: {result.get('message', 'Unknown error')}"
+
+
+# ============ File Operations ============
+
+
+def api_request_raw(method: str, path: str, body: bytes | None = None) -> tuple[int, bytes]:
+    """Make a raw request to the OOD API, returning status code and body."""
+    url = f"{OOD_API_URL}{path}"
+    headers = {
+        "Authorization": f"Bearer {OOD_API_TOKEN}",
+    }
+
+    req = urllib.request.Request(url, data=body, headers=headers, method=method)
+
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as e:
+        return e.code, e.read()
+    except urllib.error.URLError as e:
+        return 0, str(e.reason).encode("utf-8")
+
+
+@mcp.tool()
+def list_files(path: str) -> str:
+    """
+    List contents of a directory on the cluster.
+
+    Args:
+        path: The directory path to list (e.g., '/home/user', '~/projects')
+    """
+    encoded_path = urllib.parse.quote(path, safe='')
+    result = api_request("GET", f"/api/v1/files?path={encoded_path}")
+
+    if "data" in result:
+        files = result["data"]
+        if isinstance(files, dict):
+            # Single file info
+            f = files
+            return f"""File: {f['path']}
+Type: {'directory' if f.get('directory') else 'file'}
+Size: {f.get('size', 'N/A')} bytes
+Owner: {f.get('owner', 'N/A')}
+Modified: {f.get('mtime', 'N/A')}"""
+
+        if not files:
+            return f"Directory '{path}' is empty."
+
+        lines = [f"Contents of {path}:", ""]
+        for f in files:
+            type_indicator = "📁" if f.get("directory") else "📄"
+            size = f"({f['size']} bytes)" if f.get("size") else ""
+            lines.append(f"{type_indicator} {f['name']} {size}")
+        return "\n".join(lines)
+
+    return f"Error: {result.get('message', 'Failed to list files')}"
+
+
+@mcp.tool()
+def read_file(path: str) -> str:
+    """
+    Read the contents of a file on the cluster.
+
+    Args:
+        path: The file path to read (e.g., '/home/user/script.sh', '~/data.txt')
+    """
+    encoded_path = urllib.parse.quote(path, safe='')
+    status, body = api_request_raw("GET", f"/api/v1/files/content?path={encoded_path}")
+
+    if status == 200:
+        try:
+            return body.decode("utf-8")
+        except UnicodeDecodeError:
+            return f"[Binary file, {len(body)} bytes]"
+    elif status == 404:
+        return f"Error: File not found: {path}"
+    elif status == 403:
+        return f"Error: Permission denied: {path}"
+    elif status == 400:
+        try:
+            error = json.loads(body.decode("utf-8"))
+            return f"Error: {error.get('message', 'Bad request')}"
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return f"Error: Bad request"
+    else:
+        return f"Error reading file (status {status})"
+
+
+@mcp.tool()
+def write_file(path: str, content: str) -> str:
+    """
+    Write content to a file on the cluster. Creates the file if it doesn't exist.
+
+    Args:
+        path: The file path to write to (e.g., '/home/user/script.sh')
+        content: The content to write to the file
+    """
+    encoded_path = urllib.parse.quote(path, safe='')
+    status, body = api_request_raw(
+        "PUT",
+        f"/api/v1/files?path={encoded_path}",
+        content.encode("utf-8")
+    )
+
+    if status == 200:
+        return f"Successfully wrote {len(content)} bytes to {path}"
+    elif status == 403:
+        return f"Error: Permission denied: {path}"
+    else:
+        try:
+            error = json.loads(body.decode("utf-8"))
+            return f"Error: {error.get('message', 'Failed to write file')}"
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return f"Error writing file (status {status})"
+
+
+@mcp.tool()
+def delete_file(path: str, recursive: bool = False) -> str:
+    """
+    Delete a file or directory on the cluster.
+
+    Args:
+        path: The path to delete
+        recursive: If True, delete directories and their contents recursively
+    """
+    encoded_path = urllib.parse.quote(path, safe='')
+    recursive_param = "&recursive=true" if recursive else ""
+    result = api_request("DELETE", f"/api/v1/files?path={encoded_path}{recursive_param}")
+
+    if "data" in result and result["data"].get("deleted"):
+        return f"Successfully deleted: {path}"
+
+    return f"Error: {result.get('message', 'Failed to delete')}"
+
+
+@mcp.tool()
+def create_directory(path: str) -> str:
+    """
+    Create a new directory on the cluster.
+
+    Args:
+        path: The directory path to create (e.g., '/home/user/new_folder')
+    """
+    encoded_path = urllib.parse.quote(path, safe='')
+    result = api_request("POST", f"/api/v1/files?path={encoded_path}&type=directory")
+
+    if "data" in result:
+        return f"Successfully created directory: {path}"
+
+    return f"Error: {result.get('message', 'Failed to create directory')}"
 
 
 if __name__ == "__main__":
