@@ -1,6 +1,7 @@
 ---
 name: OOD API
 description: REST API for HPC cluster management
+role: passenger_app
 icon: fa://cog
 category: System
 url: /pun/sys/ood-api
