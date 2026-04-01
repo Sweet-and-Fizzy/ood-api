@@ -2,7 +2,7 @@
 
 ## Overview
 
-OOD API is an Open OnDemand Passenger app that provides a REST API and Model Context Protocol (MCP) server for programmatic access to HPC cluster resources. It is designed for researchers, developers, and AI assistants that need to interact with HPC systems without a browser — submitting jobs, managing files, and querying clusters via HTTP or MCP.
+OOD API is an Open OnDemand Passenger app that provides a REST API and Model Context Protocol (MCP) server for programmatic access to HPC cluster resources. It is designed for researchers, developers, and AI assistants that need to interact with HPC systems without a browser — submitting jobs, managing files, querying clusters, and inspecting the runtime environment via HTTP or MCP.
 
 An optional Dashboard plugin provides a token management UI for sites using application-level authentication.
 
@@ -15,7 +15,7 @@ This is a headless API with no end-user UI. The optional Dashboard plugin adds a
 
 ## Features
 
-- REST API exposing clusters, jobs, and file operations via HTTP
+- REST API exposing clusters, jobs, files, and environment variables via HTTP
 - MCP server enabling AI assistants (Claude, etc.) to interact with HPC resources
 - Two authentication modes: Apache JWT validation (CILogon, Keycloak) or application-level tokens
 - Per-user isolation via OOD's existing PUN architecture

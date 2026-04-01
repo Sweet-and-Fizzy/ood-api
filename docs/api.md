@@ -1,6 +1,6 @@
 # Open OnDemand REST API
 
-The Open OnDemand REST API provides programmatic access to HPC resources through OOD's scheduler abstraction layer. This API is designed for AI agents, automation scripts, and external tools that need to submit and manage jobs without using the web interface.
+The Open OnDemand REST API provides programmatic access to HPC resources through OOD's scheduler abstraction layer. This API is designed for AI agents, automation scripts, and external tools that need to manage jobs, files, and the runtime environment without using the web interface.
 
 ## Table of Contents
 
@@ -22,6 +22,7 @@ The API provides:
 - **Cluster Discovery**: List available HPC clusters and their configurations
 - **Job Management**: Submit, monitor, and cancel batch jobs
 - **File Operations**: Read, write, and manage files on the cluster
+- **Environment Discovery**: Inspect allowed environment variables (modules, scheduler settings, paths)
 - **Flexible Authentication**: Apache JWT validation or application-level tokens
 
 Key characteristics:
