@@ -10,6 +10,7 @@ The Open OnDemand REST API provides programmatic access to HPC resources through
   - [Clusters](#clusters)
   - [Jobs](#jobs)
   - [Files](#files)
+  - [Environment Variables](#environment-variables)
 - [Error Handling](#error-handling)
 - [Examples](#examples)
 - [Security Considerations](#security-considerations)
@@ -585,6 +586,104 @@ For security, file operations are restricted to:
 - System temp directories (`/tmp`)
 
 Attempts to access paths outside these directories return 403 Forbidden.
+
+### Environment Variables
+
+The Environment Variables API exposes environment variables from the user's PUN process, filtered through a configurable allowlist. This is useful for scripts and automation that need to discover the runtime environment (loaded modules, scheduler settings, paths).
+
+**Security:** Only variables matching the allowlist are exposed. See [Configuration](#environment-variable-allowlist) for details.
+
+#### List Environment Variables
+
+Returns all allowed environment variables as a flat key-value map, sorted alphabetically.
+
+```
+GET /api/v1/env[?prefix=:prefix]
+```
+
+**Parameters:**
+- `prefix` (query, optional) - Filter to variables starting with this prefix. Applied after the allowlist (can only narrow results, never widen).
+
+**Response:**
+```json
+{
+  "data": {
+    "HOME": "/home/alice",
+    "MODULEPATH": "/opt/modules",
+    "SLURM_VERSION": "23.02.6"
+  }
+}
+```
+
+**Example:**
+```bash
+# Get all allowed env vars
+curl -H "Authorization: Bearer $TOKEN" \
+  https://ondemand.example.com/pun/sys/ood-api/api/v1/env
+
+# Get only SLURM vars
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/env?prefix=SLURM_"
+```
+
+#### Get Single Environment Variable
+
+Returns a single environment variable by name. Response shape differs from the bulk endpoint (uses `name` + `value` instead of a flat map).
+
+```
+GET /api/v1/env/:name
+```
+
+**Parameters:**
+- `name` (path, required) - Variable name. Must be path-encoded if it contains non-standard characters.
+
+**Response (200):**
+```json
+{
+  "data": {
+    "name": "HOME",
+    "value": "/home/alice"
+  }
+}
+```
+
+**Errors:**
+- 403 - Variable is not in the allowlist
+- 404 - Variable is in the allowlist but not set in the environment
+
+**Example:**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  https://ondemand.example.com/pun/sys/ood-api/api/v1/env/HOME
+```
+
+#### Environment Variable Allowlist
+
+By default, the following variables are exposed:
+
+**Prefix matches** (any variable starting with):
+`SLURM_`, `PBS_`, `SGE_`, `LSB_`, `LMOD_`, `MODULE`, `OOD_`
+
+**Exact matches:**
+`HOME`, `USER`, `LOGNAME`, `SHELL`, `PATH`, `LANG`, `LC_ALL`, `TERM`, `HOSTNAME`, `SCRATCH`, `WORK`, `TMPDIR`, `CLUSTER`, `MANPATH`
+
+Sites can override the allowlist by setting the `OOD_API_ENV_ALLOWLIST` environment variable:
+
+```
+OOD_API_ENV_ALLOWLIST=SLURM_*,PBS_*,HOME,USER,SCRATCH,CUSTOM_VAR
+```
+
+Rules:
+- Entries ending in `*` are prefix matches (the `*` is stripped)
+- A bare `*` entry is ignored (would match everything)
+- All other entries are exact matches
+- Matching is case-sensitive
+- Setting this **replaces** the defaults entirely
+- Setting to empty (`OOD_API_ENV_ALLOWLIST=`) exposes nothing
+- Whitespace around entries is stripped; duplicates are ignored
+- Variable names containing commas are not supported
+
+**Production sites should review the default allowlist** and set `OOD_API_ENV_ALLOWLIST` explicitly if any `OOD_*` variables contain sensitive values.
 
 ## Error Handling
 
