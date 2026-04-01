@@ -14,6 +14,11 @@ module OodApi
     MAX_FILE_READ = ENV.fetch('OOD_API_MAX_FILE_READ', 10 * 1024 * 1024).to_i   # Default 10 MB
     MAX_FILE_WRITE = ENV.fetch('OOD_API_MAX_FILE_WRITE', 50 * 1024 * 1024).to_i # Default 50 MB
 
+    # Default environment variable allowlist
+    DEFAULT_ENV_PREFIXES = %w[SLURM_ PBS_ SGE_ LSB_ LMOD_ MODULE OOD_].freeze
+    DEFAULT_ENV_EXACT = %w[HOME USER LOGNAME SHELL PATH LANG LC_ALL TERM HOSTNAME
+                           SCRATCH WORK TMPDIR CLUSTER MANPATH].freeze
+
     def self.clusters
       @clusters ||= OodCore::Clusters.load_file(CLUSTERS_PATH)
     end
@@ -277,6 +282,28 @@ module OodApi
       halt_bad_request('Directory not empty')
     end
 
+    # ============ Environment Variables ============
+
+    get '/api/v1/env' do
+      vars = filtered_env
+
+      if params[:prefix] && !params[:prefix].empty?
+        prefix = params[:prefix]
+        vars = vars.select { |name, _| name.start_with?(prefix) }
+      end
+
+      { data: vars }.to_json
+    end
+
+    get '/api/v1/env/:name' do
+      name = params[:name]
+
+      halt_forbidden('Access denied: variable not in allowlist') unless env_allowed?(name)
+      halt_not_found('Environment variable not found') unless ENV.key?(name)
+
+      { data: { name: name, value: ENV[name] } }.to_json
+    end
+
     # ============ Helpers ============
 
     private
@@ -442,6 +469,41 @@ module OodApi
         group:     use_ids ? stat.gid.to_s : Etc.getgrgid(stat.gid).name,
         mtime:     stat.mtime.iso8601
       }
+    end
+
+    # ============ Env Helpers ============
+
+    def env_allowlist
+      custom = ENV['OOD_API_ENV_ALLOWLIST']
+      if custom
+        entries = custom.split(',').map(&:strip).reject(&:empty?).uniq
+        prefixes = []
+        exact = []
+        entries.each do |entry|
+          if entry.end_with?('*')
+            prefix = entry.chomp('*')
+            # Reject bare '*' — empty prefix would match everything (full ENV leak)
+            prefixes << prefix unless prefix.empty?
+          else
+            exact << entry
+          end
+        end
+        { prefixes: prefixes, exact: exact }
+      else
+        { prefixes: DEFAULT_ENV_PREFIXES, exact: DEFAULT_ENV_EXACT }
+      end
+    end
+
+    def env_allowed?(name)
+      list = env_allowlist
+      list[:exact].include?(name) || list[:prefixes].any? { |p| name.start_with?(p) }
+    end
+
+    def filtered_env
+      list = env_allowlist
+      ENV.select { |name, _|
+        list[:exact].include?(name) || list[:prefixes].any? { |p| name.start_with?(p) }
+      }.sort.to_h
     end
   end
 end

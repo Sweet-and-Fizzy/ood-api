@@ -156,6 +156,15 @@ A successful response confirms the API is running.
 | `OOD_API_URL` | Yes | Base URL of the OOD API |
 | `OOD_API_TOKEN` | Yes | Bearer token for authentication |
 
+### Environment Variables (API)
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `OOD_CLUSTERS` | No | `/etc/ood/config/clusters.d` | Path to cluster config directory |
+| `OOD_API_MAX_FILE_READ` | No | `10485760` (10 MB) | Maximum file read size in bytes |
+| `OOD_API_MAX_FILE_WRITE` | No | `52428800` (50 MB) | Maximum file write size in bytes |
+| `OOD_API_ENV_ALLOWLIST` | No | See [docs/api.md](docs/api.md#environment-variable-allowlist) | Comma-separated allowlist for env vars endpoint. Entries ending in `*` are prefix matches. |
+
 ## Architecture
 
 ```
@@ -223,6 +232,8 @@ A successful response confirms the API is running.
 | POST | `/api/v1/files?path=X&type=directory` | Create directory |
 | PUT | `/api/v1/files?path=X` | Write file contents |
 | DELETE | `/api/v1/files?path=X` | Delete file or directory |
+| GET | `/api/v1/env` | List allowed environment variables |
+| GET | `/api/v1/env/:name` | Get single environment variable |
 
 See [docs/api.md](docs/api.md) for full API documentation.
 
