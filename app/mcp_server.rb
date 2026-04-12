@@ -39,7 +39,13 @@ module OodApi
   end
 
   def self.build_mcp_transport(server = build_mcp_server)
-    MCP::Server::Transports::StreamableHTTPTransport.new(server)
+    # Stateless mode: each request is independent, no in-memory sessions.
+    # Required because OOD's PUN recycles idle Passenger processes
+    # (passenger_min_instances 0), which destroys in-memory state.
+    # Stateless supports all tool calls and resource reads; the only
+    # thing lost is server-initiated notifications (tools/list changed),
+    # which we don't use since our tool list is static.
+    MCP::Server::Transports::StreamableHTTPTransport.new(server, stateless: true)
   end
 
   def self.mcp_rack_app(transport = build_mcp_transport)
