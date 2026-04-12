@@ -2,7 +2,7 @@
 
 ## Overview
 
-OOD API is an Open OnDemand Passenger app that provides a REST API and Model Context Protocol (MCP) server for programmatic access to HPC cluster resources. It is designed for researchers, developers, and AI assistants that need to interact with HPC systems without a browser — submitting jobs, managing files, querying clusters, and inspecting the runtime environment via HTTP or MCP.
+OOD API is an Open OnDemand Passenger app that provides a REST API and built-in Model Context Protocol (MCP) endpoint for programmatic access to HPC cluster resources. It is designed for researchers, developers, and AI assistants that need to interact with HPC systems without a browser — submitting jobs, managing files, querying clusters, and inspecting the runtime environment via HTTP or MCP. The MCP endpoint is mounted alongside the REST API at `/mcp` — no separate process or language runtime required.
 
 An optional Dashboard plugin provides a token management UI for sites using application-level authentication.
 
@@ -16,7 +16,7 @@ This is a headless API with no end-user UI. The optional Dashboard plugin adds a
 ## Features
 
 - REST API exposing clusters, jobs, files, and environment variables via HTTP
-- MCP server enabling AI assistants (Claude, etc.) to interact with HPC resources
+- Built-in MCP endpoint enabling AI assistants (Claude, etc.) to interact with HPC resources
 - Two authentication modes: Apache JWT validation (CILogon, Keycloak) or application-level tokens
 - Per-user isolation via OOD's existing PUN architecture
 - Optional Dashboard plugin for token management (OOD 4.0+)
@@ -35,7 +35,6 @@ No compute node software is required. The API runs on the OOD host and communica
 
 ### Optional
 
-- Python 3.10+ (for MCP server)
 - `mod_auth_openidc` (already included with OOD; needed for Apache JWT validation)
 
 ## App Installation
@@ -99,27 +98,32 @@ chmod 600 ~/.config/ondemand/tokens.json
 echo "Your token: $TOKEN"
 ```
 
-### 3. Install the MCP Server (Optional)
+### 3. MCP Endpoint
+
+The MCP server is built into the app at `/mcp`. No separate installation needed.
+
+Configure your MCP client to connect via HTTP:
+
+**Claude Code CLI:**
 
 ```bash
-cd /var/www/ood/apps/sys/ood-api/mcp
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+claude mcp add ood-hpc --transport http https://ondemand.example.edu/pun/sys/ood-api/mcp
 ```
 
-Configure your MCP client:
+**Claude Desktop (via mcp-remote):**
 
 ```json
 {
-  "command": "/var/www/ood/apps/sys/ood-api/mcp/venv/bin/python",
-  "args": ["/var/www/ood/apps/sys/ood-api/mcp/server.py"],
-  "env": {
-    "OOD_API_URL": "https://ondemand.example.edu/pun/sys/ood-api",
-    "OOD_API_TOKEN": "your-token-here"
+  "mcpServers": {
+    "ood-hpc": {
+      "command": "npx",
+      "args": ["mcp-remote", "https://ondemand.example.edu/pun/sys/ood-api/mcp"]
+    }
   }
 }
 ```
+
+Authentication uses the same OIDC flow as the OOD portal — no separate tokens needed for MCP access. In production, Apache + mod_auth_openidc protects the `/mcp` endpoint. For local development, see `bin/dev`.
 
 ### 4. Verify
 
@@ -149,13 +153,6 @@ A successful response confirms the API is running.
 | OIDC Session | 8 hours inactivity / 8 hours max | `oidc_session_inactivity_timeout` in `ood_portal.yml` |
 | PUN Cleanup | Every 2 hours | Edit `/etc/cron.d/ood` |
 
-### Environment Variables (MCP Server)
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OOD_API_URL` | Yes | Base URL of the OOD API |
-| `OOD_API_TOKEN` | Yes | Bearer token for authentication |
-
 ### Environment Variables (API)
 
 | Variable | Required | Default | Description |
@@ -164,6 +161,7 @@ A successful response confirms the API is running.
 | `OOD_API_MAX_FILE_READ` | No | `10485760` (10 MB) | Maximum file read size in bytes |
 | `OOD_API_MAX_FILE_WRITE` | No | `52428800` (50 MB) | Maximum file write size in bytes |
 | `OOD_API_ENV_ALLOWLIST` | No | See [docs/api.md](docs/api.md#environment-variable-allowlist) | Comma-separated allowlist for env vars endpoint. Entries ending in `*` are prefix matches. |
+| `OOD_API_CONTEXT_PATH` | No | `/etc/ood/config/agents.d` | Path to directory containing site-specific agent context files (*.md) |
 
 ## Architecture
 
@@ -173,42 +171,33 @@ A successful response confirms the API is running.
 │   Postman    │ │   CI/CD      │ │   (Claude)   │
 └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
        │                │                │
-       │                │                │ MCP Protocol
-       │                │                ▼
-       │                │       ┌──────────────────┐
-       │                │       │    MCP Server    │
-       │                │       │  (mcp/server.py) │
-       │                │       └────────┬─────────┘
-       │                │                │
+       │   HTTP + Bearer Token           │ MCP Protocol (HTTP)
        └────────────────┴────────────────┘
                         │
-                        │ HTTP + Bearer Token
                         ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                         Apache                              │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │              mod_auth_openidc                       │    │
-│  │                                                     │    │
-│  │  Option A: Validate JWT via JWKS (CILogon, etc.)    │    │
-│  │  Option B: Pass through to app-level auth           │    │
-│  └─────────────────────────────────────────────────────┘    │
+│           mod_auth_openidc (OIDC / JWT validation)          │
 └─────────────────────────────┬───────────────────────────────┘
                               │ REMOTE_USER
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│                      pun_proxy.lua                          │
-│           (maps user → PUN socket, spawns if needed)        │
-└─────────────────────────────┬───────────────────────────────┘
-                              │
-┌─────────────────────────────▼───────────────────────────────┐
 │                   Per-User Nginx (PUN)                      │
-│  ┌─────────────────────────────────────────────────────┐    │
-│  │                     OOD API                         │    │
-│  │                   (app/api.rb)                      │    │
-│  └─────────────────────────────────────────────────────┘    │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │                   OOD API (Sinatra)                   │  │
+│  │  ┌─────────────────┐    ┌──────────────────────────┐  │  │
+│  │  │   REST Routes    │    │   MCP Transport (/mcp)   │  │  │
+│  │  │  /api/v1/*      │    │   13 tools + 1 resource  │  │  │
+│  │  └────────┬────────┘    └────────────┬─────────────┘  │  │
+│  │           └──────────┬───────────────┘                │  │
+│  │                      ▼                                │  │
+│  │              Handler Layer                            │  │
+│  │     Clusters │ Jobs │ Files │ Env │ Context           │  │
+│  └───────────────────────────────────────────────────────┘  │
 └─────────────────────────────┬───────────────────────────────┘
                               │ ood_core
-┌─────────────────────────────▼───────────────────────────────┐
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
 │                      HPC Clusters                           │
 │                  (Slurm, PBS, LSF, etc.)                    │
 └─────────────────────────────────────────────────────────────┘
@@ -234,6 +223,7 @@ A successful response confirms the API is running.
 | DELETE | `/api/v1/files?path=X` | Delete file or directory |
 | GET | `/api/v1/env` | List allowed environment variables |
 | GET | `/api/v1/env/:name` | Get single environment variable |
+| GET | `/api/v1/context` | Get site-specific agent context |
 
 See [docs/api.md](docs/api.md) for full API documentation.
 
@@ -252,6 +242,12 @@ See [docs/api.md](docs/api.md) for full API documentation.
 | `write_file` | Write content to a file |
 | `create_directory` | Create a new directory |
 | `delete_file` | Delete a file or directory |
+
+### MCP Resources
+
+| Resource | URI | Description |
+|----------|-----|-------------|
+| Cluster Context | `ood://context` | Site-specific policies and guidelines from `/etc/ood/config/agents.d/` |
 
 ## Troubleshooting
 
@@ -296,23 +292,28 @@ To verify your installation:
 2. List clusters with auth: `curl -H "Authorization: Bearer <token>" https://ondemand.example.edu/pun/sys/ood-api/api/v1/clusters`
 3. Submit a test job and verify it appears in the scheduler
 
+### Local development server
+
+For local development with full MCP SSE streaming support:
+
+```bash
+bundle exec ruby bin/dev
+```
+
+This starts Puma directly with a minimal middleware stack. The REST API and MCP endpoint are both available at `http://localhost:9292`. See `docs/development.md` for the full OOD dev container setup.
+
+**Note:** When running locally without a reverse proxy, the `/mcp` endpoint is unauthenticated. In production, Apache + mod_auth_openidc handles authentication for both REST and MCP.
+
 ### Running the test suite
 
 ```bash
-# Ruby API tests
 bundle exec rake test
-
-# MCP Server tests
-cd mcp
-source venv/bin/activate
-pytest test_server.py -v
 ```
 
 ## Known Limitations
 
 - Application-level tokens (Option B) require an active browser session to spawn the PUN
 - PUN cleanup cron runs every 2 hours by default — long-running API workflows may need this adjusted
-- MCP server requires Python 3.10+
 - Dashboard plugin requires OOD 4.0+
 
 ## Contributing
@@ -329,7 +330,7 @@ This app is part of the [OOD Appverse](https://openondemand.connectci.org/affini
 
 ## References
 
-- [Model Context Protocol](https://modelcontextprotocol.io/) — the AI assistant protocol used by the MCP server
+- [Model Context Protocol](https://modelcontextprotocol.io/) — the AI assistant protocol used by the built-in MCP endpoint
 - [Open OnDemand](https://openondemand.org/) — the HPC portal framework
 - [Sinatra](https://sinatrarb.com/) — the Ruby web framework powering the REST API
 - [CILogon](https://www.cilogon.org/) — identity provider commonly used with OOD

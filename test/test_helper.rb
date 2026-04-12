@@ -48,7 +48,7 @@ module TestHelpers
     token
   end
 
-  def mock_cluster(id: 'test', adapter: 'slurm', title: 'Test Cluster', login_host: 'test.example.com')
+  def mock_cluster(id: 'cluster1', adapter: 'slurm', title: 'Cluster One', login_host: 'login1.example.edu')
     metadata = mock('metadata')
     metadata.stubs(:title).returns(title)
 

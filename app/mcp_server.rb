@@ -1,0 +1,48 @@
+# frozen_string_literal: true
+
+# Constructs the MCP server with all tools and resources.
+# Shared between config.ru (Passenger/production) and bin/dev (local development).
+
+require 'mcp'
+require_relative 'mcp_tools/clusters'
+require_relative 'mcp_tools/jobs'
+require_relative 'mcp_tools/files'
+require_relative 'mcp_tools/env'
+require_relative 'mcp_tools/context'
+require_relative 'handlers/context'
+
+module OodApi
+  def self.build_mcp_server
+    server = MCP::Server.new(
+      name: 'ood-api',
+      instructions: 'Open OnDemand HPC cluster management tools. Use these tools to list clusters, view and submit jobs, manage files, and query environment variables.',
+      tools: [
+        ListClustersTool, GetClusterTool,
+        ListJobsTool, GetJobTool, SubmitJobTool, CancelJobTool,
+        ListFilesTool, ReadFileTool, WriteFileTool, CreateDirectoryTool, DeleteFileTool,
+        ListEnvTool, GetEnvTool
+      ],
+      resources: [CONTEXT_RESOURCE]
+    )
+
+    server.resources_read_handler do |params|
+      case params[:uri]
+      when 'ood://context'
+        content = Handlers::Context.read
+        [{ uri: 'ood://context', mimeType: 'text/markdown', text: content }]
+      else
+        []
+      end
+    end
+
+    server
+  end
+
+  def self.build_mcp_transport(server = build_mcp_server)
+    MCP::Server::Transports::StreamableHTTPTransport.new(server)
+  end
+
+  def self.mcp_rack_app(transport = build_mcp_transport)
+    ->(env) { transport.handle_request(Rack::Request.new(env)) }
+  end
+end

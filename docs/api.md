@@ -126,16 +126,16 @@ GET /api/v1/clusters
 {
   "data": [
     {
-      "id": "owens",
-      "title": "Owens Cluster",
+      "id": "cluster1",
+      "title": "Cluster One",
       "adapter": "slurm",
-      "login_host": "owens.osc.edu"
+      "login_host": "login1.example.edu"
     },
     {
-      "id": "pitzer",
-      "title": "Pitzer Cluster",
+      "id": "cluster2",
+      "title": "Cluster Two",
       "adapter": "slurm",
-      "login_host": "pitzer.osc.edu"
+      "login_host": "login2.example.edu"
     }
   ]
 }
@@ -162,10 +162,10 @@ GET /api/v1/clusters/:id
 ```json
 {
   "data": {
-    "id": "owens",
-    "title": "Owens Cluster",
+    "id": "cluster1",
+    "title": "Cluster One",
     "adapter": "slurm",
-    "login_host": "owens.osc.edu"
+    "login_host": "login1.example.edu"
   }
 }
 ```
@@ -173,7 +173,7 @@ GET /api/v1/clusters/:id
 **Example:**
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  https://ondemand.example.com/api/v1/clusters/owens
+  https://ondemand.example.com/api/v1/clusters/cluster1
 ```
 
 ### Jobs
@@ -195,7 +195,7 @@ GET /api/v1/jobs?cluster=:cluster_id
   "data": [
     {
       "job_id": "12345",
-      "cluster": "owens",
+      "cluster": "cluster1",
       "job_name": "my-simulation",
       "job_owner": "alice",
       "status": "running",
@@ -220,7 +220,7 @@ GET /api/v1/jobs?cluster=:cluster_id
 **Example:**
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "https://ondemand.example.com/api/v1/jobs?cluster=owens"
+  "https://ondemand.example.com/api/v1/jobs?cluster=cluster1"
 ```
 
 #### Get Job
@@ -240,7 +240,7 @@ GET /api/v1/jobs/:id?cluster=:cluster_id
 {
   "data": {
     "job_id": "12345",
-    "cluster": "owens",
+    "cluster": "cluster1",
     "job_name": "my-simulation",
     "job_owner": "alice",
     "status": "running",
@@ -257,7 +257,7 @@ GET /api/v1/jobs/:id?cluster=:cluster_id
 **Example:**
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "https://ondemand.example.com/api/v1/jobs/12345?cluster=owens"
+  "https://ondemand.example.com/api/v1/jobs/12345?cluster=cluster1"
 ```
 
 #### Submit Job
@@ -272,7 +272,7 @@ Content-Type: application/json
 **Request Body:**
 ```json
 {
-  "cluster": "owens",
+  "cluster": "cluster1",
   "script": {
     "content": "#!/bin/bash\n#SBATCH --nodes=1\necho 'Hello World'",
     "workdir": "/users/alice/project"
@@ -307,7 +307,7 @@ Content-Type: application/json
 {
   "data": {
     "job_id": "12346",
-    "cluster": "owens",
+    "cluster": "cluster1",
     "job_name": "my-job",
     "status": "queued",
     ...
@@ -321,7 +321,7 @@ curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "cluster": "owens",
+    "cluster": "cluster1",
     "script": {
       "content": "#!/bin/bash\necho Hello World",
       "workdir": "/users/alice/project"
@@ -360,7 +360,7 @@ DELETE /api/v1/jobs/:id?cluster=:cluster_id
 ```bash
 curl -X DELETE \
   -H "Authorization: Bearer $TOKEN" \
-  "https://ondemand.example.com/api/v1/jobs/12345?cluster=owens"
+  "https://ondemand.example.com/api/v1/jobs/12345?cluster=cluster1"
 ```
 
 ### Files
@@ -686,6 +686,41 @@ Rules:
 
 **Production sites should review the default allowlist** and set `OOD_API_ENV_ALLOWLIST` explicitly if any `OOD_*` variables contain sensitive values.
 
+### Context
+
+The Context API provides site-specific agent context from markdown files in the configured context directory. This is useful for AI agents that need to understand site-specific policies, guidelines, and conventions.
+
+#### Get Context
+
+Returns the concatenated contents of all `*.md` files in the context directory (`/etc/ood/config/agents.d/` by default).
+
+```
+GET /api/v1/context
+```
+
+**Response:**
+```json
+{
+  "data": {
+    "content": "# Site Policies\n\nAll jobs must specify an accounting ID.\n..."
+  }
+}
+```
+
+If the context directory does not exist or contains no markdown files, the response returns an empty context string.
+
+**Configuration:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OOD_API_CONTEXT_PATH` | `/etc/ood/config/agents.d` | Path to directory containing site-specific agent context files (*.md) |
+
+**Example:**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  https://ondemand.example.com/pun/sys/ood-api/api/v1/context
+```
+
 ## Error Handling
 
 The API uses standard HTTP status codes:
@@ -747,7 +782,7 @@ print(f"Available clusters: {[c['id'] for c in clusters]}")
 
 # Submit a job
 job_data = {
-    "cluster": "owens",
+    "cluster": "cluster1",
     "script": {
         "content": "#!/bin/bash\necho 'Hello from API'",
         "workdir": "/users/alice/project"
@@ -773,7 +808,7 @@ else:
 # Check job status
 job_id = job["job_id"]
 response = requests.get(
-    f"{BASE_URL}/api/v1/jobs/{job_id}?cluster=owens",
+    f"{BASE_URL}/api/v1/jobs/{job_id}?cluster=cluster1",
     headers=headers
 )
 status = response.json()["data"]["status"]
@@ -781,7 +816,7 @@ print(f"Job {job_id} status: {status}")
 
 # Cancel job
 response = requests.delete(
-    f"{BASE_URL}/api/v1/jobs/{job_id}?cluster=owens",
+    f"{BASE_URL}/api/v1/jobs/{job_id}?cluster=cluster1",
     headers=headers
 )
 print(f"Job cancelled: {response.json()['data']['status']}")
@@ -805,7 +840,7 @@ JOB_RESPONSE=$(curl -s -X POST \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
-    "cluster": "owens",
+    "cluster": "cluster1",
     "script": {
       "content": "#!/bin/bash\nsleep 60\necho done"
     },
@@ -822,7 +857,7 @@ echo "Submitted job: $JOB_ID"
 # Poll for completion
 while true; do
   STATUS=$(curl -s -H "Authorization: Bearer $TOKEN" \
-    "$BASE_URL/api/v1/jobs/$JOB_ID?cluster=owens" | jq -r '.data.status')
+    "$BASE_URL/api/v1/jobs/$JOB_ID?cluster=cluster1" | jq -r '.data.status')
 
   echo "Job status: $STATUS"
 
@@ -864,11 +899,9 @@ done
 - The API respects OOD's existing authentication and authorization framework
 - Consider network-level restrictions (firewall, VPN) for API access
 
-## MCP Server
+## MCP Endpoint
 
-An [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server is provided for integration with AI assistants and other MCP-compatible clients.
-
-See the [MCP Server documentation](../mcp/README.md) for setup instructions.
+The MCP server is built into the app at `/mcp`. See the [README](../README.md#3-mcp-endpoint) for client configuration examples.
 
 ## Future Enhancements
 

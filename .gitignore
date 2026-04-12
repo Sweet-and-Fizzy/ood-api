@@ -1,12 +1,7 @@
 # Ruby
 vendor/
 .bundle/
-
-# Python
-mcp/venv/
-mcp/__pycache__/
-*.pyc
-*.pyo
+tmp/
 
 # IDE
 .idea/

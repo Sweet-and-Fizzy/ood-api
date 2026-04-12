@@ -6,18 +6,16 @@ require 'etc'
 require 'fileutils'
 require 'ood_core'
 require_relative '../lib/api_token'
+require_relative 'handlers/clusters'
+require_relative 'handlers/jobs'
+require_relative 'handlers/files'
+require_relative 'handlers/env'
+require_relative 'handlers/context'
 
 module OodApi
   class App < Sinatra::Base
     # Configuration via environment variables
     CLUSTERS_PATH = ENV.fetch('OOD_CLUSTERS', '/etc/ood/config/clusters.d')
-    MAX_FILE_READ = ENV.fetch('OOD_API_MAX_FILE_READ', 10 * 1024 * 1024).to_i   # Default 10 MB
-    MAX_FILE_WRITE = ENV.fetch('OOD_API_MAX_FILE_WRITE', 50 * 1024 * 1024).to_i # Default 50 MB
-
-    # Default environment variable allowlist
-    DEFAULT_ENV_PREFIXES = %w[SLURM_ PBS_ SGE_ LSB_ LMOD_ MODULE OOD_].freeze
-    DEFAULT_ENV_EXACT = %w[HOME USER LOGNAME SHELL PATH LANG LC_ALL TERM HOSTNAME
-                           SCRATCH WORK TMPDIR CLUSTER MANPATH].freeze
 
     def self.clusters
       @clusters ||= OodCore::Clusters.load_file(CLUSTERS_PATH)
@@ -52,108 +50,89 @@ module OodApi
     # ============ Clusters ============
 
     get '/api/v1/clusters' do
-      clusters = self.class.clusters
-                     .select(&:job_allow?)
-                     .map { |c| cluster_json(c) }
-
-      { data: clusters }.to_json
+      clusters = Handlers::Clusters.list(clusters: self.class.clusters)
+      { data: clusters.map { |c| cluster_json(c) } }.to_json
     end
 
     get '/api/v1/clusters/:id' do
-      cluster = find_cluster(params[:id])
-      halt_not_found('Cluster not found') unless cluster
-
+      cluster = Handlers::Clusters.get(clusters: self.class.clusters, id: params[:id])
       { data: cluster_json(cluster) }.to_json
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
     end
 
     # ============ Jobs ============
 
     get '/api/v1/jobs' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
-      cluster = find_cluster(params[:cluster])
-      halt_not_found('Cluster not found') unless cluster
 
-      adapter = cluster.job_adapter
-      # Filter jobs by current user (from PUN environment)
-      jobs = adapter.info_where_owner(current_user).map { |j| job_json(j, cluster) }
-
-      { data: jobs }.to_json
-    rescue OodCore::JobAdapterError => e
-      halt_service_unavailable("Scheduler error: #{e.message}")
+      jobs, cluster = Handlers::Jobs.list(
+        clusters: self.class.clusters,
+        cluster_id: params[:cluster],
+        user: current_user
+      )
+      { data: jobs.map { |j| job_json(j, cluster) } }.to_json
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    rescue Handlers::AdapterError => e
+      halt_service_unavailable(e.message)
     end
 
     get '/api/v1/jobs/:id' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
-      cluster = find_cluster(params[:cluster])
-      halt_not_found('Cluster not found') unless cluster
 
-      adapter = cluster.job_adapter
-      job = adapter.info(params[:id])
-
-      # Check if job was found (all nil attrs means not found)
-      halt_not_found('Job not found') if job.id.nil? || (job.job_name.nil? && job.job_owner.nil? && job.queue_name.nil?)
-
+      job, cluster = Handlers::Jobs.get(
+        clusters: self.class.clusters,
+        cluster_id: params[:cluster],
+        job_id: params[:id]
+      )
       { data: job_json(job, cluster) }.to_json
-    rescue OodCore::JobAdapterError
-      halt_not_found('Job not found')
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
     end
 
     post '/api/v1/jobs' do
       body = JSON.parse(request.body.read)
+      halt_bad_request('Missing cluster in request body') if body['cluster'].to_s.strip.empty?
 
-      cluster_id = body['cluster']
-      halt_bad_request('Missing cluster in request body') if cluster_id.to_s.strip.empty?
-
-      cluster = find_cluster(cluster_id)
-      halt_not_found('Cluster not found') unless cluster
-
-      script_data = body['script'] || {}
-      options_data = body['options'] || {}
-
-      script_content = script_data['content']
-      halt_bad_request('script.content must be a string') unless script_content.is_a?(String)
-      halt_bad_request('script.content cannot be empty') if script_content.strip.empty?
-
-      # Build OodCore::Job::Script
-      # Default workdir to /tmp if not specified
-      workdir = script_data['workdir'] || '/tmp'
-      script = OodCore::Job::Script.new(
-        content:       script_content,
-        workdir:       Pathname.new(workdir),
-        job_name:      options_data['job_name'],
-        queue_name:    options_data['queue_name'],
-        accounting_id: options_data['accounting_id'],
-        wall_time:     options_data['wall_time'],
-        output_path:   options_data['output_path'] ? Pathname.new(options_data['output_path']) : nil,
-        error_path:    options_data['error_path'] ? Pathname.new(options_data['error_path']) : nil,
-        native:        options_data['native']
+      job_info, cluster = Handlers::Jobs.submit(
+        clusters: self.class.clusters,
+        cluster_id: body['cluster'],
+        script_content: body.dig('script', 'content'),
+        workdir: body.dig('script', 'workdir'),
+        job_name: body.dig('options', 'job_name'),
+        queue_name: body.dig('options', 'queue_name'),
+        accounting_id: body.dig('options', 'accounting_id'),
+        wall_time: body.dig('options', 'wall_time'),
+        output_path: body.dig('options', 'output_path'),
+        error_path: body.dig('options', 'error_path'),
+        native: body.dig('options', 'native')
       )
-
-      adapter = cluster.job_adapter
-      job_id = adapter.submit(script)
-
-      # Fetch the submitted job info
-      job_info = adapter.info(job_id)
-
       status 201
       { data: job_json(job_info, cluster) }.to_json
     rescue JSON::ParserError
       halt_bad_request('Invalid JSON in request body')
-    rescue OodCore::JobAdapterError => e
-      halt_unprocessable("Job submission failed: #{e.message}")
+    rescue Handlers::ValidationError => e
+      halt_bad_request(e.message)
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    rescue Handlers::AdapterError => e
+      halt_unprocessable(e.message)
     end
 
     delete '/api/v1/jobs/:id' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
-      cluster = find_cluster(params[:cluster])
-      halt_not_found('Cluster not found') unless cluster
 
-      adapter = cluster.job_adapter
-      adapter.delete(params[:id])
-
-      { data: { job_id: params[:id], status: 'cancelled' } }.to_json
-    rescue OodCore::JobAdapterError => e
-      halt_unprocessable("Failed to cancel job: #{e.message}")
+      result = Handlers::Jobs.cancel(
+        clusters: self.class.clusters,
+        cluster_id: params[:cluster],
+        job_id: params[:id]
+      )
+      { data: result }.to_json
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    rescue Handlers::AdapterError => e
+      halt_unprocessable(e.message)
     end
 
     # ============ Files ============
@@ -162,95 +141,77 @@ module OodApi
     get '/api/v1/files' do
       halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
 
-      path = normalize_path(params[:path])
-      validate_path!(path)
-      halt_not_found('Path not found') unless path.exist?
+      result = Handlers::Files.list(path: params[:path])
 
-      if path.directory?
-        # Sort: directories first, then by name (case-insensitive)
-        children = path.children.select(&:readable?).sort_by { |p| [p.directory? ? 0 : 1, p.basename.to_s.downcase] }
-        files = children.map { |p| file_json(p) }
-        { data: files }.to_json
+      if result.is_a?(Array)
+        { data: result.map { |p| file_json(p) } }.to_json
       else
-        { data: file_json(path) }.to_json
+        { data: file_json(result) }.to_json
       end
-    rescue Errno::ENOENT
-      halt_not_found('Path not found')
-    rescue Errno::EACCES
-      halt_forbidden('Permission denied')
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    rescue Handlers::ForbiddenError => e
+      halt_forbidden(e.message)
     end
 
     # Read file contents
     get '/api/v1/files/content' do
       halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
 
-      path = normalize_path(params[:path])
-      validate_path!(path)
-      halt_not_found('File not found') unless path.exist?
-      halt_bad_request('Cannot read directory contents') if path.directory?
-      halt_forbidden('Permission denied') unless path.readable?
-
-      # Limit file size to prevent memory issues
-      halt_bad_request("File too large (max #{MAX_FILE_READ} bytes)") if path.size > MAX_FILE_READ
-
       content_type 'application/octet-stream'
-      path.read
-    rescue Errno::ENOENT
-      halt_not_found('File not found')
-    rescue Errno::EACCES
-      halt_forbidden('Permission denied')
+      Handlers::Files.read(path: params[:path])
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    rescue Handlers::ValidationError => e
+      halt_bad_request(e.message)
+    rescue Handlers::ForbiddenError => e
+      halt_forbidden(e.message)
+    rescue Handlers::PayloadTooLargeError => e
+      halt_bad_request(e.message)
     end
 
     # Create file or directory
     post '/api/v1/files' do
       halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
 
-      path = normalize_path(params[:path])
-      validate_path!(path)
-
       if params[:type] == 'directory'
-        halt_bad_request('Path already exists') if path.exist?
-        path.mkpath
+        result = Handlers::Files.mkdir(path: params[:path])
       else
         halt_bad_request('Use PUT to write file contents') unless params[:touch]
-        FileUtils.touch(path)
+        result = Handlers::Files.touch(path: params[:path])
       end
 
       status 201
-      { data: file_json(path) }.to_json
-    rescue Errno::EACCES
-      halt_forbidden('Permission denied')
-    rescue Errno::EEXIST
-      halt_bad_request('Path already exists')
+      { data: file_json(result) }.to_json
+    rescue Handlers::ValidationError => e
+      halt_bad_request(e.message)
+    rescue Handlers::ForbiddenError => e
+      halt_forbidden(e.message)
     end
 
     # Write file contents
     put '/api/v1/files' do
       halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
 
-      path = normalize_path(params[:path])
-      validate_path!(path)
-      halt_bad_request('Cannot write to directory') if path.exist? && path.directory?
-
       # Limit request body size to prevent memory exhaustion
+      max_write = Handlers::Files::MAX_FILE_WRITE
       content_length = request.content_length.to_i
-      if content_length > MAX_FILE_WRITE
-        halt_error(413, 'payload_too_large', "File too large (max #{MAX_FILE_WRITE} bytes)")
+      if content_length > max_write
+        halt_error(413, 'payload_too_large', "File too large (max #{max_write} bytes)")
       end
 
-      # Ensure parent directory exists
-      path.parent.mkpath unless path.parent.exist?
-
-      content = request.body.read(MAX_FILE_WRITE + 1) || ''
-      if content.bytesize > MAX_FILE_WRITE
-        halt_error(413, 'payload_too_large', "File too large (max #{MAX_FILE_WRITE} bytes)")
+      content = request.body.read(max_write + 1) || ''
+      if content.bytesize > max_write
+        halt_error(413, 'payload_too_large', "File too large (max #{max_write} bytes)")
       end
-      path.write(content)
 
-      { data: file_json(path) }.to_json
-    rescue Errno::EACCES
-      halt_forbidden('Permission denied')
-    rescue Errno::ENOSPC
+      result = Handlers::Files.write(path: params[:path], content: content)
+      { data: file_json(result) }.to_json
+    rescue Handlers::ValidationError => e
+      halt_bad_request(e.message)
+    rescue Handlers::ForbiddenError => e
+      halt_forbidden(e.message)
+    rescue Handlers::StorageError
       halt_error(507, 'insufficient_storage', 'No space left on device')
     end
 
@@ -258,50 +219,37 @@ module OodApi
     delete '/api/v1/files' do
       halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
 
-      path = normalize_path(params[:path])
-      validate_path!(path)
-      halt_not_found('Path not found') unless path.exist?
-
-      if path.directory?
-        if params[:recursive] == 'true'
-          FileUtils.rm_rf(path)
-        else
-          halt_bad_request('Directory not empty') unless path.children.empty?
-          path.rmdir
-        end
-      else
-        path.delete
-      end
-
-      { data: { path: path.to_s, deleted: true } }.to_json
-    rescue Errno::ENOENT
-      halt_not_found('Path not found')
-    rescue Errno::EACCES
-      halt_forbidden('Permission denied')
-    rescue Errno::ENOTEMPTY
-      halt_bad_request('Directory not empty')
+      result = Handlers::Files.delete(path: params[:path], recursive: params[:recursive] == 'true')
+      { data: result }.to_json
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    rescue Handlers::ValidationError => e
+      halt_bad_request(e.message)
+    rescue Handlers::ForbiddenError => e
+      halt_forbidden(e.message)
     end
 
     # ============ Environment Variables ============
 
     get '/api/v1/env' do
-      vars = filtered_env
-
-      if params[:prefix] && !params[:prefix].empty?
-        prefix = params[:prefix]
-        vars = vars.select { |name, _| name.start_with?(prefix) }
-      end
-
+      vars = Handlers::Env.list(prefix: params[:prefix])
       { data: vars }.to_json
     end
 
     get '/api/v1/env/:name' do
-      name = params[:name]
+      result = Handlers::Env.get(name: params[:name])
+      { data: result }.to_json
+    rescue Handlers::ForbiddenError => e
+      halt_forbidden(e.message)
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    end
 
-      halt_forbidden('Access denied: variable not in allowlist') unless env_allowed?(name)
-      halt_not_found('Environment variable not found') unless ENV.key?(name)
+    # ============ Context ============
 
-      { data: { name: name, value: ENV[name] } }.to_json
+    get '/api/v1/context' do
+      content = Handlers::Context.read
+      { data: { content: content } }.to_json
     end
 
     # ============ Helpers ============
@@ -332,12 +280,6 @@ module OodApi
     def current_user
       # In OOD's PUN architecture, the app runs as the authenticated user
       ENV['USER'] || ENV['LOGNAME'] || Etc.getlogin
-    end
-
-    def find_cluster(id)
-      return nil unless id
-
-      self.class.clusters.find { |c| c.id.to_s == id.to_s && c.job_allow? }
     end
 
     def cluster_json(cluster)
@@ -398,57 +340,6 @@ module OodApi
       halt_error(403, 'forbidden', message)
     end
 
-    # ============ File Helpers ============
-
-    def normalize_path(path_str)
-      # Expand ~ to home directory, normalize path
-      expanded = File.expand_path(path_str)
-      Pathname.new(expanded)
-    end
-
-    def validate_path!(path)
-      # Security: prevent path traversal and restrict to safe locations
-      # By default, allow access to user's home directory and temp directories
-      allowed_roots = allowed_path_roots
-
-      # Check if path is under an allowed root
-      real_path = path.exist? ? path.realpath : find_real_parent(path)
-      allowed = allowed_roots.any? { |root| path_under?(real_path, root) }
-      halt_forbidden('Access denied: path not in allowed directories') unless allowed
-    end
-
-    def allowed_path_roots
-      roots = []
-
-      # Home directory
-      home = Pathname.new(Dir.home)
-      roots << (home.exist? ? home.realpath : home)
-
-      # System temp directories - resolve symlinks for cross-platform compatibility
-      ['/tmp', Dir.tmpdir].each do |tmp|
-        tmp_path = Pathname.new(tmp)
-        roots << (tmp_path.exist? ? tmp_path.realpath : tmp_path)
-      end
-
-      roots.uniq
-    end
-
-    def path_under?(child, parent)
-      child_str = child.to_s
-      parent_str = parent.to_s
-      return true if child_str == parent_str
-
-      child_str.start_with?(parent_str) && child_str[parent_str.length] == '/'
-    end
-
-    def find_real_parent(path)
-      # For non-existent paths, find the first existing parent's realpath
-      path.ascend do |p|
-        return p.realpath if p.exist?
-      end
-      Pathname.new('/')
-    end
-
     def file_json(path)
       stat = path.stat
       build_file_hash(path, stat)
@@ -471,39 +362,5 @@ module OodApi
       }
     end
 
-    # ============ Env Helpers ============
-
-    def env_allowlist
-      custom = ENV['OOD_API_ENV_ALLOWLIST']
-      if custom
-        entries = custom.split(',').map(&:strip).reject(&:empty?).uniq
-        prefixes = []
-        exact = []
-        entries.each do |entry|
-          if entry.end_with?('*')
-            prefix = entry.chomp('*')
-            # Reject bare '*' — empty prefix would match everything (full ENV leak)
-            prefixes << prefix unless prefix.empty?
-          else
-            exact << entry
-          end
-        end
-        { prefixes: prefixes, exact: exact }
-      else
-        { prefixes: DEFAULT_ENV_PREFIXES, exact: DEFAULT_ENV_EXACT }
-      end
-    end
-
-    def env_allowed?(name)
-      list = env_allowlist
-      list[:exact].include?(name) || list[:prefixes].any? { |p| name.start_with?(p) }
-    end
-
-    def filtered_env
-      list = env_allowlist
-      ENV.select { |name, _|
-        list[:exact].include?(name) || list[:prefixes].any? { |p| name.start_with?(p) }
-      }.sort.to_h
-    end
   end
 end
