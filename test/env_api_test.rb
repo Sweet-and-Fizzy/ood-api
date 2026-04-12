@@ -7,7 +7,7 @@ class EnvApiTest < Minitest::Test
 
   def setup
     setup_token_storage
-    @mock_clusters = [mock_cluster(id: 'owens')]
+    @mock_clusters = [mock_cluster(id: 'cluster1')]
     OodApi::App.stubs(:clusters).returns(@mock_clusters)
   end
 

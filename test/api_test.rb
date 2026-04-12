@@ -7,7 +7,7 @@ class ApiTest < Minitest::Test
 
   def setup
     setup_token_storage
-    @mock_clusters = [mock_cluster(id: 'owens'), mock_cluster(id: 'pitzer', title: 'Pitzer Cluster')]
+    @mock_clusters = [mock_cluster(id: 'cluster1'), mock_cluster(id: 'cluster2', title: 'Cluster Two')]
     OodApi::App.stubs(:clusters).returns(@mock_clusters)
   end
 
@@ -82,19 +82,19 @@ class ApiTest < Minitest::Test
 
     get '/api/v1/clusters', {}, auth_header(token)
 
-    owens = json_response['data'].find { |c| c['id'] == 'owens' }
-    refute_nil owens
-    assert_equal 'slurm', owens['adapter']
-    assert_equal 'Test Cluster', owens['title']
+    cluster = json_response['data'].find { |c| c['id'] == 'cluster1' }
+    refute_nil cluster
+    assert_equal 'slurm', cluster['adapter']
+    assert_equal 'Cluster One', cluster['title']
   end
 
   def test_get_cluster_returns_details
     token = create_test_token
 
-    get '/api/v1/clusters/owens', {}, auth_header(token)
+    get '/api/v1/clusters/cluster1', {}, auth_header(token)
 
     assert last_response.ok?
-    assert_equal 'owens', json_response['data']['id']
+    assert_equal 'cluster1', json_response['data']['id']
     assert_equal 'slurm', json_response['data']['adapter']
   end
 
@@ -146,7 +146,7 @@ class ApiTest < Minitest::Test
 
     @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
 
-    get '/api/v1/jobs', { cluster: 'owens' }, auth_header(token)
+    get '/api/v1/jobs', { cluster: 'cluster1' }, auth_header(token)
 
     assert last_response.ok?
     assert_equal 1, json_response['data'].size
@@ -165,7 +165,7 @@ class ApiTest < Minitest::Test
 
     @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
 
-    get '/api/v1/jobs/12345', { cluster: 'owens' }, auth_header(token)
+    get '/api/v1/jobs/12345', { cluster: 'cluster1' }, auth_header(token)
 
     assert last_response.ok?
     assert_equal '12345', json_response['data']['job_id']
@@ -182,7 +182,7 @@ class ApiTest < Minitest::Test
 
     @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
 
-    get '/api/v1/jobs/99999', { cluster: 'owens' }, auth_header(token)
+    get '/api/v1/jobs/99999', { cluster: 'cluster1' }, auth_header(token)
 
     assert_equal 404, last_response.status
   end
@@ -201,7 +201,7 @@ class ApiTest < Minitest::Test
     @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
 
     post '/api/v1/jobs',
-         { cluster: 'owens', script: { content: "#!/bin/bash\necho hello" }, options: { job_name: 'api-job' } }.to_json,
+         { cluster: 'cluster1', script: { content: "#!/bin/bash\necho hello" }, options: { job_name: 'api-job' } }.to_json,
          auth_header(token).merge('CONTENT_TYPE' => 'application/json')
 
     assert_equal 201, last_response.status
@@ -234,7 +234,7 @@ class ApiTest < Minitest::Test
     token = create_test_token
 
     post '/api/v1/jobs',
-         { cluster: 'owens' }.to_json,
+         { cluster: 'cluster1' }.to_json,
          auth_header(token).merge('CONTENT_TYPE' => 'application/json')
 
     assert_equal 400, last_response.status
@@ -244,7 +244,7 @@ class ApiTest < Minitest::Test
     token = create_test_token
 
     post '/api/v1/jobs',
-         { cluster: 'owens', script: { content: '' } }.to_json,
+         { cluster: 'cluster1', script: { content: '' } }.to_json,
          auth_header(token).merge('CONTENT_TYPE' => 'application/json')
 
     assert_equal 400, last_response.status
@@ -269,7 +269,7 @@ class ApiTest < Minitest::Test
     @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
 
     post '/api/v1/jobs',
-         { cluster: 'owens', script: { content: 'bad script' } }.to_json,
+         { cluster: 'cluster1', script: { content: 'bad script' } }.to_json,
          auth_header(token).merge('CONTENT_TYPE' => 'application/json')
 
     assert_equal 422, last_response.status
@@ -286,7 +286,7 @@ class ApiTest < Minitest::Test
 
     @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
 
-    delete '/api/v1/jobs/12345', { cluster: 'owens' }, auth_header(token)
+    delete '/api/v1/jobs/12345', { cluster: 'cluster1' }, auth_header(token)
 
     assert last_response.ok?
     assert_equal '12345', json_response['data']['job_id']
@@ -309,7 +309,7 @@ class ApiTest < Minitest::Test
 
     @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
 
-    delete '/api/v1/jobs/12345', { cluster: 'owens' }, auth_header(token)
+    delete '/api/v1/jobs/12345', { cluster: 'cluster1' }, auth_header(token)
 
     assert_equal 422, last_response.status
     assert_equal 'unprocessable_entity', json_response['error']
@@ -325,9 +325,21 @@ class ApiTest < Minitest::Test
 
     @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
 
-    get '/api/v1/jobs', { cluster: 'owens' }, auth_header(token)
+    get '/api/v1/jobs', { cluster: 'cluster1' }, auth_header(token)
 
     assert_equal 503, last_response.status
     assert_equal 'service_unavailable', json_response['error']
+  end
+
+  # Context endpoint
+
+  def test_get_context_returns_data
+    token = create_test_token
+
+    get '/api/v1/context', {}, auth_header(token)
+
+    assert last_response.ok?
+    assert json_response.key?('data')
+    assert json_response['data'].key?('content')
   end
 end

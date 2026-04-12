@@ -1,0 +1,49 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Development server that supports MCP SSE streaming.
+#
+# Usage: bundle exec ruby bin/dev [-p PORT]
+#
+# This script starts Puma directly with a minimal middleware stack
+# (no Rack::ContentLength or Rack::Lint) so that the MCP SDK's SSE
+# streaming Proc bodies work correctly. In production under Passenger,
+# config.ru is used instead — Passenger handles streaming natively.
+#
+# NOTE: /mcp is unauthenticated when running locally without a reverse
+# proxy. In production, Apache + mod_auth_openidc protects the endpoint.
+
+require 'bundler/setup'
+require 'rack'
+require 'puma'
+require 'puma/configuration'
+require 'puma/launcher'
+require 'logger'
+
+require_relative '../app/api'
+require_relative '../app/mcp_server'
+
+port = ARGV.include?('-p') ? ARGV[ARGV.index('-p') + 1].to_i : 9292
+
+app = Rack::Builder.new do
+  use Rack::CommonLogger, Logger.new($stdout)
+
+  map('/mcp') { run OodApi.mcp_rack_app }
+  map('/') { run OodApi::App }
+end
+
+puts "Starting ood-api dev server on http://localhost:#{port}"
+puts "  REST API: http://localhost:#{port}/api/v1/"
+puts "  MCP:      http://localhost:#{port}/mcp"
+puts "  Health:   http://localhost:#{port}/health"
+puts ""
+
+conf = Puma::Configuration.new do |c|
+  c.bind "tcp://0.0.0.0:#{port}"
+  c.app app
+  c.workers 0
+  c.log_requests
+end
+
+launcher = Puma::Launcher.new(conf)
+launcher.run
