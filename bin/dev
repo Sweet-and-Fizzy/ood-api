@@ -1,17 +1,15 @@
 #!/usr/bin/env ruby
 # frozen_string_literal: true
 
-# Development server that supports MCP SSE streaming.
+# Local development server.
 #
 # Usage: bundle exec ruby bin/dev [-p PORT]
 #
-# This script starts Puma directly with a minimal middleware stack
-# (no Rack::ContentLength or Rack::Lint) so that the MCP SDK's SSE
-# streaming Proc bodies work correctly. In production under Passenger,
-# config.ru is used instead — Passenger handles streaming natively.
+# Starts Puma directly, serving both the REST API and MCP endpoint.
+# Identical behavior to production under Passenger.
 #
 # NOTE: /mcp is unauthenticated when running locally without a reverse
-# proxy. In production, Apache + mod_auth_openidc protects the endpoint.
+# proxy. In production, Apache + mod_auth_openidc handles authentication.
 
 require 'bundler/setup'
 require 'rack'
