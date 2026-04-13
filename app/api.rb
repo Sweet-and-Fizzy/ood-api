@@ -66,6 +66,51 @@ module OodApi
       halt_not_found(e.message)
     end
 
+    # ============ Accounts ============
+
+    get '/api/v1/accounts' do
+      halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
+
+      accounts = Handlers::Audit.log(op: 'list_accounts', user: current_user, source: 'rest', cluster: params[:cluster]) do
+        Handlers::Clusters.accounts(clusters: self.class.clusters, id: params[:cluster])
+      end
+      { data: accounts.map(&:to_h) }.to_json
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    rescue Handlers::AdapterError => e
+      halt_service_unavailable(e.message)
+    end
+
+    # ============ Queues ============
+
+    get '/api/v1/queues' do
+      halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
+
+      queues = Handlers::Audit.log(op: 'list_queues', user: current_user, source: 'rest', cluster: params[:cluster]) do
+        Handlers::Clusters.queues(clusters: self.class.clusters, id: params[:cluster])
+      end
+      { data: queues.map(&:to_h) }.to_json
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    rescue Handlers::AdapterError => e
+      halt_service_unavailable(e.message)
+    end
+
+    # ============ Cluster Info ============
+
+    get '/api/v1/cluster_info' do
+      halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
+
+      info = Handlers::Audit.log(op: 'cluster_info', user: current_user, source: 'rest', cluster: params[:cluster]) do
+        Handlers::Clusters.info(clusters: self.class.clusters, id: params[:cluster])
+      end
+      { data: info.to_h }.to_json
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    rescue Handlers::AdapterError => e
+      halt_service_unavailable(e.message)
+    end
+
     # ============ Jobs ============
 
     get '/api/v1/jobs' do
