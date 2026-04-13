@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'mcp'
+require_relative '../handlers/audit'
 require_relative '../handlers/clusters'
 
 class ListClustersTool < MCP::Tool
@@ -9,7 +10,10 @@ class ListClustersTool < MCP::Tool
   input_schema({ type: 'object', properties: {} })
 
   def self.call(server_context:, **_params)
-    clusters = Handlers::Clusters.list(clusters: OodApi::App.clusters)
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    clusters = Handlers::Audit.log(op: 'list_clusters', user: user, source: 'mcp') do
+      Handlers::Clusters.list(clusters: OodApi::App.clusters)
+    end
     lines = clusters.map do |c|
       title = c.metadata.title || c.id.to_s
       adapter = c.job_config[:adapter]
@@ -35,7 +39,10 @@ class GetClusterTool < MCP::Tool
   })
 
   def self.call(server_context:, cluster_id:, **_params)
-    cluster = Handlers::Clusters.get(clusters: OodApi::App.clusters, id: cluster_id)
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    cluster = Handlers::Audit.log(op: 'get_cluster', user: user, source: 'mcp', cluster: cluster_id) do
+      Handlers::Clusters.get(clusters: OodApi::App.clusters, id: cluster_id)
+    end
     title = cluster.metadata.title || cluster.id.to_s
     adapter = cluster.job_config[:adapter]
     host = cluster.login&.host

@@ -9,7 +9,24 @@ require_relative 'mcp_tools/jobs'
 require_relative 'mcp_tools/files'
 require_relative 'mcp_tools/env'
 require_relative 'mcp_tools/context'
+require_relative 'handlers/audit'
 require_relative 'handlers/context'
+
+MCP.configure do |config|
+  config.instrumentation_callback = lambda do |data|
+    if data[:method] == 'initialize' && data[:client]
+      user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+      Handlers::Audit.emit_event(
+        op: 'mcp_initialize',
+        user: user,
+        source: 'mcp',
+        client: data[:client][:name],
+        client_version: data[:client][:version],
+        duration: data[:duration]&.round(4)
+      )
+    end
+  end
+end
 
 module OodApi
   def self.build_mcp_server
@@ -26,9 +43,12 @@ module OodApi
     )
 
     server.resources_read_handler do |params|
+      user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
       case params[:uri]
       when 'ood://context'
-        content = Handlers::Context.read
+        content = Handlers::Audit.log(op: 'read_context', user: user, source: 'mcp', uri: 'ood://context') do
+          Handlers::Context.read
+        end
         [{ uri: 'ood://context', mimeType: 'text/markdown', text: content }]
       else
         []

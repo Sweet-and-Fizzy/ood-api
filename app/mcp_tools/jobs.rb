@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'mcp'
+require_relative '../handlers/audit'
 require_relative '../handlers/jobs'
 
 class ListJobsTool < MCP::Tool
@@ -16,11 +17,13 @@ class ListJobsTool < MCP::Tool
 
   def self.call(server_context:, cluster_id:, **_params)
     user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
-    jobs, _cluster = Handlers::Jobs.list(
-      clusters: OodApi::App.clusters,
-      cluster_id: cluster_id,
-      user: user
-    )
+    jobs, _cluster = Handlers::Audit.log(op: 'list_jobs', user: user, source: 'mcp', cluster: cluster_id) do
+      Handlers::Jobs.list(
+        clusters: OodApi::App.clusters,
+        cluster_id: cluster_id,
+        user: user
+      )
+    end
     if jobs.empty?
       text = "No jobs found on cluster #{cluster_id} for user #{user}."
     else
@@ -49,11 +52,14 @@ class GetJobTool < MCP::Tool
   })
 
   def self.call(server_context:, cluster_id:, job_id:, **_params)
-    job, cluster = Handlers::Jobs.get(
-      clusters: OodApi::App.clusters,
-      cluster_id: cluster_id,
-      job_id: job_id
-    )
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    job, cluster = Handlers::Audit.log(op: 'get_job', user: user, source: 'mcp', cluster: cluster_id, job_id: job_id) do
+      Handlers::Jobs.get(
+        clusters: OodApi::App.clusters,
+        cluster_id: cluster_id,
+        job_id: job_id
+      )
+    end
     text = <<~TEXT.strip
       Job: #{job.id}
       Cluster: #{cluster.id}
@@ -96,19 +102,22 @@ class SubmitJobTool < MCP::Tool
                 job_name: nil, queue_name: nil, accounting_id: nil,
                 wall_time: nil, output_path: nil, error_path: nil,
                 native: nil, **_params)
-    job_info, cluster = Handlers::Jobs.submit(
-      clusters: OodApi::App.clusters,
-      cluster_id: cluster_id,
-      script_content: script_content,
-      workdir: workdir,
-      job_name: job_name,
-      queue_name: queue_name,
-      accounting_id: accounting_id,
-      wall_time: wall_time,
-      output_path: output_path,
-      error_path: error_path,
-      native: native
-    )
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    job_info, cluster = Handlers::Audit.log(op: 'submit_job', user: user, source: 'mcp', cluster: cluster_id) do
+      Handlers::Jobs.submit(
+        clusters: OodApi::App.clusters,
+        cluster_id: cluster_id,
+        script_content: script_content,
+        workdir: workdir,
+        job_name: job_name,
+        queue_name: queue_name,
+        accounting_id: accounting_id,
+        wall_time: wall_time,
+        output_path: output_path,
+        error_path: error_path,
+        native: native
+      )
+    end
     text = "Job submitted successfully.\nJob ID: #{job_info.id}\nCluster: #{cluster.id}\nStatus: #{job_info.status}"
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
@@ -130,11 +139,14 @@ class CancelJobTool < MCP::Tool
   })
 
   def self.call(server_context:, cluster_id:, job_id:, **_params)
-    result = Handlers::Jobs.cancel(
-      clusters: OodApi::App.clusters,
-      cluster_id: cluster_id,
-      job_id: job_id
-    )
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    result = Handlers::Audit.log(op: 'cancel_job', user: user, source: 'mcp', cluster: cluster_id, job_id: job_id) do
+      Handlers::Jobs.cancel(
+        clusters: OodApi::App.clusters,
+        cluster_id: cluster_id,
+        job_id: job_id
+      )
+    end
     text = "Job #{result[:job_id]} has been cancelled."
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
