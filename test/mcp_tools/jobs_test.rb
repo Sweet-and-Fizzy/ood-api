@@ -96,8 +96,8 @@ class ListHistoricJobsToolTest < Minitest::Test
 
   def test_lists_historic_jobs
     jobs = [
-      mock_job_info(id: '100', job_name: 'old_sim', status: :completed),
-      mock_job_info(id: '101', job_name: 'old_sim2', status: :completed)
+      mock_job_info(id: '100', job_name: 'old_sim', status: :completed, job_owner: ENV['USER']),
+      mock_job_info(id: '101', job_name: 'old_sim2', status: :completed, job_owner: ENV['USER'])
     ]
     adapter = mock('adapter')
     adapter.stubs(:info_historic).returns(jobs)

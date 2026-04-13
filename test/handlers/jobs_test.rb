@@ -40,22 +40,32 @@ class HandlersJobsTest < Minitest::Test
 
   def test_historic_returns_jobs_and_cluster
     @adapter.expects(:info_historic).with(opts: {}).returns([mock_job_info(id: '100'), mock_job_info(id: '101')])
-    jobs, cluster = Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'cluster1')
+    jobs, cluster = Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'cluster1', user: 'testuser')
     assert_equal 2, jobs.size
     assert_equal '100', jobs[0].id
     assert_equal :cluster1, cluster.id
   end
 
+  def test_historic_filters_by_user
+    other_job = mock_job_info(id: '200', job_owner: 'otheruser')
+    my_job = mock_job_info(id: '201', job_owner: 'drew')
+    @adapter.stubs(:info_historic).returns([other_job, my_job])
+
+    jobs, _cluster = Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'cluster1', user: 'drew')
+    assert_equal 1, jobs.size
+    assert_equal '201', jobs[0].id
+  end
+
   def test_historic_raises_not_found_for_bad_cluster
     assert_raises(Handlers::NotFoundError) do
-      Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'bad')
+      Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'bad', user: 'drew')
     end
   end
 
   def test_historic_raises_adapter_error_on_scheduler_failure
     @adapter.stubs(:info_historic).raises(OodCore::JobAdapterError, 'not supported')
     assert_raises(Handlers::AdapterError) do
-      Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'cluster1')
+      Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'cluster1', user: 'drew')
     end
   end
 

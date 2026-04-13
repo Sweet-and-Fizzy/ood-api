@@ -136,7 +136,8 @@ module OodApi
       jobs, cluster = Handlers::Audit.log(op: 'list_historic_jobs', user: current_user, source: 'rest', cluster: params[:cluster]) do
         Handlers::Jobs.historic(
           clusters: self.class.clusters,
-          cluster_id: params[:cluster]
+          cluster_id: params[:cluster],
+          user: current_user
         )
       end
       { data: jobs.map { |j| job_json(j, cluster) } }.to_json
