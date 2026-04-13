@@ -189,7 +189,7 @@ A successful response confirms the API is running.
 │  │                   OOD API (Sinatra)                   │  │
 │  │  ┌─────────────────┐    ┌──────────────────────────┐  │  │
 │  │  │   REST Routes    │    │   MCP Transport (/mcp)   │  │  │
-│  │  │  /api/v1/*      │    │   13 tools + 1 resource  │  │  │
+│  │  │  /api/v1/*      │    │   16 tools + 1 resource  │  │  │
 │  │  └────────┬────────┘    └────────────┬─────────────┘  │  │
 │  │           └──────────┬───────────────┘                │  │
 │  │                      ▼                                │  │
@@ -226,6 +226,9 @@ A successful response confirms the API is running.
 | GET | `/api/v1/env` | List allowed environment variables |
 | GET | `/api/v1/env/:name` | Get single environment variable |
 | GET | `/api/v1/context` | Get site-specific agent context |
+| GET | `/api/v1/accounts?cluster=X` | List accounts for job submission |
+| GET | `/api/v1/queues?cluster=X` | List queues/partitions |
+| GET | `/api/v1/cluster_info?cluster=X` | Get cluster resource utilization |
 
 See [docs/api.md](docs/api.md) for full API documentation.
 
@@ -244,6 +247,9 @@ See [docs/api.md](docs/api.md) for full API documentation.
 | `write_file` | Write content to a file |
 | `create_directory` | Create a new directory |
 | `delete_file` | Delete a file or directory |
+| `list_accounts` | List accounts available for job submission |
+| `list_queues` | List queues/partitions on a cluster |
+| `get_cluster_info` | Get cluster resource utilization |
 
 ### MCP Resources
 

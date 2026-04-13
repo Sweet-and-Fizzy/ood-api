@@ -11,6 +11,9 @@ The Open OnDemand REST API provides programmatic access to HPC resources through
   - [Jobs](#jobs)
   - [Files](#files)
   - [Environment Variables](#environment-variables)
+  - [Accounts](#accounts)
+  - [Queues](#queues)
+  - [Cluster Info](#cluster-info)
 - [Error Handling](#error-handling)
 - [Examples](#examples)
 - [Security Considerations](#security-considerations)
@@ -23,6 +26,8 @@ The API provides:
 - **Job Management**: Submit, monitor, and cancel batch jobs
 - **File Operations**: Read, write, and manage files on the cluster
 - **Environment Discovery**: Inspect allowed environment variables (modules, scheduler settings, paths)
+- **Account & Queue Discovery**: List available accounts and queues for job submission
+- **Cluster Utilization**: Query active/total nodes, CPUs, and GPUs
 - **Flexible Authentication**: Apache JWT validation or application-level tokens
 
 Key characteristics:
@@ -686,6 +691,127 @@ Rules:
 
 **Production sites should review the default allowlist** and set `OOD_API_ENV_ALLOWLIST` explicitly if any `OOD_*` variables contain sensitive values.
 
+### Accounts
+
+The Accounts API lists the scheduler accounts available to the authenticated user on a given cluster. This is useful for AI agents and scripts that need to discover valid `accounting_id` values before submitting jobs.
+
+#### List Accounts
+
+Returns all accounts available on the specified cluster.
+
+```
+GET /api/v1/accounts?cluster=:cluster_id
+```
+
+**Parameters:**
+- `cluster` (query, required) - Cluster identifier
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "name": "PAS1234",
+      "qos": ["normal", "standby"],
+      "cluster": "cluster1"
+    }
+  ]
+}
+```
+
+**Errors:**
+- 400 - Missing `cluster` parameter
+- 404 - Cluster not found
+- 503 - Scheduler communication error
+
+**Example:**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/accounts?cluster=cluster1"
+```
+
+### Queues
+
+The Queues API lists the queues (partitions) available on a given cluster. This is useful for AI agents and scripts that need to discover valid `queue_name` values before submitting jobs.
+
+#### List Queues
+
+Returns all queues on the specified cluster.
+
+```
+GET /api/v1/queues?cluster=:cluster_id
+```
+
+**Parameters:**
+- `cluster` (query, required) - Cluster identifier
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "name": "batch",
+      "allow_qos": ["normal"],
+      "deny_qos": [],
+      "allow_accounts": null,
+      "deny_accounts": [],
+      "tres": {}
+    }
+  ]
+}
+```
+
+**Errors:**
+- 400 - Missing `cluster` parameter
+- 404 - Cluster not found
+- 503 - Scheduler communication error
+
+**Example:**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/queues?cluster=cluster1"
+```
+
+### Cluster Info
+
+The Cluster Info API returns resource utilization for a given cluster, including active and total counts for nodes, processors, and GPUs. This is useful for AI agents that need to reason about cluster load before submitting jobs.
+
+#### Get Cluster Info
+
+Returns resource utilization for the specified cluster.
+
+```
+GET /api/v1/cluster_info?cluster=:cluster_id
+```
+
+**Parameters:**
+- `cluster` (query, required) - Cluster identifier
+
+**Response:**
+```json
+{
+  "data": {
+    "active_nodes": 150,
+    "total_nodes": 200,
+    "active_processors": 4800,
+    "total_processors": 6400,
+    "active_gpus": 32,
+    "total_gpus": 64
+  }
+}
+```
+
+**Errors:**
+- 400 - Missing `cluster` parameter
+- 404 - Cluster not found
+- 503 - Scheduler communication error
+
+**Example:**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/cluster_info?cluster=cluster1"
+```
+
 ### Context
 
 The Context API provides site-specific agent context from markdown files in the configured context directory. This is useful for AI agents that need to understand site-specific policies, guidelines, and conventions.
@@ -909,6 +1035,5 @@ The following features are planned for future releases:
 
 - **Token scopes** - Limit tokens to specific operations (read-only, jobs-only, etc.)
 - **Token expiration** - Automatic token expiration after a configured period
-- **Queue/account discovery** - Endpoints to list available queues and accounts
 - **Batch status checks** - Check multiple job statuses in a single request
 - **Rate limiting** - Per-token rate limits to prevent abuse
