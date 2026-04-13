@@ -52,6 +52,7 @@ module Handlers
       p = normalize_path(path)
       validate_path!(p)
       raise ValidationError, 'Cannot write to directory' if p.exist? && p.directory?
+      raise PayloadTooLargeError, "Content too large (max #{MAX_FILE_WRITE} bytes)" if content.bytesize > MAX_FILE_WRITE
 
       p.parent.mkpath unless p.parent.exist?
       if append

@@ -32,7 +32,7 @@ module OodApi
   def self.build_mcp_server
     server = MCP::Server.new(
       name: 'ood-api',
-      instructions: 'Open OnDemand HPC cluster management tools. Use these tools to list clusters, view and submit jobs, manage files, and query environment variables.',
+      instructions: 'Open OnDemand HPC cluster management tools. Use these tools to list clusters, discover accounts and queues, check cluster utilization, submit/cancel/hold/release jobs with optional dependencies, view job history, manage files (read, write, append, create directories, delete), and query environment variables. Read the ood://context resource for site-specific policies before acting.',
       tools: [
         ListClustersTool, GetClusterTool, ListAccountsTool, ListQueuesTool, GetClusterInfoTool,
         ListJobsTool, GetJobTool, ListHistoricJobsTool, SubmitJobTool, CancelJobTool, HoldJobTool, ReleaseJobTool,

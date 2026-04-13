@@ -15,9 +15,12 @@ module Handlers
       raise AdapterError, "Scheduler error: #{e.message}"
     end
 
-    def self.historic(clusters:, cluster_id:, opts: {})
+    def self.historic(clusters:, cluster_id:, user:, opts: {})
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
       jobs = cluster.job_adapter.info_historic(opts: opts)
+      # Filter by user — some adapters (e.g., Slurm sacct) may return
+      # cluster-wide history, not just the current user's jobs.
+      jobs = jobs.select { |j| j.job_owner == user } if user
       [jobs, cluster]
     rescue OodCore::JobAdapterError => e
       raise AdapterError, "Scheduler error: #{e.message}"

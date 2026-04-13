@@ -94,7 +94,8 @@ class ListHistoricJobsTool < MCP::Tool
     jobs, _cluster = Handlers::Audit.log(op: 'list_historic_jobs', user: user, source: 'mcp', cluster: cluster_id) do
       Handlers::Jobs.historic(
         clusters: OodApi::App.clusters,
-        cluster_id: cluster_id
+        cluster_id: cluster_id,
+        user: user
       )
     end
     if jobs.empty?
