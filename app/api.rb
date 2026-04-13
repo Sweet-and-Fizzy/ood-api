@@ -6,6 +6,7 @@ require 'etc'
 require 'fileutils'
 require 'ood_core'
 require_relative '../lib/api_token'
+require_relative 'handlers/audit'
 require_relative 'handlers/clusters'
 require_relative 'handlers/jobs'
 require_relative 'handlers/files'
@@ -50,12 +51,16 @@ module OodApi
     # ============ Clusters ============
 
     get '/api/v1/clusters' do
-      clusters = Handlers::Clusters.list(clusters: self.class.clusters)
+      clusters = Handlers::Audit.log(op: 'list_clusters', user: current_user, source: 'rest') do
+        Handlers::Clusters.list(clusters: self.class.clusters)
+      end
       { data: clusters.map { |c| cluster_json(c) } }.to_json
     end
 
     get '/api/v1/clusters/:id' do
-      cluster = Handlers::Clusters.get(clusters: self.class.clusters, id: params[:id])
+      cluster = Handlers::Audit.log(op: 'get_cluster', user: current_user, source: 'rest', cluster: params[:id]) do
+        Handlers::Clusters.get(clusters: self.class.clusters, id: params[:id])
+      end
       { data: cluster_json(cluster) }.to_json
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
@@ -66,11 +71,13 @@ module OodApi
     get '/api/v1/jobs' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
-      jobs, cluster = Handlers::Jobs.list(
-        clusters: self.class.clusters,
-        cluster_id: params[:cluster],
-        user: current_user
-      )
+      jobs, cluster = Handlers::Audit.log(op: 'list_jobs', user: current_user, source: 'rest', cluster: params[:cluster]) do
+        Handlers::Jobs.list(
+          clusters: self.class.clusters,
+          cluster_id: params[:cluster],
+          user: current_user
+        )
+      end
       { data: jobs.map { |j| job_json(j, cluster) } }.to_json
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
@@ -81,11 +88,13 @@ module OodApi
     get '/api/v1/jobs/:id' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
-      job, cluster = Handlers::Jobs.get(
-        clusters: self.class.clusters,
-        cluster_id: params[:cluster],
-        job_id: params[:id]
-      )
+      job, cluster = Handlers::Audit.log(op: 'get_job', user: current_user, source: 'rest', cluster: params[:cluster], job_id: params[:id]) do
+        Handlers::Jobs.get(
+          clusters: self.class.clusters,
+          cluster_id: params[:cluster],
+          job_id: params[:id]
+        )
+      end
       { data: job_json(job, cluster) }.to_json
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
@@ -95,19 +104,21 @@ module OodApi
       body = JSON.parse(request.body.read)
       halt_bad_request('Missing cluster in request body') if body['cluster'].to_s.strip.empty?
 
-      job_info, cluster = Handlers::Jobs.submit(
-        clusters: self.class.clusters,
-        cluster_id: body['cluster'],
-        script_content: body.dig('script', 'content'),
-        workdir: body.dig('script', 'workdir'),
-        job_name: body.dig('options', 'job_name'),
-        queue_name: body.dig('options', 'queue_name'),
-        accounting_id: body.dig('options', 'accounting_id'),
-        wall_time: body.dig('options', 'wall_time'),
-        output_path: body.dig('options', 'output_path'),
-        error_path: body.dig('options', 'error_path'),
-        native: body.dig('options', 'native')
-      )
+      job_info, cluster = Handlers::Audit.log(op: 'submit_job', user: current_user, source: 'rest', cluster: body['cluster']) do
+        Handlers::Jobs.submit(
+          clusters: self.class.clusters,
+          cluster_id: body['cluster'],
+          script_content: body.dig('script', 'content'),
+          workdir: body.dig('script', 'workdir'),
+          job_name: body.dig('options', 'job_name'),
+          queue_name: body.dig('options', 'queue_name'),
+          accounting_id: body.dig('options', 'accounting_id'),
+          wall_time: body.dig('options', 'wall_time'),
+          output_path: body.dig('options', 'output_path'),
+          error_path: body.dig('options', 'error_path'),
+          native: body.dig('options', 'native')
+        )
+      end
       status 201
       { data: job_json(job_info, cluster) }.to_json
     rescue JSON::ParserError
@@ -123,11 +134,13 @@ module OodApi
     delete '/api/v1/jobs/:id' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
-      result = Handlers::Jobs.cancel(
-        clusters: self.class.clusters,
-        cluster_id: params[:cluster],
-        job_id: params[:id]
-      )
+      result = Handlers::Audit.log(op: 'cancel_job', user: current_user, source: 'rest', cluster: params[:cluster], job_id: params[:id]) do
+        Handlers::Jobs.cancel(
+          clusters: self.class.clusters,
+          cluster_id: params[:cluster],
+          job_id: params[:id]
+        )
+      end
       { data: result }.to_json
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
@@ -141,7 +154,9 @@ module OodApi
     get '/api/v1/files' do
       halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
 
-      result = Handlers::Files.list(path: params[:path])
+      result = Handlers::Audit.log(op: 'list_files', user: current_user, source: 'rest', path: params[:path]) do
+        Handlers::Files.list(path: params[:path])
+      end
 
       if result.is_a?(Array)
         { data: result.map { |p| file_json(p) } }.to_json
@@ -159,7 +174,9 @@ module OodApi
       halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
 
       content_type 'application/octet-stream'
-      Handlers::Files.read(path: params[:path])
+      Handlers::Audit.log(op: 'read_file', user: current_user, source: 'rest', path: params[:path]) do
+        Handlers::Files.read(path: params[:path])
+      end
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
     rescue Handlers::ValidationError => e
@@ -175,10 +192,14 @@ module OodApi
       halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
 
       if params[:type] == 'directory'
-        result = Handlers::Files.mkdir(path: params[:path])
+        result = Handlers::Audit.log(op: 'create_directory', user: current_user, source: 'rest', path: params[:path]) do
+          Handlers::Files.mkdir(path: params[:path])
+        end
       else
         halt_bad_request('Use PUT to write file contents') unless params[:touch]
-        result = Handlers::Files.touch(path: params[:path])
+        result = Handlers::Audit.log(op: 'touch_file', user: current_user, source: 'rest', path: params[:path]) do
+          Handlers::Files.touch(path: params[:path])
+        end
       end
 
       status 201
@@ -205,7 +226,9 @@ module OodApi
         halt_error(413, 'payload_too_large', "File too large (max #{max_write} bytes)")
       end
 
-      result = Handlers::Files.write(path: params[:path], content: content)
+      result = Handlers::Audit.log(op: 'write_file', user: current_user, source: 'rest', path: params[:path]) do
+        Handlers::Files.write(path: params[:path], content: content)
+      end
       { data: file_json(result) }.to_json
     rescue Handlers::ValidationError => e
       halt_bad_request(e.message)
@@ -219,7 +242,9 @@ module OodApi
     delete '/api/v1/files' do
       halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
 
-      result = Handlers::Files.delete(path: params[:path], recursive: params[:recursive] == 'true')
+      result = Handlers::Audit.log(op: 'delete_file', user: current_user, source: 'rest', path: params[:path]) do
+        Handlers::Files.delete(path: params[:path], recursive: params[:recursive] == 'true')
+      end
       { data: result }.to_json
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
@@ -232,12 +257,16 @@ module OodApi
     # ============ Environment Variables ============
 
     get '/api/v1/env' do
-      vars = Handlers::Env.list(prefix: params[:prefix])
+      vars = Handlers::Audit.log(op: 'list_env', user: current_user, source: 'rest') do
+        Handlers::Env.list(prefix: params[:prefix])
+      end
       { data: vars }.to_json
     end
 
     get '/api/v1/env/:name' do
-      result = Handlers::Env.get(name: params[:name])
+      result = Handlers::Audit.log(op: 'get_env', user: current_user, source: 'rest') do
+        Handlers::Env.get(name: params[:name])
+      end
       { data: result }.to_json
     rescue Handlers::ForbiddenError => e
       halt_forbidden(e.message)
@@ -248,7 +277,9 @@ module OodApi
     # ============ Context ============
 
     get '/api/v1/context' do
-      content = Handlers::Context.read
+      content = Handlers::Audit.log(op: 'read_context', user: current_user, source: 'rest') do
+        Handlers::Context.read
+      end
       { data: { content: content } }.to_json
     end
 

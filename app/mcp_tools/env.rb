@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'mcp'
+require_relative '../handlers/audit'
 require_relative '../handlers/env'
 
 class ListEnvTool < MCP::Tool
@@ -14,7 +15,10 @@ class ListEnvTool < MCP::Tool
   })
 
   def self.call(server_context:, prefix: nil, **_params)
-    vars = Handlers::Env.list(prefix: prefix)
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    vars = Handlers::Audit.log(op: 'list_env', user: user, source: 'mcp') do
+      Handlers::Env.list(prefix: prefix)
+    end
     if vars.empty?
       text = 'No matching environment variables found.'
     else
@@ -39,7 +43,10 @@ class GetEnvTool < MCP::Tool
   })
 
   def self.call(server_context:, name:, **_params)
-    result = Handlers::Env.get(name: name)
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    result = Handlers::Audit.log(op: 'get_env', user: user, source: 'mcp') do
+      Handlers::Env.get(name: name)
+    end
     text = "#{result[:name]}=#{result[:value]}"
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ForbiddenError => e

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'mcp'
+require_relative '../handlers/audit'
 require_relative '../handlers/files'
 
 class ListFilesTool < MCP::Tool
@@ -15,7 +16,10 @@ class ListFilesTool < MCP::Tool
   })
 
   def self.call(server_context:, path:, **_params)
-    result = Handlers::Files.list(path: path)
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    result = Handlers::Audit.log(op: 'list_files', user: user, source: 'mcp', path: path) do
+      Handlers::Files.list(path: path)
+    end
     if result.is_a?(Array)
       lines = result.map do |p|
         type = p.directory? ? 'dir ' : 'file'
@@ -44,7 +48,10 @@ class ReadFileTool < MCP::Tool
   })
 
   def self.call(server_context:, path:, **_params)
-    content = Handlers::Files.read(path: path)
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    content = Handlers::Audit.log(op: 'read_file', user: user, source: 'mcp', path: path) do
+      Handlers::Files.read(path: path)
+    end
     MCP::Tool::Response.new([{ type: 'text', text: content }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
          Handlers::ForbiddenError, Handlers::PayloadTooLargeError => e
@@ -65,7 +72,10 @@ class WriteFileTool < MCP::Tool
   })
 
   def self.call(server_context:, path:, content:, **_params)
-    result = Handlers::Files.write(path: path, content: content)
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    result = Handlers::Audit.log(op: 'write_file', user: user, source: 'mcp', path: path) do
+      Handlers::Files.write(path: path, content: content)
+    end
     text = "File written: #{result}"
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
@@ -86,7 +96,10 @@ class CreateDirectoryTool < MCP::Tool
   })
 
   def self.call(server_context:, path:, **_params)
-    result = Handlers::Files.mkdir(path: path)
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    result = Handlers::Audit.log(op: 'create_directory', user: user, source: 'mcp', path: path) do
+      Handlers::Files.mkdir(path: path)
+    end
     text = "Directory created: #{result}"
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
@@ -108,7 +121,10 @@ class DeleteFileTool < MCP::Tool
   })
 
   def self.call(server_context:, path:, recursive: false, **_params)
-    result = Handlers::Files.delete(path: path, recursive: recursive)
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    result = Handlers::Audit.log(op: 'delete_file', user: user, source: 'mcp', path: path) do
+      Handlers::Files.delete(path: path, recursive: recursive)
+    end
     text = "Deleted: #{result[:path]}"
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
