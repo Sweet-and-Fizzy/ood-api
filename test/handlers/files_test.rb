@@ -172,6 +172,42 @@ class HandlersFilesTest < Minitest::Test
     end
   end
 
+  # read with max_size
+
+  def test_read_with_max_size_truncates
+    file_path = File.join(@test_dir, 'large.txt')
+    File.write(file_path, 'a' * 1000)
+
+    result = Handlers::Files.read(path: file_path, max_size: 100)
+    assert_equal 100, result.bytesize
+  end
+
+  def test_read_without_max_size_returns_full_content
+    file_path = File.join(@test_dir, 'small.txt')
+    File.write(file_path, 'hello')
+
+    result = Handlers::Files.read(path: file_path)
+    assert_equal 'hello', result
+  end
+
+  # write with append
+
+  def test_write_append_adds_to_file
+    file_path = File.join(@test_dir, 'append.txt')
+    File.write(file_path, 'first')
+
+    Handlers::Files.write(path: file_path, content: ' second', append: true)
+    assert_equal 'first second', File.read(file_path)
+  end
+
+  def test_write_without_append_overwrites
+    file_path = File.join(@test_dir, 'overwrite2.txt')
+    File.write(file_path, 'old')
+
+    Handlers::Files.write(path: file_path, content: 'new')
+    assert_equal 'new', File.read(file_path)
+  end
+
   # normalize_path — tilde expansion
 
   def test_normalize_path_expands_tilde

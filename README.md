@@ -189,7 +189,7 @@ A successful response confirms the API is running.
 │  │                   OOD API (Sinatra)                   │  │
 │  │  ┌─────────────────┐    ┌──────────────────────────┐  │  │
 │  │  │   REST Routes    │    │   MCP Transport (/mcp)   │  │  │
-│  │  │  /api/v1/*      │    │   16 tools + 1 resource  │  │  │
+│  │  │  /api/v1/*      │    │   19 tools + 1 resource  │  │  │
 │  │  └────────┬────────┘    └────────────┬─────────────┘  │  │
 │  │           └──────────┬───────────────┘                │  │
 │  │                      ▼                                │  │
@@ -218,6 +218,9 @@ A successful response confirms the API is running.
 | GET | `/api/v1/jobs/:id?cluster=X` | Get job details |
 | POST | `/api/v1/jobs` | Submit a job |
 | DELETE | `/api/v1/jobs/:id?cluster=X` | Cancel a job |
+| GET | `/api/v1/jobs/historic?cluster=X` | List completed jobs |
+| POST | `/api/v1/jobs/:id/hold?cluster=X` | Hold a queued job |
+| POST | `/api/v1/jobs/:id/release?cluster=X` | Release a held job |
 | GET | `/api/v1/files?path=X` | List directory or get file info |
 | GET | `/api/v1/files/content?path=X` | Read file contents |
 | POST | `/api/v1/files?path=X&type=directory` | Create directory |
@@ -242,6 +245,9 @@ See [docs/api.md](docs/api.md) for full API documentation.
 | `get_job` | Get job details |
 | `submit_job` | Submit a batch job |
 | `cancel_job` | Cancel a job |
+| `list_historic_jobs` | List completed jobs from accounting database |
+| `hold_job` | Put a queued job on hold |
+| `release_job` | Release a held job |
 | `list_files` | List directory contents |
 | `read_file` | Read file contents |
 | `write_file` | Write content to a file |

@@ -15,6 +15,14 @@ module Handlers
       raise AdapterError, "Scheduler error: #{e.message}"
     end
 
+    def self.historic(clusters:, cluster_id:, opts: {})
+      cluster = Clusters.get(clusters: clusters, id: cluster_id)
+      jobs = cluster.job_adapter.info_historic(opts: opts)
+      [jobs, cluster]
+    rescue OodCore::JobAdapterError => e
+      raise AdapterError, "Scheduler error: #{e.message}"
+    end
+
     def self.get(clusters:, cluster_id:, job_id:)
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
       job = cluster.job_adapter.info(job_id)
@@ -42,7 +50,13 @@ module Handlers
         error_path:    options[:error_path] ? Pathname.new(options[:error_path]) : nil,
         native:        options[:native]
       )
-      job_id = cluster.job_adapter.submit(script)
+      deps = {}
+      deps[:after]      = options[:after]      if options[:after]
+      deps[:afterok]    = options[:afterok]    if options[:afterok]
+      deps[:afternotok] = options[:afternotok] if options[:afternotok]
+      deps[:afterany]   = options[:afterany]   if options[:afterany]
+
+      job_id = cluster.job_adapter.submit(script, **deps)
       job_info = cluster.job_adapter.info(job_id)
       [job_info, cluster]
     rescue OodCore::JobAdapterError => e
@@ -55,6 +69,22 @@ module Handlers
       { job_id: job_id, status: 'cancelled' }
     rescue OodCore::JobAdapterError => e
       raise AdapterError, "Failed to cancel job: #{e.message}"
+    end
+
+    def self.hold(clusters:, cluster_id:, job_id:)
+      cluster = Clusters.get(clusters: clusters, id: cluster_id)
+      cluster.job_adapter.hold(job_id)
+      { job_id: job_id, status: 'held' }
+    rescue OodCore::JobAdapterError => e
+      raise AdapterError, "Failed to hold job: #{e.message}"
+    end
+
+    def self.release(clusters:, cluster_id:, job_id:)
+      cluster = Clusters.get(clusters: clusters, id: cluster_id)
+      cluster.job_adapter.release(job_id)
+      { job_id: job_id, status: 'released' }
+    rescue OodCore::JobAdapterError => e
+      raise AdapterError, "Failed to release job: #{e.message}"
     end
   end
 end

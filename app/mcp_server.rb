@@ -35,7 +35,7 @@ module OodApi
       instructions: 'Open OnDemand HPC cluster management tools. Use these tools to list clusters, view and submit jobs, manage files, and query environment variables.',
       tools: [
         ListClustersTool, GetClusterTool, ListAccountsTool, ListQueuesTool, GetClusterInfoTool,
-        ListJobsTool, GetJobTool, SubmitJobTool, CancelJobTool,
+        ListJobsTool, GetJobTool, ListHistoricJobsTool, SubmitJobTool, CancelJobTool, HoldJobTool, ReleaseJobTool,
         ListFilesTool, ReadFileTool, WriteFileTool, CreateDirectoryTool, DeleteFileTool,
         ListEnvTool, GetEnvTool
       ],

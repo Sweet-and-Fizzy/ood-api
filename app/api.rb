@@ -130,6 +130,22 @@ module OodApi
       halt_service_unavailable(e.message)
     end
 
+    get '/api/v1/jobs/historic' do
+      halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
+
+      jobs, cluster = Handlers::Audit.log(op: 'list_historic_jobs', user: current_user, source: 'rest', cluster: params[:cluster]) do
+        Handlers::Jobs.historic(
+          clusters: self.class.clusters,
+          cluster_id: params[:cluster]
+        )
+      end
+      { data: jobs.map { |j| job_json(j, cluster) } }.to_json
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    rescue Handlers::AdapterError => e
+      halt_service_unavailable(e.message)
+    end
+
     get '/api/v1/jobs/:id' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
@@ -161,7 +177,11 @@ module OodApi
           wall_time: body.dig('options', 'wall_time'),
           output_path: body.dig('options', 'output_path'),
           error_path: body.dig('options', 'error_path'),
-          native: body.dig('options', 'native')
+          native: body.dig('options', 'native'),
+          after: body.dig('options', 'after'),
+          afterok: body.dig('options', 'afterok'),
+          afternotok: body.dig('options', 'afternotok'),
+          afterany: body.dig('options', 'afterany')
         )
       end
       status 201
@@ -185,6 +205,32 @@ module OodApi
           cluster_id: params[:cluster],
           job_id: params[:id]
         )
+      end
+      { data: result }.to_json
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    rescue Handlers::AdapterError => e
+      halt_unprocessable(e.message)
+    end
+
+    post '/api/v1/jobs/:id/hold' do
+      halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
+
+      result = Handlers::Audit.log(op: 'hold_job', user: current_user, source: 'rest', cluster: params[:cluster], job_id: params[:id]) do
+        Handlers::Jobs.hold(clusters: self.class.clusters, cluster_id: params[:cluster], job_id: params[:id])
+      end
+      { data: result }.to_json
+    rescue Handlers::NotFoundError => e
+      halt_not_found(e.message)
+    rescue Handlers::AdapterError => e
+      halt_unprocessable(e.message)
+    end
+
+    post '/api/v1/jobs/:id/release' do
+      halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
+
+      result = Handlers::Audit.log(op: 'release_job', user: current_user, source: 'rest', cluster: params[:cluster], job_id: params[:id]) do
+        Handlers::Jobs.release(clusters: self.class.clusters, cluster_id: params[:cluster], job_id: params[:id])
       end
       { data: result }.to_json
     rescue Handlers::NotFoundError => e
@@ -218,9 +264,11 @@ module OodApi
     get '/api/v1/files/content' do
       halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
 
+      max_size = params[:max_size] ? params[:max_size].to_i : nil
+
       content_type 'application/octet-stream'
-      Handlers::Audit.log(op: 'read_file', user: current_user, source: 'rest', path: params[:path]) do
-        Handlers::Files.read(path: params[:path])
+      content = Handlers::Audit.log(op: 'read_file', user: current_user, source: 'rest', path: params[:path]) do
+        Handlers::Files.read(path: params[:path], max_size: max_size)
       end
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
@@ -271,8 +319,9 @@ module OodApi
         halt_error(413, 'payload_too_large', "File too large (max #{max_write} bytes)")
       end
 
+      append = params[:append] == 'true'
       result = Handlers::Audit.log(op: 'write_file', user: current_user, source: 'rest', path: params[:path]) do
-        Handlers::Files.write(path: params[:path], content: content)
+        Handlers::Files.write(path: params[:path], content: content, append: append)
       end
       { data: file_json(result) }.to_json
     rescue Handlers::ValidationError => e

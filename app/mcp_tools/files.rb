@@ -42,15 +42,16 @@ class ReadFileTool < MCP::Tool
   input_schema({
     type: 'object',
     properties: {
-      path: { type: 'string', description: 'Absolute path to the file' }
+      path: { type: 'string', description: 'Absolute path to the file' },
+      max_size: { type: 'integer', description: 'Maximum bytes to read (default: server limit)' }
     },
     required: ['path']
   })
 
-  def self.call(server_context:, path:, **_params)
+  def self.call(server_context:, path:, max_size: nil, **_params)
     user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
     content = Handlers::Audit.log(op: 'read_file', user: user, source: 'mcp', path: path) do
-      Handlers::Files.read(path: path)
+      Handlers::Files.read(path: path, max_size: max_size)
     end
     MCP::Tool::Response.new([{ type: 'text', text: content }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
@@ -66,15 +67,16 @@ class WriteFileTool < MCP::Tool
     type: 'object',
     properties: {
       path: { type: 'string', description: 'Absolute path to write to' },
-      content: { type: 'string', description: 'Content to write' }
+      content: { type: 'string', description: 'Content to write' },
+      append: { type: 'boolean', description: 'Append to file instead of overwriting (default: false)' }
     },
     required: %w[path content]
   })
 
-  def self.call(server_context:, path:, content:, **_params)
+  def self.call(server_context:, path:, content:, append: false, **_params)
     user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
     result = Handlers::Audit.log(op: 'write_file', user: user, source: 'mcp', path: path) do
-      Handlers::Files.write(path: path, content: content)
+      Handlers::Files.write(path: path, content: content, append: append)
     end
     text = "File written: #{result}"
     MCP::Tool::Response.new([{ type: 'text', text: text }])
