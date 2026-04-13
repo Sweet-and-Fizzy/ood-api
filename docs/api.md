@@ -9,6 +9,7 @@ The Open OnDemand REST API provides programmatic access to HPC resources through
 - [API Reference](#api-reference)
   - [Clusters](#clusters)
   - [Jobs](#jobs)
+  - [Historic Jobs](#historic-jobs)
   - [Files](#files)
   - [Environment Variables](#environment-variables)
   - [Accounts](#accounts)
@@ -23,7 +24,7 @@ The Open OnDemand REST API provides programmatic access to HPC resources through
 The API provides:
 
 - **Cluster Discovery**: List available HPC clusters and their configurations
-- **Job Management**: Submit, monitor, and cancel batch jobs
+- **Job Management**: Submit, monitor, cancel, hold, and release batch jobs; query historic (completed) jobs
 - **File Operations**: Read, write, and manage files on the cluster
 - **Environment Discovery**: Inspect allowed environment variables (modules, scheduler settings, paths)
 - **Account & Queue Discovery**: List available accounts and queues for job submission
@@ -306,6 +307,12 @@ Content-Type: application/json
 | `options.output_path` | string | No | Path for stdout |
 | `options.error_path` | string | No | Path for stderr |
 | `options.native` | array | No | Native scheduler arguments |
+| `options.after` | array | No | Job IDs that must start before this job is eligible |
+| `options.afterok` | array | No | Job IDs that must complete successfully |
+| `options.afternotok` | array | No | Job IDs that must fail |
+| `options.afterany` | array | No | Job IDs that must complete (any exit status) |
+
+**Note:** Job dependency options (`after`, `afterok`, `afternotok`, `afterany`) are scheduler-dependent. Not all schedulers support all dependency types. Unsupported dependency types may be silently ignored or cause an error depending on the scheduler adapter.
 
 **Response (201 Created):**
 ```json
@@ -366,6 +373,111 @@ DELETE /api/v1/jobs/:id?cluster=:cluster_id
 curl -X DELETE \
   -H "Authorization: Bearer $TOKEN" \
   "https://ondemand.example.com/api/v1/jobs/12345?cluster=cluster1"
+```
+
+#### Hold Job
+
+Places a queued job on hold, preventing it from being scheduled.
+
+```
+POST /api/v1/jobs/:id/hold?cluster=:cluster_id
+```
+
+**Parameters:**
+- `id` (path) - Job identifier
+- `cluster` (query, required) - Cluster identifier
+
+**Response:**
+```json
+{
+  "data": {
+    "job_id": "12345",
+    "status": "queued_held"
+  }
+}
+```
+
+**Example:**
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/api/v1/jobs/12345/hold?cluster=cluster1"
+```
+
+#### Release Job
+
+Releases a held job, allowing it to be scheduled again.
+
+```
+POST /api/v1/jobs/:id/release?cluster=:cluster_id
+```
+
+**Parameters:**
+- `id` (path) - Job identifier
+- `cluster` (query, required) - Cluster identifier
+
+**Response:**
+```json
+{
+  "data": {
+    "job_id": "12345",
+    "status": "queued"
+  }
+}
+```
+
+**Example:**
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/api/v1/jobs/12345/release?cluster=cluster1"
+```
+
+### Historic Jobs
+
+The Historic Jobs API returns completed jobs from the scheduler's accounting database. Unlike the regular jobs endpoint which shows only active jobs, this endpoint returns jobs that have already finished.
+
+#### List Historic Jobs
+
+Returns completed jobs for the authenticated user on a specified cluster.
+
+```
+GET /api/v1/jobs/historic?cluster=:cluster_id
+```
+
+**Parameters:**
+- `cluster` (query, required) - Cluster identifier
+
+**Response:**
+```json
+{
+  "data": [
+    {
+      "job_id": "12340",
+      "cluster": "cluster1",
+      "job_name": "old-simulation",
+      "job_owner": "alice",
+      "status": "completed",
+      "queue_name": "batch",
+      "accounting_id": "PAS1234",
+      "submitted_at": "2024-01-10T08:00:00Z",
+      "started_at": "2024-01-10T08:05:00Z",
+      "wallclock_time": 3600,
+      "wallclock_limit": 7200
+    }
+  ]
+}
+```
+
+**Errors:**
+- 400 - Missing `cluster` parameter
+- 404 - Cluster not found
+- 503 - Scheduler communication error
+
+**Example:**
+```bash
+curl -H "Authorization: Bearer $TOKEN" \
+  "https://ondemand.example.com/api/v1/jobs/historic?cluster=cluster1"
 ```
 
 ### Files
@@ -452,11 +564,12 @@ curl -H "Authorization: Bearer $TOKEN" \
 Read the contents of a file.
 
 ```
-GET /api/v1/files/content?path=:path
+GET /api/v1/files/content?path=:path[&max_size=:bytes]
 ```
 
 **Parameters:**
 - `path` (query, required) - Path to the file
+- `max_size` (query, optional) - Maximum number of bytes to read. Must not exceed the server-configured limit (default 10 MB). Useful for reading only the beginning of large files.
 
 **Response:**
 - Content-Type: `application/octet-stream`
@@ -475,15 +588,16 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 #### Write File
 
-Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Parent directories are created automatically.
+Write content to a file. Creates the file if it doesn't exist. By default, overwrites the file; use `append=true` to append instead. Parent directories are created automatically.
 
 ```
-PUT /api/v1/files?path=:path
+PUT /api/v1/files?path=:path[&append=true]
 Content-Type: application/octet-stream
 ```
 
 **Parameters:**
 - `path` (query, required) - Path to the file
+- `append` (query, optional) - Set to `true` to append to the file instead of overwriting it
 
 **Request Body:** Raw file contents (max 50 MB)
 

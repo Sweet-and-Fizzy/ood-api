@@ -36,6 +36,29 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
+  # historic
+
+  def test_historic_returns_jobs_and_cluster
+    @adapter.expects(:info_historic).with(opts: {}).returns([mock_job_info(id: '100'), mock_job_info(id: '101')])
+    jobs, cluster = Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'cluster1')
+    assert_equal 2, jobs.size
+    assert_equal '100', jobs[0].id
+    assert_equal :cluster1, cluster.id
+  end
+
+  def test_historic_raises_not_found_for_bad_cluster
+    assert_raises(Handlers::NotFoundError) do
+      Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'bad')
+    end
+  end
+
+  def test_historic_raises_adapter_error_on_scheduler_failure
+    @adapter.stubs(:info_historic).raises(OodCore::JobAdapterError, 'not supported')
+    assert_raises(Handlers::AdapterError) do
+      Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'cluster1')
+    end
+  end
+
   # get
 
   def test_get_returns_job_and_cluster
@@ -103,6 +126,20 @@ class HandlersJobsTest < Minitest::Test
     assert true
   end
 
+  def test_submit_passes_dependencies
+    @adapter.expects(:submit).with do |script, **kwargs|
+      kwargs[:afterok] == ['100', '101'] && kwargs[:afterany] == ['200']
+    end.returns('300')
+    @adapter.stubs(:info).returns(mock_job_info(id: '300'))
+
+    Handlers::Jobs.submit(
+      clusters: @clusters, cluster_id: 'cluster1',
+      script_content: '#!/bin/bash',
+      afterok: ['100', '101'],
+      afterany: ['200']
+    )
+  end
+
   # cancel
 
   def test_cancel_calls_delete_on_adapter
@@ -116,6 +153,38 @@ class HandlersJobsTest < Minitest::Test
     @adapter.stubs(:delete).raises(OodCore::JobAdapterError, 'permission denied')
     assert_raises(Handlers::AdapterError) do
       Handlers::Jobs.cancel(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
+    end
+  end
+
+  # hold
+
+  def test_hold_calls_hold_on_adapter
+    @adapter.expects(:hold).with('789')
+    result = Handlers::Jobs.hold(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
+    assert_equal '789', result[:job_id]
+    assert_equal 'held', result[:status]
+  end
+
+  def test_hold_raises_adapter_error_on_failure
+    @adapter.stubs(:hold).raises(OodCore::JobAdapterError, 'cannot hold')
+    assert_raises(Handlers::AdapterError) do
+      Handlers::Jobs.hold(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
+    end
+  end
+
+  # release
+
+  def test_release_calls_release_on_adapter
+    @adapter.expects(:release).with('789')
+    result = Handlers::Jobs.release(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
+    assert_equal '789', result[:job_id]
+    assert_equal 'released', result[:status]
+  end
+
+  def test_release_raises_adapter_error_on_failure
+    @adapter.stubs(:release).raises(OodCore::JobAdapterError, 'cannot release')
+    assert_raises(Handlers::AdapterError) do
+      Handlers::Jobs.release(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
     end
   end
 end

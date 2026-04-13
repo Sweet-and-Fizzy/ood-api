@@ -85,6 +85,41 @@ class WriteFileToolTest < Minitest::Test
   end
 end
 
+class ReadFileToolMaxSizeTest < Minitest::Test
+  def setup
+    @test_dir = Dir.mktmpdir('mcp_files_test')
+  end
+
+  def teardown
+    FileUtils.rm_rf(@test_dir)
+  end
+
+  def test_read_file_with_max_size
+    File.write(File.join(@test_dir, 'big.txt'), 'a' * 1000)
+    result = ReadFileTool.call(path: File.join(@test_dir, 'big.txt'), max_size: 50, server_context: nil)
+    refute result.to_h[:isError]
+    assert_equal 50, result.to_h[:content].first[:text].bytesize
+  end
+end
+
+class WriteFileToolAppendTest < Minitest::Test
+  def setup
+    @test_dir = Dir.mktmpdir('mcp_files_test')
+  end
+
+  def teardown
+    FileUtils.rm_rf(@test_dir)
+  end
+
+  def test_write_file_append
+    path = File.join(@test_dir, 'appendable.txt')
+    File.write(path, 'first')
+    result = WriteFileTool.call(path: path, content: ' second', append: true, server_context: nil)
+    refute result.to_h[:isError]
+    assert_equal 'first second', File.read(path)
+  end
+end
+
 class CreateDirectoryToolTest < Minitest::Test
   def setup
     @tmpdir = Dir.mktmpdir('mcp_files_test')

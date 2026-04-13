@@ -29,28 +29,36 @@ module Handlers
       raise ForbiddenError, 'Permission denied'
     end
 
-    def self.read(path:)
+    def self.read(path:, max_size: nil)
       p = normalize_path(path)
       validate_path!(p)
       raise NotFoundError, 'File not found' unless p.exist?
       raise ValidationError, 'Cannot read directory contents' if p.directory?
       raise ForbiddenError, 'Permission denied' unless p.readable?
-      raise PayloadTooLargeError, "File too large (max #{MAX_FILE_READ} bytes)" if p.size > MAX_FILE_READ
 
-      p.read
+      effective_limit = max_size ? [max_size, MAX_FILE_READ].min : MAX_FILE_READ
+      unless max_size
+        raise PayloadTooLargeError, "File too large (max #{effective_limit} bytes)" if p.size > effective_limit
+      end
+
+      max_size ? File.read(p.to_s, effective_limit) : p.read
     rescue Errno::ENOENT
       raise NotFoundError, 'File not found'
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
     end
 
-    def self.write(path:, content:)
+    def self.write(path:, content:, append: false)
       p = normalize_path(path)
       validate_path!(p)
       raise ValidationError, 'Cannot write to directory' if p.exist? && p.directory?
 
       p.parent.mkpath unless p.parent.exist?
-      p.write(content)
+      if append
+        File.open(p, 'a') { |f| f.write(content) }
+      else
+        p.write(content)
+      end
       p
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
