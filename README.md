@@ -125,6 +125,8 @@ claude mcp add ood-hpc --transport http https://ondemand.example.edu/pun/sys/ood
 
 Authentication uses the same OIDC flow as the OOD portal — no separate tokens needed for MCP access. In production, Apache + mod_auth_openidc protects the `/mcp` endpoint. For local development, see `bin/dev`.
 
+For automatic OAuth authentication (no manual token setup), see [MCP OAuth Configuration](docs/mcp-oauth.md).
+
 ### 4. Verify
 
 Restart the app from the OOD developer dashboard, or restart the PUN. Then test:
