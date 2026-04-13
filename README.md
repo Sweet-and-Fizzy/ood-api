@@ -15,10 +15,13 @@ This is a headless API with no end-user UI. The optional Dashboard plugin adds a
 
 ## Features
 
-- REST API exposing clusters, jobs, files, and environment variables via HTTP
-- Built-in MCP endpoint enabling AI assistants (Claude, etc.) to interact with HPC resources
+- REST API and built-in MCP endpoint for clusters, jobs, files, environment variables, and site context
+- 19 MCP tools + 1 resource — agents can discover accounts/queues, submit jobs with dependencies, hold/release jobs, view job history, read/write/append files, and query the runtime environment
+- Structured audit logging (key=value to stderr) for all operations across both REST and MCP
+- Site-operator-managed agent context (`/etc/ood/config/agents.d/*.md`) exposed as an MCP resource
 - Two authentication modes: Apache JWT validation (CILogon, Keycloak) or application-level tokens
 - Per-user isolation via OOD's existing PUN architecture
+- All scheduler operations use the `ood_core` abstraction layer — works with Slurm, PBS, LSF, etc.
 - Optional Dashboard plugin for token management (OOD 4.0+)
 - No browser session required when using Apache JWT validation
 
@@ -125,6 +128,8 @@ claude mcp add ood-hpc --transport http https://ondemand.example.edu/pun/sys/ood
 
 Authentication uses the same OIDC flow as the OOD portal — no separate tokens needed for MCP access. In production, Apache + mod_auth_openidc protects the `/mcp` endpoint. For local development, see `bin/dev`.
 
+File size limits (`OOD_API_MAX_FILE_READ`, `OOD_API_MAX_FILE_WRITE`), allowed path roots, and the environment-variable allowlist apply to **both** REST and MCP — MCP tools return an error response in the protocol instead of HTTP status codes like 413.
+
 For automatic OAuth authentication (no manual token setup), see [MCP OAuth Configuration](docs/mcp-oauth.md).
 
 ### 4. Verify
@@ -160,8 +165,8 @@ A successful response confirms the API is running.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `OOD_CLUSTERS` | No | `/etc/ood/config/clusters.d` | Path to cluster config directory |
-| `OOD_API_MAX_FILE_READ` | No | `10485760` (10 MB) | Maximum file read size in bytes |
-| `OOD_API_MAX_FILE_WRITE` | No | `52428800` (50 MB) | Maximum file write size in bytes |
+| `OOD_API_MAX_FILE_READ` | No | `10485760` (10 MB) | Maximum file read size in bytes (REST and MCP `read_file`) |
+| `OOD_API_MAX_FILE_WRITE` | No | `52428800` (50 MB) | Maximum file write body size in bytes (REST `PUT` and MCP `write_file`) |
 | `OOD_API_ENV_ALLOWLIST` | No | See [docs/api.md](docs/api.md#environment-variable-allowlist) | Comma-separated allowlist for env vars endpoint. Entries ending in `*` are prefix matches. |
 | `OOD_API_CONTEXT_PATH` | No | `/etc/ood/config/agents.d` | Path to directory containing site-specific agent context files (*.md) |
 
@@ -241,21 +246,23 @@ See [docs/api.md](docs/api.md) for full API documentation.
 |------|-------------|
 | `list_clusters` | List available HPC clusters |
 | `get_cluster` | Get cluster details |
-| `list_jobs` | List jobs on a cluster |
+| `list_accounts` | List accounts available for job submission |
+| `list_queues` | List queues/partitions on a cluster |
+| `get_cluster_info` | Get cluster resource utilization (nodes, CPUs, GPUs) |
+| `list_jobs` | List user's active jobs on a cluster |
 | `get_job` | Get job details |
-| `submit_job` | Submit a batch job |
-| `cancel_job` | Cancel a job |
 | `list_historic_jobs` | List completed jobs from accounting database |
+| `submit_job` | Submit a batch job (supports dependencies) |
+| `cancel_job` | Cancel a job |
 | `hold_job` | Put a queued job on hold |
 | `release_job` | Release a held job |
 | `list_files` | List directory contents |
-| `read_file` | Read file contents |
-| `write_file` | Write content to a file |
+| `read_file` | Read file contents (supports max_size limit) |
+| `write_file` | Write or append content to a file |
 | `create_directory` | Create a new directory |
 | `delete_file` | Delete a file or directory |
-| `list_accounts` | List accounts available for job submission |
-| `list_queues` | List queues/partitions on a cluster |
-| `get_cluster_info` | Get cluster resource utilization |
+| `list_env` | List allowed environment variables |
+| `get_env` | Get a single environment variable |
 
 ### MCP Resources
 
@@ -308,13 +315,11 @@ To verify your installation:
 
 ### Local development server
 
-For local development with full MCP SSE streaming support:
-
 ```bash
 bundle exec ruby bin/dev
 ```
 
-This starts Puma directly with a minimal middleware stack. The REST API and MCP endpoint are both available at `http://localhost:9292`. See `docs/development.md` for the full OOD dev container setup.
+Starts Puma directly, serving both the REST API and MCP endpoint at `http://localhost:9292`. See `docs/development.md` for the full OOD dev container setup.
 
 **Note:** When running locally without a reverse proxy, the `/mcp` endpoint is unauthenticated. In production, Apache + mod_auth_openidc handles authentication for both REST and MCP.
 
@@ -329,6 +334,10 @@ bundle exec rake test
 - Application-level tokens (Option B) require an active browser session to spawn the PUN
 - PUN cleanup cron runs every 2 hours by default — long-running API workflows may need this adjusted
 - Dashboard plugin requires OOD 4.0+
+- MCP transport runs in stateless mode — server-initiated notifications are not supported (tool list is static, so this has no practical impact)
+- Job history (`list_historic_jobs`), hold/release, and dependencies are scheduler-dependent — not all schedulers support all features
+- Historic job listings are **filtered to the authenticated user** (`job_owner` must match); the raw accounting API may return broader data on some schedulers
+- Audit log output goes to stderr (PUN error.log) — no dedicated log file or rotation beyond OS logrotate
 
 ## Contributing
 

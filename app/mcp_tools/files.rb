@@ -81,7 +81,8 @@ class WriteFileTool < MCP::Tool
     text = "File written: #{result}"
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
-         Handlers::ForbiddenError, Handlers::StorageError => e
+         Handlers::ForbiddenError, Handlers::PayloadTooLargeError,
+         Handlers::StorageError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
   end
 end
