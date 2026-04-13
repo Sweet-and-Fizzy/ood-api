@@ -437,6 +437,8 @@ curl -X POST \
 
 The Historic Jobs API returns completed jobs from the scheduler's accounting database. Unlike the regular jobs endpoint which shows only active jobs, this endpoint returns jobs that have already finished.
 
+**Operator note:** Some adapters may call accounting APIs that return more than one user's jobs. The API always **filters results to the authenticated user** by matching `job_owner` to the current user (same behavior for the MCP `list_historic_jobs` tool). If your scheduler reports ownership in an unexpected format, users may see fewer rows than in raw `sacct`/`qstat` output.
+
 #### List Historic Jobs
 
 Returns completed jobs for the authenticated user on a specified cluster.
@@ -492,6 +494,8 @@ The Files API provides access to files on the cluster. Access is restricted to t
 | Maximum file write | 50 MB | `OOD_API_MAX_FILE_WRITE` |
 
 Values must be specified in bytes. Example: To allow 100 MB uploads, set `OOD_API_MAX_FILE_WRITE=104857600`.
+
+These limits apply to **MCP as well as REST**: the `read_file` tool honors `max_size` capped by `OOD_API_MAX_FILE_READ`, and `write_file` rejects bodies over `OOD_API_MAX_FILE_WRITE`. MCP clients see a tool error with a text message (for example payload too large), not an HTTP `413` response.
 
 #### List Directory / Get File Info
 
@@ -1141,7 +1145,12 @@ done
 
 ## MCP Endpoint
 
-The MCP server is built into the app at `/mcp`. See the [README](../README.md#3-mcp-endpoint) for client configuration examples.
+The MCP server is built into the app at `/mcp`. It uses the same handler layer as the REST API: cluster and job operations, files (including read `max_size` and write `append`), environment variables, and the `ood://context` resource behave consistently with the sections above.
+
+- **Client setup:** [README — MCP Endpoint](../README.md#3-mcp-endpoint)
+- **OAuth for MCP clients (site operators):** [MCP OAuth Configuration](mcp-oauth.md)
+- **Transport:** Stateless HTTP — safe when the PUN recycles idle Passenger workers; no in-memory MCP session is required.
+- **Audit trail:** Operations are logged as `ood_api_audit` lines on **stderr** (visible in PUN/Passenger logs) for both REST and MCP.
 
 ## Future Enhancements
 

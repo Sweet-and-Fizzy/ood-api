@@ -268,3 +268,8 @@ Verify the `iss` (issuer) claim and `exp` (expiration) fields.
 The client may not support the MCP authorization spec yet. As a fallback,
 users can obtain a token manually from the IdP and configure it in their
 MCP client, or use application-level tokens (Option B in the README).
+
+## See also
+
+- **[API reference](api.md)** — File read/write limits (`OOD_API_MAX_FILE_READ`, `OOD_API_MAX_FILE_WRITE`), historic jobs behavior, and error semantics. The same limits apply to MCP `read_file` / `write_file` as to REST.
+- **[README](../README.md)** — Audit logging (`ood_api_audit` on stderr), local `/mcp` security notes, and scheduler-dependent features (historic jobs, hold/release, dependencies).
