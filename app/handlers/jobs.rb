@@ -22,8 +22,8 @@ module Handlers
       # cluster-wide history, not just the current user's jobs.
       jobs = jobs.select { |j| j.job_owner == user } if user
       [jobs, cluster]
-    rescue OodCore::JobAdapterError => e
-      raise AdapterError, "Scheduler error: #{e.message}"
+    rescue OodCore::JobAdapterError, NotImplementedError => e
+      raise AdapterError, "Failed to get job history: #{e.message}"
     end
 
     def self.get(clusters:, cluster_id:, job_id:)
