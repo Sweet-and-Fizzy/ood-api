@@ -1148,7 +1148,7 @@ done
 The MCP server is built into the app at `/mcp`. It uses the same handler layer as the REST API: cluster and job operations, files (including read `max_size` and write `append`), environment variables, and the `ood://context` resource behave consistently with the sections above.
 
 - **Client setup:** [README — MCP Endpoint](../README.md#3-mcp-endpoint)
-- **OAuth for MCP clients (site operators):** [MCP OAuth Configuration](mcp-oauth.md)
+- **Authentication for MCP clients (site operators):** [MCP Authentication](mcp-oauth.md)
 - **Transport:** Stateless HTTP — safe when the PUN recycles idle Passenger workers; no in-memory MCP session is required.
 - **Audit trail:** Operations are logged as `ood_api_audit` lines on **stderr** (visible in PUN/Passenger logs) for both REST and MCP.
 

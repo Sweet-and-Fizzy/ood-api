@@ -60,15 +60,20 @@ Choose an authentication method:
 
 #### Option A: Apache JWT Validation (Recommended)
 
-For sites using CILogon, Keycloak, or other OIDC providers with a JWKS endpoint. No browser session required for API access.
+For sites using CILogon, Keycloak, or other OIDC providers with a JWKS endpoint. Enables both browser login and bearer token access for API and MCP clients.
 
 Edit `/etc/ood/config/ood_portal.yml`:
 
 ```yaml
+auth:
+  - "AuthType auth-openidc"
+  - "Require valid-user"
 oidc_settings:
   OIDCOAuthVerifyJwksUri: "https://cilogon.org/oauth2/certs"
   OIDCOAuthRemoteUserClaim: "sub"
 ```
+
+The `auth` override switches from `openid-connect` (browser sessions only) to `auth-openidc` (sessions + bearer tokens). This is the same Apache module — browser login works exactly as before. See [MCP Authentication](docs/mcp-oauth.md) for the full guide, including automatic OAuth discovery for MCP clients.
 
 Then regenerate the Apache config:
 
@@ -79,7 +84,7 @@ sudo systemctl restart httpd
 
 #### Option B: Application-Level Tokens
 
-For sites using Dex or other IdPs without JWKS support. Requires an active browser session to spawn the PUN.
+For REST API access from scripts with an active browser session. Not usable by MCP clients (Apache blocks requests without a session cookie or valid JWT). Requires OOD 4.0+ for the Dashboard plugin.
 
 Install the Dashboard plugin (OOD 4.0+ only):
 
@@ -124,11 +129,9 @@ claude mcp add ood-hpc --transport http https://ondemand.example.edu/pun/sys/ood
 }
 ```
 
-Authentication uses the same OIDC flow as the OOD portal — no separate tokens needed for MCP access. In production, Apache + mod_auth_openidc protects the `/mcp` endpoint. For local development, see `bin/dev`.
+MCP clients authenticate via JWT bearer tokens validated by Apache. This requires the `auth` override described in Option A above. See [MCP Authentication](docs/mcp-oauth.md) for two setup methods: static bearer tokens (minimal config) or automatic OAuth discovery (best UX).
 
 File size limits (`OOD_API_MAX_FILE_READ`, `OOD_API_MAX_FILE_WRITE`), allowed path roots, and the environment-variable allowlist apply to **both** REST and MCP — MCP tools return an error response in the protocol instead of HTTP status codes like 413.
-
-For automatic OAuth authentication (no manual token setup), see [MCP OAuth Configuration](docs/mcp-oauth.md).
 
 ### 4. Verify
 
