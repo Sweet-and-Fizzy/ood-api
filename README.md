@@ -336,7 +336,8 @@ bundle exec rake test
 - PUN cleanup cron runs every 2 hours by default — long-running API workflows may need this adjusted
 - Dashboard plugin requires OOD 4.0+
 - MCP transport runs in stateless mode — server-initiated notifications are not supported (tool list is static, so this has no practical impact)
-- Job history (`list_historic_jobs`), hold/release, and dependencies are scheduler-dependent — not all schedulers support all features
+- Job history, hold/release, and dependencies are scheduler-dependent — not all schedulers support all features
+- Account discovery, queue listing, cluster info, and historic jobs are only fully supported on Slurm — other schedulers may return empty results or errors for these operations
 - Historic job listings are **filtered to the authenticated user** (`job_owner` must match); the raw accounting API may return broader data on some schedulers
 - Audit log output goes to stderr (PUN error.log) — no dedicated log file or rotation beyond OS logrotate
 
