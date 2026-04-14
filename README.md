@@ -303,6 +303,8 @@ With Option B, the user must log in via browser first to spawn the PUN.
 
 ## Testing
 
+We're actively looking for sites to test ood-api on different schedulers and OOD versions. If you try it, please let us know how it goes — even a quick "it worked on PBS" is helpful.
+
 | Site | OOD Version | Scheduler | Status |
 |------|-------------|-----------|--------|
 | University of Kentucky | 3.x | Slurm | Tested |
@@ -337,19 +339,34 @@ bundle exec rake test
 - Dashboard plugin requires OOD 4.0+
 - MCP transport runs in stateless mode — server-initiated notifications are not supported (tool list is static, so this has no practical impact)
 - Job history, hold/release, and dependencies are scheduler-dependent — not all schedulers support all features
-- Account discovery, queue listing, cluster info, and historic jobs are only fully supported on Slurm — other schedulers may return empty results or errors for these operations
+- Account discovery, queue listing, cluster info, and historic jobs are only fully supported on Slurm — other schedulers may return empty results or errors. Contributions to expand adapter coverage in `ood_core` would benefit all ood-api sites
 - Historic job listings are **filtered to the authenticated user** (`job_owner` must match); the raw accounting API may return broader data on some schedulers
 - Audit log output goes to stderr (PUN error.log) — no dedicated log file or rotation beyond OS logrotate
 
+## Compatibility & Maintenance
+
+ood-api uses `ood_core` (`~> 0.24`, same constraint as the OOD Dashboard) for all scheduler operations. We call only the public adapter interface.
+
+| Adapter method | Used by | Supported adapters (ood_core 0.30) |
+|---|---|---|
+| `submit`, `delete`, `info`, `info_where_owner` | Jobs | All |
+| `hold`, `release` | Hold/release | Most (Slurm, PBS, LSF, Torque, SGE, etc.) |
+| `accounts` | Account discovery | Slurm, HTCondor |
+| `queues` | Queue discovery | Slurm |
+| `cluster_info` | Cluster utilization | Slurm, HTCondor |
+| `info_historic` | Job history | Slurm |
+
+Operations on unsupported adapters return empty results or a clear error. When `ood_core` releases a new version, we review the changelog, run the test suite against it, and update the table above.
+
 ## Contributing
 
-Contributions are welcome. To contribute:
+We welcome contributions at any level:
 
-1. Fork this repository
-2. Create a feature branch (`git checkout -b feature/my-improvement`)
-3. Submit a pull request with a description of your changes
-
-For bugs or feature requests, [open an issue](https://github.com/Sweet-and-Fizzy/ood-api/issues).
+- **Test on your cluster** — try ood-api on your scheduler and [let us know](https://github.com/Sweet-and-Fizzy/ood-api/issues) what works. Reports from PBS, LSF, and other non-Slurm sites are especially valuable.
+- **Expand scheduler coverage** — adding `queues` or `accounts` to a PBS or LSF adapter in `ood_core` would immediately benefit every ood-api site on that scheduler.
+- **Share agent context** — if you create useful `/etc/ood/config/agents.d/` files, share them so other sites can learn from your policies.
+- **Report bugs or request features** — [open an issue](https://github.com/Sweet-and-Fizzy/ood-api/issues)
+- **Code contributions** — fork, branch, and submit a pull request. See `docs/development.md` for the local dev setup.
 
 This app is part of the [OOD Appverse](https://openondemand.connectci.org/affinity-groups/ood-appverse). Join the Appverse Affinity Group to connect with other contributors.
 
@@ -366,4 +383,4 @@ This app is part of the [OOD Appverse](https://openondemand.connectci.org/affini
 
 ## Acknowledgments
 
-Testing supported by Wake Forest University and the University of Kentucky.
+Testing supported by Wake Forest University and the University of Kentucky. The agent context pattern (`/etc/ood/config/agents.d/`) was inspired by Purdue RCAC's [`rcac-mcp`](https://github.com/PurdueRCAC/rcac-mcp). The [CaRCC People Network](https://carcc.org/people-network/) discussion on sandboxing AI agents in HPC environments motivated much of the design.
