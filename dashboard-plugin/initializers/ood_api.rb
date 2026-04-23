@@ -12,36 +12,12 @@ Rails.application.routes.append do
   end
 end
 
-# Add localization strings
-I18n.backend.store_translations(:en, {
-  dashboard: {
-    api_tokens: {
-      title:             'API Tokens',
-      description:       'Manage API tokens for programmatic access to Open OnDemand.',
-      your_tokens:       'Your Tokens',
-      no_tokens:         'You have no API tokens. Create one to get started.',
-      name:              'Name',
-      created:           'Created',
-      last_used:         'Last Used',
-      never:             'Never',
-      revoke:            'Revoke',
-      revoke_confirm:    'Are you sure you want to revoke this token? This action cannot be undone.',
-      create_new:        'Create New Token',
-      token_name:        'Token Name',
-      name_placeholder:  'e.g., My Script, CI Pipeline',
-      name_help:         'Give your token a descriptive name to help you identify it later.',
-      name_required:     'Token name is required.',
-      generate:          'Generate Token',
-      token_created:     'Token Created Successfully',
-      copy_warning:      'Copy this token now and store it securely.',
-      copy:              'Copy',
-      created_notice:    "Token '%<name>s' created successfully.",
-      revoked:           "Token '%<name>s' has been revoked.",
-      not_found:         'Token not found.',
-      usage:             'API Usage',
-      usage_description: 'Include this header in your API requests:'
-    }
-  }
-})
+# Register the plugin's locale files with Rails' I18n load path. We can't call
+# `I18n.backend.store_translations` directly here: the Rails I18n railtie later
+# assigns `I18n.load_path += config.i18n.load_path`, which invokes the
+# `load_path=` setter and that calls `backend.reload!` — wiping any translations
+# stored inline. Registering via `config.i18n.load_path` avoids that entirely.
+plugin_locales = File.expand_path('../locales/*.{yml,rb}', __dir__)
+Rails.application.config.i18n.load_path += Dir[plugin_locales]
 
 Rails.logger.info 'OOD API plugin loaded: Token management available at /settings/api_tokens'
