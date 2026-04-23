@@ -3,8 +3,10 @@
 # OOD API Dashboard Plugin
 # Adds token management UI to the Dashboard when ood-api app is installed.
 
-# Add routes for token management
-Rails.application.routes.draw do
+# Add routes for token management. Use `append` (not `draw`) so the plugin's
+# routes merge with the Dashboard's routes instead of replacing them — `draw`
+# calls `clear!` on the route set, which would wipe out every Dashboard route.
+Rails.application.routes.append do
   scope 'settings' do
     resources :api_tokens, only: [:index, :create, :destroy]
   end
