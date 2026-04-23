@@ -84,7 +84,7 @@ sudo systemctl restart httpd
 
 #### Option B: Application-Level Tokens
 
-For REST API access from scripts with an active browser session. Not usable by MCP clients (Apache blocks requests without a session cookie or valid JWT). Requires OOD 4.0+ for the Dashboard plugin.
+For REST API access by clients that can carry an OIDC session cookie — typically JS running in the Dashboard, browser extensions, or terminal scripts that pass both the session cookie and the app token as parameters. Not usable by MCP clients, and not a drop-in for CI/CD: the cookie expires with the configured OIDC session lifetime (default 8h). Requires OOD 4.0+ for the Dashboard plugin. See [docs/api.md](docs/api.md#option-2-application-level-tokens) for the full auth flow and curl examples.
 
 Install the Dashboard plugin (OOD 4.0+ only):
 
