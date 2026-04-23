@@ -64,13 +64,18 @@ Apache validates the JWT, sets `REMOTE_USER`, and the request proceeds to the AP
 
 ### Option 2: Application-Level Tokens
 
-For sites using Dex or other IdPs without JWKS support, the API provides its own token management.
+For sites using Google OIDC or other IdPs that don't publish a JWKS endpoint with verifiable access tokens, the API provides its own token management.
 
-**Note:** This requires an active browser session to spawn the user's PUN.
+**Important:** Application-level tokens do not replace Apache's auth. With OOD's default `AuthType openid-connect`, Apache only accepts an OIDC **session cookie** — it will not accept a bearer token on its own. Every request must carry both:
+
+- the OIDC session cookie (gets past Apache)
+- the app-level token (identifies you to ood-api)
+
+A request from a fresh terminal with only `Authorization: Bearer ...` and no session cookie will be 302-redirected to your IdP's login page before it ever reaches ood-api.
 
 #### Generating a Token
 
-1. Log in to Open OnDemand
+1. Log in to Open OnDemand in a browser
 2. Navigate to **Settings > API Tokens** (`/settings/api_tokens`)
 3. Enter a descriptive name for your token (e.g., "My Script", "CI Pipeline")
 4. Click **Generate Token**
@@ -78,12 +83,27 @@ For sites using Dex or other IdPs without JWKS support, the API provides its own
 
 #### Using a Token
 
-Include the token in the `Authorization` header of all API requests:
+From inside the browser session (Dashboard JS, browser extension, fetch from a bookmarklet), include the token in the `Authorization` header — the session cookie rides along automatically:
+
+```js
+fetch('/pun/sys/ood-api/api/v1/clusters', {
+  headers: { 'Authorization': 'Bearer YOUR_TOKEN_HERE' }
+})
+```
+
+#### Using a Token from a Terminal or Script
+
+From a terminal or CI job, pass **both** the session cookie and the token as parameters. Grab the OIDC session cookie from your browser once (DevTools → Application → Cookies → `mod_auth_openidc_session`), then:
 
 ```bash
-curl -H "Authorization: Bearer YOUR_TOKEN_HERE" \
+curl -H "Cookie: mod_auth_openidc_session=YOUR_SESSION_COOKIE" \
+     -H "Authorization: Bearer YOUR_TOKEN_HERE" \
   https://ondemand.example.com/pun/sys/ood-api/api/v1/clusters
 ```
+
+The session cookie is valid for the configured OIDC session lifetime — by default 8 hours inactivity / 8 hours max (see `OIDCSessionInactivityTimeout` and `OIDCSessionMaxDuration` in `ood_portal.yml`). Refresh the cookie by logging in again when it expires.
+
+For unattended CI or long-running jobs, use **Option 1** instead — app-level tokens are scoped to your browser session's lifetime.
 
 #### Token Storage
 
