@@ -383,24 +383,16 @@ module OodApi
     private
 
     def authenticate!
-      # Option 1: Apache already validated JWT and set REMOTE_USER
-      # In this case, we trust Apache's authentication
-      if request.env['REMOTE_USER'] && !request.env['REMOTE_USER'].empty?
-        @authenticated_via = :apache
-        return
-      end
-
-      # Option 2: Application-level token authentication
+      # No Bearer token means we trust the PUN context — OOD has already
+      # authenticated the user, and we're running as their UID.
       auth_header = request.env['HTTP_AUTHORIZATION']
-      halt_unauthorized unless auth_header&.start_with?('Bearer ')
+      return unless auth_header&.start_with?('Bearer ')
 
       token_value = auth_header.sub('Bearer ', '')
       @current_token = OodApi::ApiToken.find_by_token(token_value)
       halt_unauthorized unless @current_token
 
-      # Update last used timestamp (async would be better but keep it simple)
       OodApi::ApiToken.touch(@current_token)
-      @authenticated_via = :token
     end
 
     def current_user

@@ -313,36 +313,25 @@ class EnvApiTest < Minitest::Test
 
   # Authentication required
 
-  def test_env_endpoint_requires_auth
-    get '/api/v1/env'
+  # Authentication: ood-api runs inside OOD's PUN, which only spawns after
+  # Apache has authenticated the user. Requests without a Bearer token are
+  # accepted on the PUN-trust path.
 
-    assert_equal 401, last_response.status
-  end
-
-  def test_env_single_endpoint_requires_auth
-    get '/api/v1/env/HOME'
-
-    assert_equal 401, last_response.status
-  end
-
-  # REMOTE_USER authentication (Apache JWT / Option A)
-
-  def test_env_endpoint_works_with_remote_user
+  def test_env_endpoint_succeeds_without_bearer_token
     ENV['SLURM_JOB_ID'] = '999'
 
     begin
-      get '/api/v1/env', {}, { 'REMOTE_USER' => 'testuser' }
+      get '/api/v1/env'
 
       assert last_response.ok?
-      data = json_response['data']
-      assert_equal '999', data['SLURM_JOB_ID']
+      assert_equal '999', json_response['data']['SLURM_JOB_ID']
     ensure
       ENV.delete('SLURM_JOB_ID')
     end
   end
 
-  def test_env_single_endpoint_works_with_remote_user
-    get '/api/v1/env/HOME', {}, { 'REMOTE_USER' => 'testuser' }
+  def test_env_single_endpoint_succeeds_without_bearer_token
+    get '/api/v1/env/HOME'
 
     assert last_response.ok?
     assert_equal 'HOME', json_response['data']['name']
