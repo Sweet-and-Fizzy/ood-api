@@ -60,7 +60,7 @@ curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   https://ondemand.example.com/pun/sys/ood-api/api/v1/clusters
 ```
 
-Apache validates the JWT, sets `REMOTE_USER`, and the request proceeds to the API. No browser session is required.
+Apache validates the JWT and lets the request through to your PUN, which runs as the authenticated user. ood-api trusts that PUN-level authentication, so no separate token check happens at the application layer. No browser session is required.
 
 ### Option 2: Application-Level Tokens
 

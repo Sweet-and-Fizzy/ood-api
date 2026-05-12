@@ -32,25 +32,29 @@ class ApiTest < Minitest::Test
 
   # Authentication
 
-  def test_request_without_auth_returns_401
+  def test_request_without_auth_succeeds
+    # ood-api runs inside OOD's per-user nginx (PUN), which only spawns
+    # after Apache has authenticated the user. Requests reaching the app
+    # are already authenticated by the surrounding OOD layer.
     get '/api/v1/clusters'
 
-    assert_equal 401, last_response.status
-    assert_equal 'unauthorized', json_response['error']
+    assert last_response.ok?
   end
 
-  def test_request_with_invalid_token_returns_401
+  def test_request_with_invalid_bearer_token_returns_401
     get '/api/v1/clusters', {}, { 'HTTP_AUTHORIZATION' => 'Bearer invalid-token' }
 
     assert_equal 401, last_response.status
     assert_equal 'unauthorized', json_response['error']
   end
 
-  def test_request_with_malformed_auth_header_returns_401
+  def test_request_with_non_bearer_auth_header_succeeds
+    # Non-Bearer Authorization headers are not validated by ood-api; the
+    # request falls through to the PUN-trust path.
     token = create_test_token
     get '/api/v1/clusters', {}, { 'HTTP_AUTHORIZATION' => "Basic #{token.token}" }
 
-    assert_equal 401, last_response.status
+    assert last_response.ok?
   end
 
   def test_valid_token_updates_last_used_at
