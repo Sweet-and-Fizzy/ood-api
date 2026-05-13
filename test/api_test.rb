@@ -30,34 +30,50 @@ class ApiTest < Minitest::Test
     assert last_response.ok?
   end
 
-  # Authentication
+  # Authentication — default (trust-PUN) mode
 
-  def test_request_without_auth_succeeds
-    # ood-api runs inside OOD's per-user nginx (PUN), which only spawns
-    # after Apache has authenticated the user. Requests reaching the app
-    # are already authenticated by the surrounding OOD layer.
+  def test_default_mode_request_without_auth_succeeds
+    ENV.delete('OOD_API_APP_TOKENS')
     get '/api/v1/clusters'
 
     assert last_response.ok?
   end
 
-  def test_request_with_invalid_bearer_token_returns_401
+  def test_default_mode_passes_through_apache_validated_jwt
+    # Option 1 from docs/api.md: Apache validates the JWT against a JWKS
+    # before the request reaches the PUN. ood-api must not try to look the
+    # JWT up in tokens.json — it has no way to validate it and the lookup
+    # would always miss.
+    ENV.delete('OOD_API_APP_TOKENS')
+    fake_jwt = 'eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiJhbGljZSJ9.signature'
+    get '/api/v1/clusters', {}, { 'HTTP_AUTHORIZATION' => "Bearer #{fake_jwt}" }
+
+    assert last_response.ok?
+  end
+
+  # Authentication — opt-in app-token mode (OOD_API_APP_TOKENS=true)
+
+  def test_app_token_mode_request_without_auth_returns_401
+    get '/api/v1/clusters'
+
+    assert_equal 401, last_response.status
+  end
+
+  def test_app_token_mode_invalid_bearer_returns_401
     get '/api/v1/clusters', {}, { 'HTTP_AUTHORIZATION' => 'Bearer invalid-token' }
 
     assert_equal 401, last_response.status
     assert_equal 'unauthorized', json_response['error']
   end
 
-  def test_request_with_non_bearer_auth_header_succeeds
-    # Non-Bearer Authorization headers are not validated by ood-api; the
-    # request falls through to the PUN-trust path.
+  def test_app_token_mode_non_bearer_auth_header_returns_401
     token = create_test_token
     get '/api/v1/clusters', {}, { 'HTTP_AUTHORIZATION' => "Basic #{token.token}" }
 
-    assert last_response.ok?
+    assert_equal 401, last_response.status
   end
 
-  def test_valid_token_updates_last_used_at
+  def test_app_token_mode_valid_token_updates_last_used_at
     token = create_test_token
     assert_nil token.last_used_at
 

@@ -314,10 +314,11 @@ class EnvApiTest < Minitest::Test
   # Authentication required
 
   # Authentication: ood-api runs inside OOD's PUN, which only spawns after
-  # Apache has authenticated the user. Requests without a Bearer token are
-  # accepted on the PUN-trust path.
+  # Apache has authenticated the user. In the default (trust-PUN) mode,
+  # requests without a Bearer token are accepted.
 
   def test_env_endpoint_succeeds_without_bearer_token
+    ENV.delete('OOD_API_APP_TOKENS')
     ENV['SLURM_JOB_ID'] = '999'
 
     begin
@@ -331,6 +332,7 @@ class EnvApiTest < Minitest::Test
   end
 
   def test_env_single_endpoint_succeeds_without_bearer_token
+    ENV.delete('OOD_API_APP_TOKENS')
     get '/api/v1/env/HOME'
 
     assert last_response.ok?

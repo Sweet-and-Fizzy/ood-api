@@ -37,10 +37,15 @@ module TestHelpers
     OodApi::ApiToken.send(:remove_const, :TOKENS_FILE) if OodApi::ApiToken.const_defined?(:TOKENS_FILE)
     OodApi::ApiToken.const_set(:TOKENS_DIR, @test_token_dir)
     OodApi::ApiToken.const_set(:TOKENS_FILE, @test_token_file)
+
+    # Tests in this suite exercise the opt-in app-token flow; the default
+    # trust-PUN mode is covered by dedicated tests that unset this var.
+    ENV['OOD_API_APP_TOKENS'] = 'true'
   end
 
   def teardown_token_storage
     FileUtils.rm_rf(@test_token_dir) if @test_token_dir && File.exist?(@test_token_dir)
+    ENV.delete('OOD_API_APP_TOKENS')
   end
 
   def create_test_token(name = 'Test Token')

@@ -383,10 +383,18 @@ module OodApi
     private
 
     def authenticate!
-      # No Bearer token means we trust the PUN context — OOD has already
-      # authenticated the user, and we're running as their UID.
+      # Default: trust the PUN context. OOD has already authenticated the
+      # user upstream (Apache + mod_ood_proxy), and the PUN runs as that
+      # user. Any Authorization header was for Apache's eyes (e.g. an OIDC
+      # JWT validated against a JWKS) and is opaque to us.
+      #
+      # Opt-in: setting OOD_API_APP_TOKENS=true enables application-level
+      # tokens stored under ~/.config/ondemand/tokens.json. In that mode a
+      # valid Bearer is required on every request.
+      return unless ENV['OOD_API_APP_TOKENS'] == 'true'
+
       auth_header = request.env['HTTP_AUTHORIZATION']
-      return unless auth_header&.start_with?('Bearer ')
+      halt_unauthorized unless auth_header&.start_with?('Bearer ')
 
       token_value = auth_header.sub('Bearer ', '')
       @current_token = OodApi::ApiToken.find_by_token(token_value)
