@@ -39,9 +39,11 @@ Key characteristics:
 
 ## Authentication
 
-The API supports two authentication methods. Choose based on your site's identity provider.
+ood-api delegates authentication to the OOD stack. Apache (with mod_auth_openidc) authenticates the user before the request reaches ood-api, and OOD's per-user nginx (PUN) runs the app as that user. The app trusts that identity.
 
-### Option 1: Apache JWT Validation (Recommended)
+Pick one of the two flows below based on your site's identity provider.
+
+### Option 1: Apache JWT Validation (Default, Recommended)
 
 For sites using CILogon, Keycloak, or other OIDC providers that publish a JWKS endpoint, Apache can validate JWT bearer tokens directly. This requires configuration in `ood_portal.yml`:
 
@@ -60,11 +62,19 @@ curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
   https://ondemand.example.com/pun/sys/ood-api/api/v1/clusters
 ```
 
-Apache validates the JWT and lets the request through to your PUN, which runs as the authenticated user. ood-api trusts that PUN-level authentication, so no separate token check happens at the application layer. No browser session is required.
+Apache validates the JWT and lets the request through to your PUN, which runs as the authenticated user. No browser session is required.
 
-### Option 2: Application-Level Tokens
+This is the default ood-api behavior; no extra app-side config is needed.
 
-For sites using Google OIDC or other IdPs that don't publish a JWKS endpoint with verifiable access tokens, the API provides its own token management.
+### Option 2: Application-Level Tokens (Opt-in)
+
+For sites using Google OIDC or other IdPs that don't publish a JWKS endpoint with verifiable access tokens, ood-api can manage its own tokens. Enable this mode by setting an environment variable on the PUN (e.g. via `passenger_env_var` in your `pun.conf.erb`):
+
+```
+OOD_API_APP_TOKENS=true
+```
+
+With this set, every `/api/v1/*` request must carry a valid `Authorization: Bearer <token>` where `<token>` was issued by the Dashboard plugin. Without the flag, the Authorization header is ignored and the JWT flow above applies.
 
 **Important:** Application-level tokens do not replace Apache's auth. With OOD's default `AuthType openid-connect`, Apache only accepts an OIDC **session cookie** — it will not accept a bearer token on its own. Every request must carry both:
 
