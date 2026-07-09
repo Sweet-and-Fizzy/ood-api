@@ -1,0 +1,20 @@
+title: "Open OnDemand API"
+description: >-
+  REST and MCP API for HPC cluster management via Open OnDemand. Exposes
+  cluster, job, file, and environment operations to scripts and to MCP
+  clients, running as the authenticated user.
+
+software: "Open OnDemand API"
+app_type: "companion_app"
+
+implementation_tags:
+  - "Passenger"
+  - "API"
+  - "MCP"
+
+maintainer:
+  name: "Sweet & Fizzy Digital"
+  support_url: "https://github.com/Sweet-and-Fizzy/ood-api/issues"
+
+website: "https://github.com/Sweet-and-Fizzy/ood-api"
+docs: "https://github.com/Sweet-and-Fizzy/ood-api/blob/main/docs/api.md"
