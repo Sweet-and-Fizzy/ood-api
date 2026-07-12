@@ -5,7 +5,7 @@ require_relative '../../app/mcp_tools/env'
 
 class ListEnvToolTest < Minitest::Test
   def setup
-    @saved_allowlist = ENV['OOD_API_ENV_ALLOWLIST']
+    @saved_allowlist = ENV.fetch('OOD_API_ENV_ALLOWLIST', nil)
     ENV.delete('OOD_API_ENV_ALLOWLIST')
     ENV['SLURM_TEST_VAR'] = 'hello'
   end
@@ -36,7 +36,7 @@ end
 
 class GetEnvToolTest < Minitest::Test
   def setup
-    @saved_allowlist = ENV['OOD_API_ENV_ALLOWLIST']
+    @saved_allowlist = ENV.fetch('OOD_API_ENV_ALLOWLIST', nil)
     ENV.delete('OOD_API_ENV_ALLOWLIST')
     ENV['SLURM_TEST_VAR'] = 'world'
   end

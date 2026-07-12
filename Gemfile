@@ -3,10 +3,10 @@
 source 'https://rubygems.org'
 
 gem 'json'
+gem 'mcp'
 gem 'ood_core', '~> 0.24'
 gem 'puma'
 gem 'rackup'
-gem 'mcp'
 gem 'sinatra', '~> 3.0'
 
 group :development, :test do

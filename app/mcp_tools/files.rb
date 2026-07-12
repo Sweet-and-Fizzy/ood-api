@@ -8,11 +8,11 @@ class ListFilesTool < MCP::Tool
   tool_name 'list_files'
   description 'List contents of a directory or get file metadata'
   input_schema({
-    type: 'object',
+    type:       'object',
     properties: {
       path: { type: 'string', description: 'Absolute path to list' }
     },
-    required: ['path']
+    required:   ['path']
   })
 
   def self.call(server_context:, path:, **_params)
@@ -40,12 +40,12 @@ class ReadFileTool < MCP::Tool
   tool_name 'read_file'
   description 'Read the contents of a file'
   input_schema({
-    type: 'object',
+    type:       'object',
     properties: {
-      path: { type: 'string', description: 'Absolute path to the file' },
+      path:     { type: 'string', description: 'Absolute path to the file' },
       max_size: { type: 'integer', description: 'Maximum bytes to read (default: server limit)' }
     },
-    required: ['path']
+    required:   ['path']
   })
 
   def self.call(server_context:, path:, max_size: nil, **_params)
@@ -64,13 +64,13 @@ class WriteFileTool < MCP::Tool
   tool_name 'write_file'
   description 'Write content to a file (creates or overwrites)'
   input_schema({
-    type: 'object',
+    type:       'object',
     properties: {
-      path: { type: 'string', description: 'Absolute path to write to' },
+      path:    { type: 'string', description: 'Absolute path to write to' },
       content: { type: 'string', description: 'Content to write' },
-      append: { type: 'boolean', description: 'Append to file instead of overwriting (default: false)' }
+      append:  { type: 'boolean', description: 'Append to file instead of overwriting (default: false)' }
     },
-    required: %w[path content]
+    required:   ['path', 'content']
   })
 
   def self.call(server_context:, path:, content:, append: false, **_params)
@@ -91,11 +91,11 @@ class CreateDirectoryTool < MCP::Tool
   tool_name 'create_directory'
   description 'Create a new directory'
   input_schema({
-    type: 'object',
+    type:       'object',
     properties: {
       path: { type: 'string', description: 'Absolute path for the new directory' }
     },
-    required: ['path']
+    required:   ['path']
   })
 
   def self.call(server_context:, path:, **_params)
@@ -115,12 +115,12 @@ class DeleteFileTool < MCP::Tool
   tool_name 'delete_file'
   description 'Delete a file or directory'
   input_schema({
-    type: 'object',
+    type:       'object',
     properties: {
-      path: { type: 'string', description: 'Absolute path to delete' },
+      path:      { type: 'string', description: 'Absolute path to delete' },
       recursive: { type: 'boolean', description: 'Recursively delete directory contents (default: false)' }
     },
-    required: ['path']
+    required:   ['path']
   })
 
   def self.call(server_context:, path:, recursive: false, **_params)

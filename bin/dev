@@ -34,7 +34,7 @@ puts "Starting ood-api dev server on http://localhost:#{port}"
 puts "  REST API: http://localhost:#{port}/api/v1/"
 puts "  MCP:      http://localhost:#{port}/mcp"
 puts "  Health:   http://localhost:#{port}/health"
-puts ""
+puts ''
 
 conf = Puma::Configuration.new do |c|
   c.bind "tcp://0.0.0.0:#{port}"
