@@ -71,7 +71,8 @@ module OodApi
     get '/api/v1/accounts' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
-      accounts = Handlers::Audit.log(op: 'list_accounts', user: current_user, source: 'rest', cluster: params[:cluster]) do
+      accounts = Handlers::Audit.log(op: 'list_accounts', user: current_user, source: 'rest',
+                                     cluster: params[:cluster]) do
         Handlers::Clusters.accounts(clusters: self.class.clusters, id: params[:cluster])
       end
       { data: accounts.map(&:to_h) }.to_json
@@ -116,11 +117,12 @@ module OodApi
     get '/api/v1/jobs' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
-      jobs, cluster = Handlers::Audit.log(op: 'list_jobs', user: current_user, source: 'rest', cluster: params[:cluster]) do
+      jobs, cluster = Handlers::Audit.log(op: 'list_jobs', user: current_user, source: 'rest',
+                                          cluster: params[:cluster]) do
         Handlers::Jobs.list(
-          clusters: self.class.clusters,
+          clusters:   self.class.clusters,
           cluster_id: params[:cluster],
-          user: current_user
+          user:       current_user
         )
       end
       { data: jobs.map { |j| job_json(j, cluster) } }.to_json
@@ -133,11 +135,12 @@ module OodApi
     get '/api/v1/jobs/historic' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
-      jobs, cluster = Handlers::Audit.log(op: 'list_historic_jobs', user: current_user, source: 'rest', cluster: params[:cluster]) do
+      jobs, cluster = Handlers::Audit.log(op: 'list_historic_jobs', user: current_user, source: 'rest',
+                                          cluster: params[:cluster]) do
         Handlers::Jobs.historic(
-          clusters: self.class.clusters,
+          clusters:   self.class.clusters,
           cluster_id: params[:cluster],
-          user: current_user
+          user:       current_user
         )
       end
       { data: jobs.map { |j| job_json(j, cluster) } }.to_json
@@ -150,11 +153,12 @@ module OodApi
     get '/api/v1/jobs/:id' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
-      job, cluster = Handlers::Audit.log(op: 'get_job', user: current_user, source: 'rest', cluster: params[:cluster], job_id: params[:id]) do
+      job, cluster = Handlers::Audit.log(op: 'get_job', user: current_user, source: 'rest', cluster: params[:cluster],
+                                         job_id: params[:id]) do
         Handlers::Jobs.get(
-          clusters: self.class.clusters,
+          clusters:   self.class.clusters,
           cluster_id: params[:cluster],
-          job_id: params[:id]
+          job_id:     params[:id]
         )
       end
       { data: job_json(job, cluster) }.to_json
@@ -166,23 +170,24 @@ module OodApi
       body = JSON.parse(request.body.read)
       halt_bad_request('Missing cluster in request body') if body['cluster'].to_s.strip.empty?
 
-      job_info, cluster = Handlers::Audit.log(op: 'submit_job', user: current_user, source: 'rest', cluster: body['cluster']) do
+      job_info, cluster = Handlers::Audit.log(op: 'submit_job', user: current_user, source: 'rest',
+                                              cluster: body['cluster']) do
         Handlers::Jobs.submit(
-          clusters: self.class.clusters,
-          cluster_id: body['cluster'],
+          clusters:       self.class.clusters,
+          cluster_id:     body['cluster'],
           script_content: body.dig('script', 'content'),
-          workdir: body.dig('script', 'workdir'),
-          job_name: body.dig('options', 'job_name'),
-          queue_name: body.dig('options', 'queue_name'),
-          accounting_id: body.dig('options', 'accounting_id'),
-          wall_time: body.dig('options', 'wall_time'),
-          output_path: body.dig('options', 'output_path'),
-          error_path: body.dig('options', 'error_path'),
-          native: body.dig('options', 'native'),
-          after: body.dig('options', 'after'),
-          afterok: body.dig('options', 'afterok'),
-          afternotok: body.dig('options', 'afternotok'),
-          afterany: body.dig('options', 'afterany')
+          workdir:        body.dig('script', 'workdir'),
+          job_name:       body.dig('options', 'job_name'),
+          queue_name:     body.dig('options', 'queue_name'),
+          accounting_id:  body.dig('options', 'accounting_id'),
+          wall_time:      body.dig('options', 'wall_time'),
+          output_path:    body.dig('options', 'output_path'),
+          error_path:     body.dig('options', 'error_path'),
+          native:         body.dig('options', 'native'),
+          after:          body.dig('options', 'after'),
+          afterok:        body.dig('options', 'afterok'),
+          afternotok:     body.dig('options', 'afternotok'),
+          afterany:       body.dig('options', 'afterany')
         )
       end
       status 201
@@ -200,11 +205,12 @@ module OodApi
     delete '/api/v1/jobs/:id' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
-      result = Handlers::Audit.log(op: 'cancel_job', user: current_user, source: 'rest', cluster: params[:cluster], job_id: params[:id]) do
+      result = Handlers::Audit.log(op: 'cancel_job', user: current_user, source: 'rest', cluster: params[:cluster],
+                                   job_id: params[:id]) do
         Handlers::Jobs.cancel(
-          clusters: self.class.clusters,
+          clusters:   self.class.clusters,
           cluster_id: params[:cluster],
-          job_id: params[:id]
+          job_id:     params[:id]
         )
       end
       { data: result }.to_json
@@ -217,7 +223,8 @@ module OodApi
     post '/api/v1/jobs/:id/hold' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
-      result = Handlers::Audit.log(op: 'hold_job', user: current_user, source: 'rest', cluster: params[:cluster], job_id: params[:id]) do
+      result = Handlers::Audit.log(op: 'hold_job', user: current_user, source: 'rest', cluster: params[:cluster],
+                                   job_id: params[:id]) do
         Handlers::Jobs.hold(clusters: self.class.clusters, cluster_id: params[:cluster], job_id: params[:id])
       end
       { data: result }.to_json
@@ -230,7 +237,8 @@ module OodApi
     post '/api/v1/jobs/:id/release' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
-      result = Handlers::Audit.log(op: 'release_job', user: current_user, source: 'rest', cluster: params[:cluster], job_id: params[:id]) do
+      result = Handlers::Audit.log(op: 'release_job', user: current_user, source: 'rest', cluster: params[:cluster],
+                                   job_id: params[:id]) do
         Handlers::Jobs.release(clusters: self.class.clusters, cluster_id: params[:cluster], job_id: params[:id])
       end
       { data: result }.to_json
@@ -265,10 +273,10 @@ module OodApi
     get '/api/v1/files/content' do
       halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
 
-      max_size = params[:max_size] ? params[:max_size].to_i : nil
+      max_size = params[:max_size]&.to_i
 
       content_type 'application/octet-stream'
-      content = Handlers::Audit.log(op: 'read_file', user: current_user, source: 'rest', path: params[:path]) do
+      Handlers::Audit.log(op: 'read_file', user: current_user, source: 'rest', path: params[:path]) do
         Handlers::Files.read(path: params[:path], max_size: max_size)
       end
     rescue Handlers::NotFoundError => e
@@ -311,14 +319,10 @@ module OodApi
       # Limit request body size to prevent memory exhaustion
       max_write = Handlers::Files::MAX_FILE_WRITE
       content_length = request.content_length.to_i
-      if content_length > max_write
-        halt_error(413, 'payload_too_large', "File too large (max #{max_write} bytes)")
-      end
+      halt_error(413, 'payload_too_large', "File too large (max #{max_write} bytes)") if content_length > max_write
 
       content = request.body.read(max_write + 1) || ''
-      if content.bytesize > max_write
-        halt_error(413, 'payload_too_large', "File too large (max #{max_write} bytes)")
-      end
+      halt_error(413, 'payload_too_large', "File too large (max #{max_write} bytes)") if content.bytesize > max_write
 
       append = params[:append] == 'true'
       result = Handlers::Audit.log(op: 'write_file', user: current_user, source: 'rest', path: params[:path]) do
@@ -487,6 +491,5 @@ module OodApi
         mtime:     stat.mtime.iso8601
       }
     end
-
   end
 end

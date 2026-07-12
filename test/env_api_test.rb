@@ -237,7 +237,7 @@ class EnvApiTest < Minitest::Test
     assert last_response.ok?
     data = json_response['data']
     assert_equal 'HOME', data['name']
-    assert_equal ENV['HOME'], data['value']
+    assert_equal ENV.fetch('HOME', nil), data['value']
   end
 
   def test_get_single_var_returns_403_for_blocked_var
@@ -302,7 +302,7 @@ class EnvApiTest < Minitest::Test
 
       assert last_response.ok?
       keys = json_response['data'].keys
-      assert_equal %w[AAA_VAR MMM_VAR ZZZ_VAR], keys
+      assert_equal ['AAA_VAR', 'MMM_VAR', 'ZZZ_VAR'], keys
     ensure
       ENV.delete('OOD_API_ENV_ALLOWLIST')
       ENV.delete('ZZZ_VAR')

@@ -4,9 +4,9 @@ require_relative 'errors'
 
 module Handlers
   module Env
-    DEFAULT_PREFIXES = %w[SLURM_ PBS_ SGE_ LSB_ LMOD_ MODULE OOD_].freeze
-    DEFAULT_EXACT = %w[HOME USER LOGNAME SHELL PATH LANG LC_ALL TERM HOSTNAME
-                       SCRATCH WORK TMPDIR CLUSTER MANPATH].freeze
+    DEFAULT_PREFIXES = ['SLURM_', 'PBS_', 'SGE_', 'LSB_', 'LMOD_', 'MODULE', 'OOD_'].freeze
+    DEFAULT_EXACT = ['HOME', 'USER', 'LOGNAME', 'SHELL', 'PATH', 'LANG', 'LC_ALL', 'TERM', 'HOSTNAME', 'SCRATCH',
+                     'WORK', 'TMPDIR', 'CLUSTER', 'MANPATH'].freeze
 
     def self.list(prefix: nil)
       vars = filtered_env
@@ -18,11 +18,11 @@ module Handlers
       raise ForbiddenError, 'Access denied: variable not in allowlist' unless allowed?(name)
       raise NotFoundError, 'Environment variable not found' unless ENV.key?(name)
 
-      { name: name, value: ENV[name] }
+      { name: name, value: ENV.fetch(name, nil) }
     end
 
     def self.allowlist
-      custom = ENV['OOD_API_ENV_ALLOWLIST']
+      custom = ENV.fetch('OOD_API_ENV_ALLOWLIST', nil)
       if custom
         entries = custom.split(',').map(&:strip).reject(&:empty?).uniq
         prefixes = []
@@ -48,9 +48,9 @@ module Handlers
 
     def self.filtered_env
       list = allowlist
-      ENV.select { |name, _|
+      ENV.select do |name, _|
         list[:exact].include?(name) || list[:prefixes].any? { |p| name.start_with?(p) }
-      }.sort.to_h
+      end.sort.to_h
     end
 
     private_class_method :allowlist, :allowed?, :filtered_env

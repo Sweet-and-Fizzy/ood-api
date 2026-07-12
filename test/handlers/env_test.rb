@@ -7,8 +7,8 @@ class HandlersEnvTest < Minitest::Test
   def setup
     @saved_env = {}
     # Save and set test env vars
-    %w[OOD_API_ENV_ALLOWLIST].each do |key|
-      @saved_env[key] = ENV[key]
+    ['OOD_API_ENV_ALLOWLIST'].each do |key|
+      @saved_env[key] = ENV.fetch(key, nil)
     end
     ENV.delete('OOD_API_ENV_ALLOWLIST')
 
