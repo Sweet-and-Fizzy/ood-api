@@ -58,7 +58,12 @@ class ApiToken
 
     def save_tokens(tokens)
       TOKEN_DIR.mkpath unless TOKEN_DIR.exist?
-      TOKEN_FILE.write(JSON.pretty_generate(tokens))
+      # Create with 0600 from the start so the token file is never briefly
+      # world-readable between creation and chmod. The trailing chmod also
+      # narrows any pre-existing file that predates this change.
+      TOKEN_FILE.open(File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |f|
+        f.write(JSON.pretty_generate(tokens))
+      end
       TOKEN_FILE.chmod(0o600)
     end
 

@@ -30,6 +30,26 @@ class ApiTest < Minitest::Test
     assert last_response.ok?
   end
 
+  # CORS — the app must not emit cross-origin headers. It is served
+  # same-origin under the OOD proxy; a wildcard would expose a logged-in
+  # user's session to any website. See docs/api.md and docs/mcp-oauth.md.
+
+  def test_no_cors_headers_on_responses
+    get '/health'
+
+    assert_nil last_response.headers['Access-Control-Allow-Origin']
+    assert_nil last_response.headers['Access-Control-Allow-Methods']
+    assert_nil last_response.headers['Access-Control-Allow-Headers']
+  end
+
+  def test_options_request_is_not_globally_answered
+    options '/api/v1/clusters'
+
+    # With the wildcard OPTIONS handler removed, Sinatra no longer returns a
+    # blanket 200 for arbitrary preflight requests.
+    refute_equal 200, last_response.status
+  end
+
   # Authentication — default (trust-PUN) mode
 
   def test_default_mode_request_without_auth_succeeds
