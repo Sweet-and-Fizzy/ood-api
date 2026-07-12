@@ -7,9 +7,9 @@ ENV['RACK_ENV'] = 'test'
 unless ENV['NOCOV']
   require 'simplecov'
   SimpleCov.start do
-    skip '/test/'
-    skip '/vendor/'
-    cover '{app,lib}/**/*.rb'
+    add_filter '/test/'
+    add_filter '/vendor/'
+    track_files '{app,lib}/**/*.rb'
 
     # Ratcheting floor: fail the full suite if coverage drops below the
     # current level. Raise this as coverage improves; never lower it.
