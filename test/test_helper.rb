@@ -2,6 +2,22 @@
 
 ENV['RACK_ENV'] = 'test'
 
+# Start coverage before any application code is required so every line is
+# tracked. Skipped when NOCOV is set (e.g. for a quick local run).
+unless ENV['NOCOV']
+  require 'simplecov'
+  SimpleCov.start do
+    skip '/test/'
+    skip '/vendor/'
+    cover '{app,lib}/**/*.rb'
+
+    # Ratcheting floor: fail the full suite if coverage drops below the
+    # current level. Raise this as coverage improves; never lower it.
+    # Only enforced for a full run (a single-file run can't hit the bar).
+    minimum_coverage(line: 91) if ENV['COVERAGE_ENFORCE']
+  end
+end
+
 require 'minitest/autorun'
 require 'rack/test'
 require 'mocha/minitest'
