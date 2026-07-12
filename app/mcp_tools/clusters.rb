@@ -31,11 +31,11 @@ class GetClusterTool < MCP::Tool
   tool_name 'get_cluster'
   description 'Get details for a specific HPC cluster by ID'
   input_schema({
-    type: 'object',
+    type:       'object',
     properties: {
       cluster_id: { type: 'string', description: 'Cluster identifier' }
     },
-    required: ['cluster_id']
+    required:   ['cluster_id']
   })
 
   def self.call(server_context:, cluster_id:, **_params)
@@ -57,11 +57,11 @@ class ListAccountsTool < MCP::Tool
   tool_name 'list_accounts'
   description 'List accounts available for job submission on a cluster'
   input_schema({
-    type: 'object',
+    type:       'object',
     properties: {
       cluster_id: { type: 'string', description: 'Cluster identifier' }
     },
-    required: ['cluster_id']
+    required:   ['cluster_id']
   })
 
   def self.call(server_context:, cluster_id:, **_params)
@@ -85,11 +85,11 @@ class GetClusterInfoTool < MCP::Tool
   tool_name 'get_cluster_info'
   description 'Get resource utilization info for a cluster (nodes, CPUs, GPUs)'
   input_schema({
-    type: 'object',
+    type:       'object',
     properties: {
       cluster_id: { type: 'string', description: 'Cluster identifier' }
     },
-    required: ['cluster_id']
+    required:   ['cluster_id']
   })
 
   def self.call(server_context:, cluster_id:, **_params)
@@ -110,11 +110,11 @@ class ListQueuesTool < MCP::Tool
   tool_name 'list_queues'
   description 'List queues/partitions available on a cluster'
   input_schema({
-    type: 'object',
+    type:       'object',
     properties: {
       cluster_id: { type: 'string', description: 'Cluster identifier' }
     },
-    required: ['cluster_id']
+    required:   ['cluster_id']
   })
 
   def self.call(server_context:, cluster_id:, **_params)

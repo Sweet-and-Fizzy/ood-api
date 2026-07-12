@@ -96,8 +96,8 @@ class ListHistoricJobsToolTest < Minitest::Test
 
   def test_lists_historic_jobs
     jobs = [
-      mock_job_info(id: '100', job_name: 'old_sim', status: :completed, job_owner: ENV['USER']),
-      mock_job_info(id: '101', job_name: 'old_sim2', status: :completed, job_owner: ENV['USER'])
+      mock_job_info(id: '100', job_name: 'old_sim', status: :completed, job_owner: ENV.fetch('USER', nil)),
+      mock_job_info(id: '101', job_name: 'old_sim2', status: :completed, job_owner: ENV.fetch('USER', nil))
     ]
     adapter = mock('adapter')
     adapter.stubs(:info_historic).returns(jobs)
@@ -138,7 +138,7 @@ class SubmitJobToolTest < Minitest::Test
 
     result = SubmitJobTool.call(
       server_context: nil,
-      cluster_id: 'cluster1',
+      cluster_id:     'cluster1',
       script_content: '#!/bin/bash\necho hello'
     )
     content = result.to_h
@@ -151,7 +151,7 @@ class SubmitJobToolTest < Minitest::Test
   def test_error_on_empty_script
     result = SubmitJobTool.call(
       server_context: nil,
-      cluster_id: 'cluster1',
+      cluster_id:     'cluster1',
       script_content: ''
     )
     content = result.to_h

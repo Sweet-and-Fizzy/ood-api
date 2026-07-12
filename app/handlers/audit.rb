@@ -26,7 +26,7 @@ module Handlers
 
         "#{k}=#{quote(v)}"
       end
-      $stderr.puts "ood_api_audit #{parts.join(' ')}"
+      warn "ood_api_audit #{parts.join(' ')}"
     end
     private_class_method :emit
 

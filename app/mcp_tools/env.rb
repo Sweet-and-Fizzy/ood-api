@@ -8,7 +8,7 @@ class ListEnvTool < MCP::Tool
   tool_name 'list_env'
   description 'List allowed environment variables, optionally filtered by prefix'
   input_schema({
-    type: 'object',
+    type:       'object',
     properties: {
       prefix: { type: 'string', description: 'Filter variables by this prefix (e.g. SLURM_)' }
     }
@@ -35,11 +35,11 @@ class GetEnvTool < MCP::Tool
   tool_name 'get_env'
   description 'Get the value of a specific environment variable'
   input_schema({
-    type: 'object',
+    type:       'object',
     properties: {
       name: { type: 'string', description: 'Environment variable name' }
     },
-    required: ['name']
+    required:   ['name']
   })
 
   def self.call(server_context:, name:, **_params)

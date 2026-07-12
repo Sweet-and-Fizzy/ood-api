@@ -17,12 +17,12 @@ MCP.configure do |config|
     if data[:method] == 'initialize' && data[:client]
       user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
       Handlers::Audit.emit_event(
-        op: 'mcp_initialize',
-        user: user,
-        source: 'mcp',
-        client: data[:client][:name],
+        op:             'mcp_initialize',
+        user:           user,
+        source:         'mcp',
+        client:         data[:client][:name],
         client_version: data[:client][:version],
-        duration: data[:duration]&.round(4)
+        duration:       data[:duration]&.round(4)
       )
     end
   end
@@ -31,15 +31,15 @@ end
 module OodApi
   def self.build_mcp_server
     server = MCP::Server.new(
-      name: 'ood-api',
+      name:         'ood-api',
       instructions: 'Open OnDemand HPC cluster management tools. Use these tools to list clusters, discover accounts and queues, check cluster utilization, submit/cancel/hold/release jobs with optional dependencies, view job history, manage files (read, write, append, create directories, delete), and query environment variables. Read the ood://context resource for site-specific policies before acting.',
-      tools: [
+      tools:        [
         ListClustersTool, GetClusterTool, ListAccountsTool, ListQueuesTool, GetClusterInfoTool,
         ListJobsTool, GetJobTool, ListHistoricJobsTool, SubmitJobTool, CancelJobTool, HoldJobTool, ReleaseJobTool,
         ListFilesTool, ReadFileTool, WriteFileTool, CreateDirectoryTool, DeleteFileTool,
         ListEnvTool, GetEnvTool
       ],
-      resources: [CONTEXT_RESOURCE]
+      resources:    [CONTEXT_RESOURCE]
     )
 
     server.resources_read_handler do |params|

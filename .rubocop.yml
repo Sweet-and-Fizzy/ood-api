@@ -40,21 +40,65 @@ Layout/FirstHashElementIndentation:
 Layout/HashAlignment:
   EnforcedColonStyle: table
   EnforcedHashRocketStyle: table
+# The MCP server `instructions:` string is user-facing prose that reads
+# poorly when wrapped; allow that one file to exceed the line limit.
 Layout/LineLength:
   Max: 120
+  Exclude:
+    - 'app/mcp_server.rb'
 
 # metrics
 Metrics/ModuleLength:
   Enabled: false
 Metrics/BlockLength:
   Enabled: false
+# Job submission and the MCP tool that wraps it carry the scheduler's full
+# option set (16 optional params), so these methods run a bit longer and more
+# branchy than a typical method. The limits below accommodate that real
+# surface rather than forcing indirection into security-sensitive code; the
+# test env-allowlist builder is likewise a flat data-driven method.
 Metrics/MethodLength:
-  Max: 20
+  Max: 28
   CountAsOne:
     - 'heredoc'
 Metrics/ClassLength:
   Enabled: false
 Metrics/CyclomaticComplexity:
-  Max: 10
+  Max: 11
+Metrics/PerceivedComplexity:
+  Max: 11
 Metrics/AbcSize:
-  Max: 30
+  Max: 40
+# The submit tool exposes every scheduler option as a keyword; a long
+# parameter list is the interface, not a smell.
+Metrics/ParameterLists:
+  Exclude:
+    - 'app/mcp_tools/jobs.rb'
+
+# MCP tool entry points must implement the gem's fixed call signature —
+# `def self.call(server_context:, **params)` — so `server_context:` is a
+# required keyword even for tools that don't consult it. Allowing unused
+# keyword args here reflects the interface contract, not dead code.
+Lint/UnusedMethodArgument:
+  AllowUnusedKeywordArguments: true
+
+# The audit and job handlers legitimately map several distinct upstream
+# error types to the same HTTP response. Collapsing the rescue branches
+# would hide which upstream failure occurred, so keep them separate.
+Lint/DuplicateBranch:
+  Exclude:
+    - 'app/api.rb'
+    - 'app/handlers/clusters.rb'
+
+# `op` is a deliberate, consistent domain term (operation) used across every
+# audit call site; renaming it for the 3-char minimum would churn the API.
+Naming/MethodParameterName:
+  AllowedNames:
+    - op
+    - id
+
+# `ENV['HOME']` in test setup is assigned to and read intentionally; the
+# Dir.home rewrite is either invalid (can't assign) or less clear in tests.
+Style/EnvHome:
+  Exclude:
+    - 'test/**/*'

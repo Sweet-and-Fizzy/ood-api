@@ -37,8 +37,8 @@ module Handlers
       raise ForbiddenError, 'Permission denied' unless p.readable?
 
       effective_limit = max_size ? [max_size, MAX_FILE_READ].min : MAX_FILE_READ
-      unless max_size
-        raise PayloadTooLargeError, "File too large (max #{effective_limit} bytes)" if p.size > effective_limit
+      if !max_size && (p.size > effective_limit)
+        raise PayloadTooLargeError, "File too large (max #{effective_limit} bytes)"
       end
 
       max_size ? File.read(p.to_s, effective_limit) : p.read
@@ -100,6 +100,7 @@ module Handlers
           FileUtils.rm_rf(p)
         else
           raise ValidationError, 'Directory not empty' unless p.children.empty?
+
           p.rmdir
         end
       else
