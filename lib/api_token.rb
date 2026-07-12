@@ -83,7 +83,12 @@ module OodApi
 
       def save_tokens(tokens)
         FileUtils.mkdir_p(TOKENS_DIR)
-        File.write(TOKENS_FILE, JSON.pretty_generate(tokens))
+        # Create with 0600 from the start so the token file is never briefly
+        # world-readable between creation and chmod. The trailing chmod also
+        # narrows any pre-existing file that predates this change.
+        File.open(TOKENS_FILE, File::WRONLY | File::CREAT | File::TRUNC, 0o600) do |f|
+          f.write(JSON.pretty_generate(tokens))
+        end
         File.chmod(0o600, TOKENS_FILE)
       end
 
