@@ -18,4 +18,5 @@ group :test do
   gem 'minitest'
   gem 'mocha'
   gem 'rack-test'
+  gem 'simplecov', require: false
 end
