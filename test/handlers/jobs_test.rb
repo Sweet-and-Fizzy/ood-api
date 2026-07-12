@@ -79,7 +79,8 @@ class HandlersJobsTest < Minitest::Test
   end
 
   def test_get_raises_not_found_for_nil_job_id
-    @adapter.stubs(:info).returns(OodCore::Job::Info.new(id: nil, status: OodCore::Job::Status.new(state: :undetermined)))
+    @adapter.stubs(:info).returns(OodCore::Job::Info.new(id:     nil,
+                                                         status: OodCore::Job::Status.new(state: :undetermined)))
     assert_raises(Handlers::NotFoundError) do
       Handlers::Jobs.get(clusters: @clusters, cluster_id: 'cluster1', job_id: '999')
     end
@@ -137,7 +138,7 @@ class HandlersJobsTest < Minitest::Test
   end
 
   def test_submit_passes_dependencies
-    @adapter.expects(:submit).with do |script, **kwargs|
+    @adapter.expects(:submit).with do |_script, **kwargs|
       kwargs[:afterok] == ['100', '101'] && kwargs[:afterany] == ['200']
     end.returns('300')
     @adapter.stubs(:info).returns(mock_job_info(id: '300'))

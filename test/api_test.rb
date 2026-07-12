@@ -221,7 +221,8 @@ class ApiTest < Minitest::Test
     @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
 
     post '/api/v1/jobs',
-         { cluster: 'cluster1', script: { content: "#!/bin/bash\necho hello" }, options: { job_name: 'api-job' } }.to_json,
+         { cluster: 'cluster1', script: { content: "#!/bin/bash\necho hello" },
+options: { job_name: 'api-job' } }.to_json,
          auth_header(token).merge('CONTENT_TYPE' => 'application/json')
 
     assert_equal 201, last_response.status
