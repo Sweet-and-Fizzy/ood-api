@@ -37,11 +37,9 @@ class McpServerTest < Minitest::Test
       jsonrpc: '2.0', id: 1, method: 'initialize',
       params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'test', version: '1.0' } }
     )
-    env = Rack::MockRequest.env_for(
-      '/', method: 'POST', input: body,
-      'CONTENT_TYPE' => 'application/json',
-      'HTTP_ACCEPT' => 'application/json, text/event-stream'
-    )
+    env = Rack::MockRequest.env_for('/', method: 'POST', input: body)
+    env['CONTENT_TYPE'] = 'application/json'
+    env['HTTP_ACCEPT'] = 'application/json, text/event-stream'
 
     status, _headers, _resp = app.call(env)
     assert_kind_of Integer, status
