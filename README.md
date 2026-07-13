@@ -55,7 +55,7 @@ cd ood-api
 bundle install --path vendor/bundle
 
 # Pin to a release (recommended)
-# git checkout v1.0.0
+# git checkout v0.1.0
 ```
 
 ### 2. Configure for your site
