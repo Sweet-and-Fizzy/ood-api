@@ -6,6 +6,10 @@ OOD API is an Open OnDemand Passenger app that provides a REST API and Model Con
 
 An optional Dashboard plugin provides a token management UI for sites using application-level authentication.
 
+**End users:** see the [User Guide](docs/user-guide.md) for how to authenticate,
+call the REST API, and use the MCP tools. The rest of this README is aimed at
+administrators deploying the app.
+
 - Upstream project: [Model Context Protocol](https://modelcontextprotocol.io/)
 - Repository: [Sweet-and-Fizzy/ood-api](https://github.com/Sweet-and-Fizzy/ood-api)
 
