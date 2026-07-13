@@ -458,6 +458,8 @@ separate.
 
 ## See also
 
+- **[User Guide](user-guide.md)** — end-user guide to authenticating and using
+  the REST API and MCP tools
 - **[API reference](api.md)** — File read/write limits, historic jobs
   behavior, and error semantics
 - **[README](../README.md)** — Installation, configuration, and
