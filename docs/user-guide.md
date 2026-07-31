@@ -41,7 +41,11 @@ client at the address and it'll open a browser for you to log in:
 claude mcp add ood-hpc --transport http https://<your-ood-host>/pun/sys/ood-api/mcp
 ```
 
-If not, your admin will give you a token to include instead:
+If not, you'll need a JWT from your identity provider first. Ask your
+administrator for your site's issuer URL and client ID, then use a tool like
+`oidc-agent` to get a token (see
+[§1.1](#11-bearer-jwt-from-your-identity-provider) below for the full
+walkthrough). Once you have it:
 
 ```bash
 claude mcp add ood-hpc --transport http \
