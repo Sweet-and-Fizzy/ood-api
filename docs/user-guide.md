@@ -1,3 +1,5 @@
+<!-- Site maintainers: this guide is based on ood-api's docs/user-guide.md template (v0.1.0). Note any local customizations here so future template updates don't overwrite them. -->
+
 # OOD API — User Guide
 
 A guide for **end users** of an Open OnDemand site that has deployed the OOD
@@ -5,13 +7,20 @@ API. It covers how to authenticate, call the REST API, and drive the MCP tools
 from an LLM client.
 
 This guide is written generically. Wherever you see a placeholder like
-`<your-ood-host>` or `<your-idp>`, substitute the value for your site — your
-site administrator can provide these, and sites are encouraged to copy this
-guide and fill in their specifics for their own users.
+`<your-ood-host>` or `<your-idp>`, substitute the value for your site.
 
-> **Admins:** this is the user-facing companion to the setup docs. See the
-> [Installation guide](installation.md) and [MCP authentication](mcp-auth.md)
-> for configuring the auth methods below. Point your users here.
+> **Admins — before you publish this guide for your users:**
+>
+> - Replace `<your-ood-host>` and `<your-idp>` throughout with your site's
+>   values.
+> - If your site doesn't enable application tokens, you can delete §1.2 and
+>   the related row in the "Which method do I use?" table below — it won't
+>   apply to your users.
+> - Add a support contact where users can go if they get stuck: `<your
+>   support contact, e.g. hpc-help@example.edu or your ticketing system>`.
+> - See the [Installation guide](installation.md) and
+>   [MCP authentication](mcp-auth.md) for configuring the auth methods
+>   described below.
 
 ---
 
@@ -263,6 +272,12 @@ The discover-first pattern — check accounts and queues before submitting — a
 the most common submission errors, since valid values differ per site.
 
 ---
+
+## Getting help
+
+Something here not matching what you're seeing, or stuck partway through?
+Contact `<your site's support contact, e.g. hpc-help@example.edu or your
+ticketing system>`.
 
 ## See also
 
