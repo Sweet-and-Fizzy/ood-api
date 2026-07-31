@@ -11,6 +11,31 @@ module Handlers
     MAX_FILE_READ  = ENV.fetch('OOD_API_MAX_FILE_READ', 10 * 1024 * 1024).to_i
     MAX_FILE_WRITE = ENV.fetch('OOD_API_MAX_FILE_WRITE', 50 * 1024 * 1024).to_i
 
+    # Every way the filesystem says "no room", mapped to 507 rather than a bare
+    # 500. EDQUOT is the one that actually bites on HPC sites — a per-user home
+    # quota is far more common than a genuinely full filesystem — and ENOSPC
+    # covers exhausted inodes as well as exhausted blocks. Errno constants are
+    # platform-dependent, so look them up rather than naming them directly.
+    OUT_OF_SPACE_ERRORS = [:ENOSPC, :EDQUOT, :EFBIG].filter_map do |name|
+      Errno.const_get(name) if Errno.const_defined?(name)
+    end.freeze
+
+    # Filesystem complaints about the shape of the path itself. Each is the
+    # caller's mistake, not a server fault: a component that is not a directory,
+    # a symlink loop, or a name longer than the filesystem allows. They escaped
+    # as blank 500s on REST and as -32603 protocol errors on MCP.
+    BAD_PATH_ERRORS = [:ENOTDIR, :ELOOP, :ENAMETOOLONG, :EISDIR, :EINVAL].filter_map do |name|
+      Errno.const_get(name) if Errno.const_defined?(name)
+    end.freeze
+
+    def self.out_of_space_message(err)
+      case err
+      when Errno::EDQUOT then 'Disk quota exceeded'
+      when Errno::EFBIG then 'File too large for the filesystem'
+      else 'No space left on device'
+      end
+    end
+
     # --- public API ---
 
     def self.list(path:)
@@ -30,11 +55,13 @@ module Handlers
     end
 
     def self.read(path:, max_size: nil)
+      # Guard here as well as at the route: MCP passes max_size straight
+      # through, and a negative would reach File.read and raise ArgumentError.
+      raise ValidationError, 'max_size must be greater than zero' if max_size && max_size.to_i < 1
+
       p = normalize_path(path)
       validate_path!(p)
-      raise NotFoundError, 'File not found' unless p.exist?
-      raise ValidationError, 'Cannot read directory contents' if p.directory?
-      raise ForbiddenError, 'Permission denied' unless p.readable?
+      readable_file!(p)
 
       effective_limit = max_size ? [max_size, MAX_FILE_READ].min : MAX_FILE_READ
       if !max_size && (p.size > effective_limit)
@@ -46,6 +73,18 @@ module Handlers
       raise NotFoundError, 'File not found'
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
+    end
+
+    def self.readable_file!(path)
+      raise NotFoundError, 'File not found' unless path.exist?
+      raise ValidationError, 'Cannot read directory contents' if path.directory?
+      # Regular files only. Reading a FIFO blocks in read(2) until someone
+      # writes, which wedges the Passenger worker indefinitely — with
+      # passenger_min_instances 0 that takes the app down for the user. Device
+      # nodes are worse still: /dev/zero never ends. Nothing legitimate here
+      # reads a non-regular file, and an agent can be talked into trying.
+      raise ValidationError, 'Not a regular file' unless path.file?
+      raise ForbiddenError, 'Permission denied' unless path.readable?
     end
 
     def self.write(path:, content:, append: false)
@@ -63,8 +102,10 @@ module Handlers
       p
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
-    rescue Errno::ENOSPC
-      raise StorageError, 'No space left on device'
+    rescue *OUT_OF_SPACE_ERRORS => e
+      raise StorageError, out_of_space_message(e)
+    rescue *BAD_PATH_ERRORS => e
+      raise ValidationError, e.message.sub(/ @ .*/, '')
     end
 
     def self.mkdir(path:)
@@ -78,6 +119,10 @@ module Handlers
       raise ForbiddenError, 'Permission denied'
     rescue Errno::EEXIST
       raise ValidationError, 'Path already exists'
+    rescue *OUT_OF_SPACE_ERRORS => e
+      raise StorageError, out_of_space_message(e)
+    rescue *BAD_PATH_ERRORS => e
+      raise ValidationError, e.message.sub(/ @ .*/, '')
     end
 
     def self.touch(path:)
@@ -88,6 +133,10 @@ module Handlers
       p
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
+    rescue *OUT_OF_SPACE_ERRORS => e
+      raise StorageError, out_of_space_message(e)
+    rescue *BAD_PATH_ERRORS => e
+      raise ValidationError, e.message.sub(/ @ .*/, '')
     end
 
     def self.delete(path:, recursive: false)
@@ -97,6 +146,10 @@ module Handlers
 
       if p.directory?
         if recursive
+          # validate_path! only checked the target. Recursion would sweep any
+          # denied path beneath it — deleting ~/.config takes ~/.config/ondemand
+          # (the token store) with it, and deleting ~ takes ~/.ssh.
+          deny_recursive!(p)
           FileUtils.rm_rf(p)
         else
           raise ValidationError, 'Directory not empty' unless p.children.empty?
@@ -118,9 +171,21 @@ module Handlers
 
     # --- exposed helpers (used by routes for param handling) ---
 
+    # Single chokepoint for every file operation, so path-shape rejections
+    # belong here rather than in each caller.
+    #
+    # The encoding check guards the security check itself: Pathname#ascend
+    # matches against a regex, which raises ArgumentError on invalid UTF-8, and
+    # validate_path! calls it via find_real_parent. So a path with one stray
+    # byte crashed out of the allowed-roots and deny-list checks before they
+    # could reach a verdict — a 500 rather than a refusal. Reject it here, as a
+    # malformed request, so the checks always run on something well-formed.
     def self.normalize_path(path_str)
-      expanded = File.expand_path(path_str.to_s)
-      Pathname.new(expanded)
+      raw = path_str.to_s
+      raise ValidationError, 'path contains a null byte' if raw.include?("\0")
+      raise ValidationError, 'path is not valid UTF-8' unless raw.valid_encoding?
+
+      Pathname.new(File.expand_path(raw))
     end
 
     def self.validate_path!(path)
@@ -128,6 +193,126 @@ module Handlers
       real_path = path.exist? ? path.realpath : find_real_parent(path)
       allowed = allowed_roots.any? { |root| path_under?(real_path, root) }
       raise ForbiddenError, 'Access denied: path not in allowed directories' unless allowed
+
+      deny_sensitive!(path, real_path)
+      deny_by_inode!(path)
+    end
+
+    # Name-based checks cannot see a hardlink: a second name for a denied
+    # inode resolves to itself, so realpath reports the alias, not the
+    # original. Compare device+inode against the denied files themselves.
+    def self.deny_by_inode!(path)
+      return unless path.exist?
+      return if path.directory?
+
+      target = safe_lstat(path)
+      return if target.nil?
+      return if target.nlink < 2 # not hardlinked; the name checks already covered it
+
+      denied_inodes.each do |(dev, ino), label|
+        next unless target.dev == dev && target.ino == ino
+
+        raise ForbiddenError, "Access denied: #{label} is not accessible through this API"
+      end
+    end
+
+    # device+inode of every currently-existing denied file, mapped to the
+    # relative name used in error messages.
+    def self.denied_inodes
+      home = Pathname.new(Dir.home)
+      home = home.realpath if home.exist?
+      map = {}
+
+      DENIED_EXACT.each { |rel| record_inode(map, home + rel, rel) }
+      DENIED_DIRS.each do |dir|
+        base = home + dir
+        next unless base.directory?
+
+        base.find { |child| record_inode(map, child, "#{dir}/#{child.basename}") unless child.directory? }
+      end
+      map
+    end
+
+    def self.safe_lstat(pathname)
+      pathname.lstat
+    rescue SystemCallError
+      nil
+    end
+
+    def self.record_inode(map, pathname, label)
+      st = safe_lstat(pathname)
+      map[[st.dev, st.ino]] = label if st
+    end
+
+    # Refuse a recursive delete whose tree contains a denied path. Compares
+    # prefixes rather than walking the tree: the denied set is small and fixed,
+    # and walking a large home directory on every delete would be slow.
+    def self.deny_recursive!(dir)
+      home = Pathname.new(Dir.home)
+      home = home.realpath if home.exist?
+      root = dir.exist? ? dir.realpath : dir
+
+      (DENIED_DIRS + DENIED_EXACT).each do |rel|
+        denied = home + rel
+        next unless denied.exist?
+        next unless path_under?(denied.realpath, root) || denied.realpath == root
+
+        raise ForbiddenError,
+              "Access denied: recursive delete would remove #{rel}, which is not accessible through this API"
+      end
+    end
+
+    # Paths this API refuses to touch even though they sit inside the user's
+    # own home and the user could edit them by other means (a shell, the Files
+    # app). The point is not privilege — the PUN already runs as the user — but
+    # blast radius: an agent driving these tools on injected input should not
+    # be able to establish access that outlives the session.
+    #
+    # Checked against BOTH the requested path and its resolved form, so a
+    # symlink into a denied directory does not slip through.
+    DENIED_EXACT = [
+      '.bashrc', '.bash_profile', '.bash_login', '.bash_logout',
+      '.profile', '.login',
+      '.zshrc', '.zshenv', '.zprofile', '.zlogin',
+      '.cshrc', '.tcshrc', '.kshrc'
+    ].freeze
+
+    DENIED_DIRS = [
+      '.ssh',
+      '.config/ondemand',
+      '.config/systemd/user'
+    ].freeze
+
+    def self.deny_sensitive!(requested, resolved)
+      # Compare against both the literal and resolved home: on systems where
+      # home is reached through a symlink (/var -> /private/var on macOS) the
+      # requested path and the resolved one sit under different prefixes, and
+      # checking only one of them lets the other slip past.
+      raw_home = Pathname.new(Dir.home)
+      homes = [raw_home]
+      homes << raw_home.realpath if raw_home.exist?
+
+      candidates = [requested, resolved].uniq
+      pairs = candidates.product(homes.uniq)
+
+      pairs.each do |candidate, home|
+        rel = relative_to_home(candidate, home)
+        next unless rel
+
+        if DENIED_DIRS.any? { |d| rel == d || rel.start_with?("#{d}/") }
+          raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
+        end
+
+        raise ForbiddenError, "Access denied: #{rel} is not accessible through this API" if DENIED_EXACT.include?(rel)
+      end
+    end
+
+    def self.relative_to_home(path, home)
+      s = path.to_s
+      h = home.to_s
+      return nil unless s == h || s.start_with?("#{h}/")
+
+      s[(h.length + 1)..] || ''
     end
 
     # --- internal helpers ---
@@ -160,6 +345,9 @@ module Handlers
       Pathname.new('/')
     end
 
-    private_class_method :allowed_path_roots, :path_under?, :find_real_parent
+    private_class_method :allowed_path_roots, :path_under?, :find_real_parent,
+                         :deny_sensitive!, :relative_to_home,
+                         :deny_by_inode!, :denied_inodes, :record_inode, :safe_lstat,
+                         :deny_recursive!
   end
 end

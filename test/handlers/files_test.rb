@@ -190,6 +190,26 @@ class HandlersFilesTest < Minitest::Test
     assert_equal 'hello', result
   end
 
+  # A negative max_size used to reach File.read and raise an unrescued
+  # ArgumentError, surfacing as a 500 instead of a 400.
+  def test_read_with_negative_max_size_raises_validation_error
+    file_path = File.join(@test_dir, 'neg.txt')
+    File.write(file_path, 'hello')
+
+    assert_raises(Handlers::ValidationError) do
+      Handlers::Files.read(path: file_path, max_size: -5)
+    end
+  end
+
+  def test_read_with_zero_max_size_raises_validation_error
+    file_path = File.join(@test_dir, 'zero.txt')
+    File.write(file_path, 'hello')
+
+    assert_raises(Handlers::ValidationError) do
+      Handlers::Files.read(path: file_path, max_size: 0)
+    end
+  end
+
   # write with append
 
   def test_write_append_adds_to_file
@@ -228,5 +248,234 @@ class HandlersFilesTest < Minitest::Test
     path = Pathname.new(File.join(@test_dir, 'ok.txt'))
     # Should not raise
     Handlers::Files.validate_path!(path)
+  end
+
+  # --- sensitive-path deny-list ---
+  #
+  # These paths sit inside the user's own home and the user can edit them by
+  # other means; the deny-list exists so an agent driving these tools on
+  # injected input cannot establish access that outlives the session.
+
+  # A fake home under tmpdir, so tests never touch the real one.
+  def with_fake_home
+    fake = File.join(@test_dir, 'home')
+    FileUtils.mkdir_p(fake)
+    Dir.stub(:home, fake) { yield fake }
+  end
+
+  def assert_denied(rel)
+    with_fake_home do |home|
+      path = Handlers::Files.normalize_path(File.join(home, rel))
+      assert_raises(Handlers::ForbiddenError, "expected #{rel} to be denied") do
+        Handlers::Files.validate_path!(path)
+      end
+    end
+  end
+
+  def assert_allowed(rel)
+    with_fake_home do |home|
+      path = Handlers::Files.normalize_path(File.join(home, rel))
+      Handlers::Files.validate_path!(path) # should not raise
+    end
+  end
+
+  def test_denies_ssh_directory_and_contents
+    assert_denied('.ssh')
+    assert_denied('.ssh/authorized_keys')
+    assert_denied('.ssh/id_rsa')
+  end
+
+  def test_denies_api_token_store
+    assert_denied('.config/ondemand/tokens.json')
+  end
+
+  def test_denies_shell_init_files
+    assert_denied('.bashrc')
+    assert_denied('.zshrc')
+    assert_denied('.profile')
+  end
+
+  def test_denies_systemd_user_units
+    assert_denied('.config/systemd/user/evil.service')
+  end
+
+  def test_allows_ordinary_paths_that_merely_resemble_denied_ones
+    assert_allowed('Documents/notes.txt')
+    assert_allowed('.bashrc_backup')
+    assert_allowed('sshkeys/mine.pub')
+    assert_allowed('.config/other/app.json')
+  end
+
+  def test_denies_symlink_pointing_into_denied_directory
+    with_fake_home do |home|
+      FileUtils.mkdir_p(File.join(home, '.ssh'))
+      link = File.join(home, 'sneaky')
+      File.symlink(File.join(home, '.ssh'), link)
+
+      path = Handlers::Files.normalize_path(File.join(link, 'authorized_keys'))
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.validate_path!(path)
+      end
+    end
+  end
+
+  # A hardlink is a second name for the same inode. realpath resolves it to
+  # itself, so name-based checks cannot see the denied original — the deny-list
+  # has to compare device+inode.
+  def test_denies_hardlink_to_a_denied_file
+    with_fake_home do |home|
+      FileUtils.mkdir_p(File.join(home, '.ssh'))
+      original = File.join(home, '.ssh', 'id_rsa')
+      File.write(original, 'PRIVATE KEY')
+      alias_path = File.join(home, 'innocent_name')
+      File.link(original, alias_path)
+
+      path = Handlers::Files.normalize_path(alias_path)
+      error = assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.validate_path!(path)
+      end
+      assert_match(%r{\.ssh/id_rsa}, error.message, 'should name the real denied path')
+    end
+  end
+
+  def test_denies_hardlink_to_a_denied_shell_init_file
+    with_fake_home do |home|
+      original = File.join(home, '.bashrc')
+      File.write(original, 'export PATH=/usr/bin')
+      alias_path = File.join(home, 'notes.txt')
+      File.link(original, alias_path)
+
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.validate_path!(Handlers::Files.normalize_path(alias_path))
+      end
+    end
+  end
+
+  def test_allows_a_hardlink_between_two_ordinary_files
+    with_fake_home do |home|
+      original = File.join(home, 'data.txt')
+      File.write(original, 'ordinary')
+      alias_path = File.join(home, 'data_link.txt')
+      File.link(original, alias_path)
+
+      Handlers::Files.validate_path!(Handlers::Files.normalize_path(alias_path)) # no raise
+    end
+  end
+
+  # validate_path! only inspects the target. Recursion would sweep denied paths
+  # beneath an allowed parent — deleting ~/.config takes the token store with it.
+  def test_recursive_delete_refuses_to_sweep_a_denied_subdirectory
+    with_fake_home do |home|
+      FileUtils.mkdir_p(File.join(home, '.config', 'ondemand'))
+      File.write(File.join(home, '.config', 'ondemand', 'tokens.json'), '[]')
+
+      error = assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.delete(path: File.join(home, '.config'), recursive: true)
+      end
+      assert_match(%r{\.config/ondemand}, error.message)
+      assert File.exist?(File.join(home, '.config', 'ondemand', 'tokens.json')),
+             'token store must survive the refused delete'
+    end
+  end
+
+  def test_recursive_delete_of_an_ordinary_tree_still_works
+    with_fake_home do |home|
+      tree = File.join(home, 'scratch', 'nested')
+      FileUtils.mkdir_p(tree)
+      File.write(File.join(tree, 'f.txt'), 'x')
+
+      Handlers::Files.delete(path: File.join(home, 'scratch'), recursive: true)
+      refute File.exist?(File.join(home, 'scratch'))
+    end
+  end
+
+  # A full disk or exhausted quota is a 507, not a 500. Only `write` mapped
+  # these; touch and mkdir let the raw Errno escape as an unexplained 500.
+  # EDQUOT matters more than ENOSPC in practice — per-user home quotas are
+  # routine on HPC sites.
+  def test_touch_maps_out_of_space_to_storage_error
+    with_fake_home do |home|
+      target = File.join(home, 'f.txt')
+      FileUtils.stubs(:touch).raises(Errno::ENOSPC)
+      assert_raises(Handlers::StorageError) { Handlers::Files.touch(path: target) }
+    end
+  end
+
+  def test_mkdir_maps_out_of_space_to_storage_error
+    with_fake_home do |home|
+      Pathname.any_instance.stubs(:mkpath).raises(Errno::ENOSPC)
+      assert_raises(Handlers::StorageError) { Handlers::Files.mkdir(path: File.join(home, 'd')) }
+    end
+  end
+
+  def test_quota_exceeded_is_reported_distinctly
+    with_fake_home do |home|
+      FileUtils.stubs(:touch).raises(Errno::EDQUOT)
+      err = assert_raises(Handlers::StorageError) { Handlers::Files.touch(path: File.join(home, 'f.txt')) }
+      assert_match(/quota/i, err.message)
+    end
+  end
+
+  # Reading a FIFO blocks in read(2) until someone writes, wedging the
+  # Passenger worker; with passenger_min_instances 0 that takes the app down
+  # for that user. Device nodes are worse — /dev/zero never ends.
+  def test_read_refuses_a_fifo_instead_of_blocking
+    with_fake_home do |home|
+      fifo = File.join(home, 'pipe')
+      begin
+        File.mkfifo(fifo)
+      rescue NotImplementedError, Errno::EPERM
+        skip 'mkfifo unavailable'
+      end
+
+      err = assert_raises(Handlers::ValidationError) { Handlers::Files.read(path: fifo) }
+      assert_match(/regular file/i, err.message)
+    end
+  end
+
+  def test_read_still_accepts_an_ordinary_file
+    with_fake_home do |home|
+      f = File.join(home, 'ok.txt')
+      File.write(f, 'hello')
+      assert_equal 'hello', Handlers::Files.read(path: f)
+    end
+  end
+
+  # ENOTDIR/ELOOP/ENAMETOOLONG are the caller's mistake, not a server fault.
+  # They escaped as blank 500s on REST and -32603 on MCP.
+  def test_write_under_a_non_directory_is_a_validation_error
+    with_fake_home do |home|
+      plain = File.join(home, 'plain.txt')
+      File.write(plain, 'x')
+
+      assert_raises(Handlers::ValidationError) do
+        Handlers::Files.write(path: File.join(plain, 'child.txt'), content: 'x')
+      end
+    end
+  end
+
+  def test_overlong_name_is_a_validation_error
+    with_fake_home do |home|
+      assert_raises(Handlers::ValidationError) do
+        Handlers::Files.write(path: File.join(home, 'a' * 300), content: 'x')
+      end
+    end
+  end
+
+  # The encoding guard protects the security check itself. Pathname#ascend
+  # matches against a regex and raises ArgumentError on invalid UTF-8, and
+  # validate_path! reaches it via find_real_parent — so one stray byte crashed
+  # out of the allowed-roots and deny-list checks before they reached a
+  # verdict, surfacing as a 500 instead of a refusal.
+  def test_invalid_utf8_path_is_rejected_before_the_deny_list_runs
+    bad = (+'/tmp/x').force_encoding('UTF-8') << 255.chr('BINARY').force_encoding('UTF-8')
+
+    err = assert_raises(Handlers::ValidationError) { Handlers::Files.list(path: bad) }
+    assert_match(/UTF-8/, err.message)
+  end
+
+  def test_null_byte_path_is_rejected
+    err = assert_raises(Handlers::ValidationError) { Handlers::Files.list(path: "/tmp/x\0.txt") }
+    assert_match(/null byte/, err.message)
   end
 end
