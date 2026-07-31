@@ -252,22 +252,26 @@ your site's scheduler, not a broken install.
 | Tool | Parameters | Does |
 |---|---|---|
 | `list_clusters` | — | List clusters you can reach |
-| `get_cluster` | **cluster_id** | Cluster details |
-| `list_accounts` | **cluster_id** | Accounts you can charge jobs to |
-| `list_queues` | **cluster_id** | Queues/partitions |
-| `get_cluster_info` | **cluster_id** | Node/CPU/GPU utilization |
+| `get_cluster` | **cluster_id** | Get cluster details |
+| `list_accounts` | **cluster_id** | List accounts you can charge jobs to |
+| `list_queues` | **cluster_id** | List queues and partitions |
+| `get_cluster_info` | **cluster_id** | Get node, CPU, and GPU utilization |
 
 **Jobs**
 
 | Tool | Parameters | Does |
 |---|---|---|
-| `list_jobs` | **cluster_id** | Your active jobs |
-| `get_job` | **cluster_id**, **job_id** | Job details |
-| `list_historic_jobs` | **cluster_id** | Completed jobs (accounting) |
-| `submit_job` | **cluster_id**, **script_content**, and optional `workdir`, `job_name`, `queue_name`, `accounting_id`, `wall_time` (seconds), `output_path`, `error_path`, `native`, and dependencies (`after`, `afterok`, `afternotok`, `afterany`) | Submit a batch job |
+| `list_jobs` | **cluster_id** | List your active jobs |
+| `get_job` | **cluster_id**, **job_id** | Get job details |
+| `list_historic_jobs` | **cluster_id** | List completed jobs (accounting) |
+| `submit_job` | **cluster_id**, **script_content**, plus optional parameters (see below) | Submit a batch job |
 | `cancel_job` | **cluster_id**, **job_id** | Cancel a job |
 | `hold_job` | **cluster_id**, **job_id** | Hold a queued job |
 | `release_job` | **cluster_id**, **job_id** | Release a held job |
+
+`submit_job`'s optional parameters: `workdir`, `job_name`, `queue_name`,
+`accounting_id`, `wall_time` (seconds), `output_path`, `error_path`, `native`,
+and dependencies (`after`, `afterok`, `afternotok`, `afterany`).
 
 > MCP tools take **flat** parameters, as listed above — `script_content`,
 > `job_name`, `wall_time`. The REST API nests the same values under `script`
