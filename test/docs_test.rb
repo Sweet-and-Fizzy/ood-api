@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'English'
 require_relative 'test_helper'
 
 # Docs drift silently. Nothing fails when a number in the README stops matching
@@ -17,8 +18,16 @@ class DocsTest < Minitest::Test
     File.read(File.join(ROOT, name))
   end
 
+  # Tracked files only. Globbing the working tree also picks up scratch drafts
+  # and anything gitignored, so an untracked note in the repo root could fail
+  # the suite for a claim that ships nowhere.
   def all_docs
-    Dir[File.join(ROOT, '*.md'), File.join(ROOT, 'docs', '*.md')]
+    @all_docs ||= begin
+      out = `git -C #{ROOT} ls-files -z -- '*.md' 'docs/*.md'`
+      raise 'git ls-files failed' unless $CHILD_STATUS.success?
+
+      out.split("\0").map { |rel| File.join(ROOT, rel) }
+    end
   end
 
   # The README advertises a tool count. mcp_server.rb is the only place the
@@ -27,12 +36,16 @@ class DocsTest < Minitest::Test
     src = File.read(File.join(ROOT, 'app/mcp_server.rb'))
     actual = src[/tools:\s*\[(.*?)\]/m, 1].scan(/\w+Tool/).uniq.size
 
+    # Numerals only, and the number must sit directly before "tools" (or
+    # "MCP tools"). Docs state the count as a numeral, which is more scannable
+    # than spelling it out and keeps this pattern tight — allowing filler words
+    # made it match the "2" in the "### 3.2 Available tools" heading.
     found = 0
     all_docs.each do |path|
-      File.read(path).scan(/(\d+)\s+MCP tools/).flatten.each do |claimed|
+      File.read(path).scan(/\b(\d+)[ \t]+(?:MCP[ \t]+)?tools\b/i).flatten.each do |claimed|
         found += 1
         assert_equal actual, claimed.to_i,
-                     "#{File.basename(path)} claims #{claimed} MCP tools, server registers #{actual}"
+                     "#{File.basename(path)} claims #{claimed} tools, server registers #{actual}"
       end
     end
 

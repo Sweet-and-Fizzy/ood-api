@@ -246,7 +246,7 @@ and Cursor — including auto-refreshing tokens — is in
 
 ### 3.2 Available tools
 
-Nineteen tools, grouped by area, required parameters in **bold**. Chatting
+19 tools, grouped by area, required parameters in **bold**. Chatting
 with an AI client? You don't need to memorize this, it fills in the tool and
 parameters itself. This reference matters most for calling tools directly or
 scripting against the REST API.
