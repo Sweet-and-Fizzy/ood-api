@@ -69,13 +69,14 @@ API:
 Submitting jobs is not destructive but does consume allocation, so a client in
 a loop costs real money.
 
-That surface is reachable by an LLM through the MCP endpoint. It is constrained
-by an allowlist of path roots, a deny-list covering `~/.ssh`, shell init files,
-and the app's own token store, an environment-variable allowlist, and audit
-logging of every operation. Two gaps have no fix inside the app: there is **no
-rate limiting**, so a looping agent can saturate a scheduler your other users
-share, and **no read-only mode**, so you cannot offer the read surface without
-also offering write, delete, and job submission.
+All of this, reads plus the destructive operations above, is reachable by an
+LLM through the MCP endpoint, not just a person clicking through the dashboard.
+It is constrained by an allowlist of path roots, a deny-list covering `~/.ssh`,
+shell init files, and the app's own token store, an environment-variable
+allowlist, and audit logging of every operation. Two gaps have no fix inside
+the app: there is **no rate limiting**, so a looping agent can saturate a
+scheduler your other users share, and **no read-only mode**, so you cannot
+offer the read surface without also offering write, delete, and job submission.
 [Security posture](#security-posture) covers both, including what you can do
 about them at the Apache and scheduler layers.
 
