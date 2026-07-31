@@ -2,11 +2,12 @@
 
 ## Overview
 
-OOD API gives your users a way to drive the cluster without a browser and
-without SSH. It installs as an Open OnDemand app and exposes the same
-operations twice — as a REST API for scripts, and as an MCP server so an AI
-assistant can do the work conversationally. Every request runs as the
-authenticated user through OOD's existing per-user process model.
+OOD API lets your users submit jobs, manage files, and monitor their HPC
+cluster without a browser or SSH access. It installs as an Open OnDemand app
+and exposes the same operations through two interfaces: a REST API for
+scripts, and an MCP server so an AI assistant can do the work conversationally.
+Every request runs as the authenticated user, through OOD's existing per-user
+process model.
 
 **What people do with it:**
 
