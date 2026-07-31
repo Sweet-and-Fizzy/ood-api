@@ -13,9 +13,9 @@ authenticated user through OOD's existing per-user process model.
 | | |
 |---|---|
 | **A researcher with Claude Desktop** | "What happened to my jobs overnight?" — the assistant lists their queue, reads the failed job's stderr, and submits a corrected script. No terminal. |
-| **A lab's analysis pipeline** | A Python script authenticates with a JWT, submits a chain of dependent jobs with `afterok`, and polls for completion — no SSH keys to distribute or rotate. |
-| **A CI runner** | Pushes to a repo trigger a benchmark job on the cluster and report back, using a revocable token rather than a shared account. |
-| **A group's dashboard** | A web app shows queue depth, allocation usage, and running jobs for a research group, reading through the API as each viewer. |
+| **A lab's analysis pipeline** | A Python script authenticates with a JWT, submits a chain of dependent jobs (each starting only after the previous one succeeds), and polls for completion — no SSH keys to distribute or rotate. |
+| **A CI runner** | A push to a repo triggers a benchmark job on the cluster, which reports its result back — using a revocable token rather than a shared account. |
+| **A group's dashboard** | A web app shows queue depth, allocation usage, and running jobs for a research group — each viewer sees only what their own account can access, since the dashboard queries the API using their identity, not a shared one. |
 | **A site operator** | Drops a markdown file in `agents.d/` stating local policy — which partitions to use, which accounts to charge — and every AI client reads it before acting. |
 
 It is a headless API with no end-user UI, though an optional Dashboard plugin
