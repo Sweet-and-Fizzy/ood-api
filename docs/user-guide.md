@@ -22,6 +22,13 @@ This guide is written generically. Wherever you see a placeholder like
 >   [MCP authentication](mcp-auth.md) for configuring the auth methods
 >   described below.
 
+> **New here?** If you're connecting an AI assistant (Claude Desktop, Claude
+> Code, Cursor) and your site has OAuth discovery set up, you can skip ahead
+> to [§3.1](#31-connecting-a-client) and let the client handle login in a
+> browser. Writing a script, automating a pipeline, or your site doesn't have
+> OAuth discovery? Start with
+> [§1.1](#11-bearer-jwt-from-your-identity-provider) below.
+
 ---
 
 ## 1. Authenticating
@@ -124,8 +131,13 @@ issue a token yourself:
 An application token identifies you to the API, but it does **not** replace your
 OOD login. With OOD's default Apache auth, a request carrying only a bearer token
 is redirected to the login page — so from a terminal you send **both** your OOD
-session cookie and the token. Grab the session cookie from your browser once
-(DevTools → Application → Cookies → `mod_auth_openidc_session`), then:
+session cookie and the token.
+
+This next part looks more technical than it is: your browser is already
+holding that session cookie from when you logged in, you just need to copy it
+out once. In Chrome or Firefox, open DevTools (F12), go to the
+Application (Chrome) or Storage (Firefox) tab, find Cookies for your OOD site,
+and copy the value of `mod_auth_openidc_session`. Then:
 
 ```bash
 curl -H "Cookie: mod_auth_openidc_session=<your-session-cookie>" \
@@ -188,6 +200,12 @@ and Cursor — including auto-refreshing tokens — is in
 ### 3.2 Available tools
 
 Nineteen tools, grouped by area. Required parameters are in **bold**.
+
+If you're chatting with an AI client, you don't need to memorize any of this —
+the client reads your request in plain language and fills in the right tool
+and parameters itself. These tables matter most if you're calling tools
+directly, writing scripts against the REST API, or are just curious what's
+under the hood.
 
 Four of them depend on your scheduler: `list_accounts`, `list_queues`,
 `get_cluster_info`, and `list_historic_jobs` are fully supported on Slurm, and
