@@ -86,11 +86,37 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
-  def test_get_raises_not_found_on_adapter_error
-    @adapter.stubs(:info).raises(OodCore::JobAdapterError, 'not found')
-    assert_raises(Handlers::NotFoundError) do
+  # An unreachable scheduler must not be reported as a missing job. The adapter
+  # signals "no such job" by returning Info(status: :completed), not by raising,
+  # so a raise here means the scheduler could not answer at all.
+  def test_get_raises_adapter_error_when_scheduler_is_unreachable
+    @adapter.stubs(:info).raises(OodCore::JobAdapterError, 'Unable to contact slurm controller')
+    assert_raises(Handlers::AdapterError) do
       Handlers::Jobs.get(clusters: @clusters, cluster_id: 'cluster1', job_id: '999')
     end
+  end
+
+  # Adapters echo the requested id back instead of signalling "no such job", so
+  # an unknown id arrives as :completed with every other field nil — previously
+  # served as a 200 with a fabricated completed job.
+  def test_get_raises_not_found_for_unknown_id_echoed_back
+    @adapter.stubs(:info).returns(
+      OodCore::Job::Info.new(id: '99999', status: OodCore::Job::Status.new(state: :completed))
+    )
+    assert_raises(Handlers::NotFoundError) do
+      Handlers::Jobs.get(clusters: @clusters, cluster_id: 'cluster1', job_id: '99999')
+    end
+  end
+
+  # A job that genuinely ran carries an owner, so it must still be returned.
+  def test_get_returns_a_real_completed_job
+    @adapter.stubs(:info).returns(
+      OodCore::Job::Info.new(id: '456', job_owner: 'alice',
+                             status: OodCore::Job::Status.new(state: :completed))
+    )
+    job, = Handlers::Jobs.get(clusters: @clusters, cluster_id: 'cluster1', job_id: '456')
+    assert_equal '456', job.id
+    assert_equal 'alice', job.job_owner
   end
 
   # submit
@@ -151,9 +177,50 @@ class HandlersJobsTest < Minitest::Test
     )
   end
 
-  # cancel
+  # cancel / hold / release
+  #
+  # These three confirm the job exists before acting, because ood_core swallows
+  # "Invalid job id specified" and returns normally for a job that is not there.
+  # Stub `info` accordingly.
+
+  def stub_existing_job(id = '789')
+    @adapter.stubs(:info).with(id).returns(mock_job_info(id: id, job_owner: 'drew'))
+  end
+
+  # An id the scheduler has never heard of comes back as :completed with no
+  # owner. Acting on it used to return 200 with a fabricated status.
+  def stub_missing_job(id = '99999')
+    @adapter.stubs(:info).with(id).returns(
+      OodCore::Job::Info.new(id: id, status: OodCore::Job::Status.new(state: :completed))
+    )
+  end
+
+  def test_cancel_raises_not_found_for_unknown_job
+    stub_missing_job
+    @adapter.expects(:delete).never
+    assert_raises(Handlers::NotFoundError) do
+      Handlers::Jobs.cancel(clusters: @clusters, cluster_id: 'cluster1', job_id: '99999')
+    end
+  end
+
+  def test_hold_raises_not_found_for_unknown_job
+    stub_missing_job
+    @adapter.expects(:hold).never
+    assert_raises(Handlers::NotFoundError) do
+      Handlers::Jobs.hold(clusters: @clusters, cluster_id: 'cluster1', job_id: '99999')
+    end
+  end
+
+  def test_release_raises_not_found_for_unknown_job
+    stub_missing_job
+    @adapter.expects(:release).never
+    assert_raises(Handlers::NotFoundError) do
+      Handlers::Jobs.release(clusters: @clusters, cluster_id: 'cluster1', job_id: '99999')
+    end
+  end
 
   def test_cancel_calls_delete_on_adapter
+    stub_existing_job
     @adapter.expects(:delete).with('789')
     result = Handlers::Jobs.cancel(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
     assert_equal '789', result[:job_id]
@@ -161,6 +228,7 @@ class HandlersJobsTest < Minitest::Test
   end
 
   def test_cancel_raises_adapter_error_on_failure
+    stub_existing_job
     @adapter.stubs(:delete).raises(OodCore::JobAdapterError, 'permission denied')
     assert_raises(Handlers::AdapterError) do
       Handlers::Jobs.cancel(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
@@ -170,13 +238,15 @@ class HandlersJobsTest < Minitest::Test
   # hold
 
   def test_hold_calls_hold_on_adapter
+    stub_existing_job
     @adapter.expects(:hold).with('789')
     result = Handlers::Jobs.hold(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
     assert_equal '789', result[:job_id]
-    assert_equal 'held', result[:status]
+    assert_equal 'queued_held', result[:status]
   end
 
   def test_hold_raises_adapter_error_on_failure
+    stub_existing_job
     @adapter.stubs(:hold).raises(OodCore::JobAdapterError, 'cannot hold')
     assert_raises(Handlers::AdapterError) do
       Handlers::Jobs.hold(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
@@ -186,13 +256,15 @@ class HandlersJobsTest < Minitest::Test
   # release
 
   def test_release_calls_release_on_adapter
+    stub_existing_job
     @adapter.expects(:release).with('789')
     result = Handlers::Jobs.release(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
     assert_equal '789', result[:job_id]
-    assert_equal 'released', result[:status]
+    assert_equal 'queued', result[:status]
   end
 
   def test_release_raises_adapter_error_on_failure
+    stub_existing_job
     @adapter.stubs(:release).raises(OodCore::JobAdapterError, 'cannot release')
     assert_raises(Handlers::AdapterError) do
       Handlers::Jobs.release(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')

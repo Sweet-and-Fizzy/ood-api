@@ -18,25 +18,17 @@ module Handlers
 
     def self.accounts(clusters:, id:)
       cluster = get(clusters: clusters, id: id)
-      cluster.job_adapter.accounts
-    rescue OodCore::JobAdapterError => e
-      raise AdapterError, "Failed to list accounts: #{e.message}"
+      Handlers.with_adapter(cluster, 'list accounts') { cluster.job_adapter.accounts }
     end
 
     def self.queues(clusters:, id:)
       cluster = get(clusters: clusters, id: id)
-      cluster.job_adapter.queues
-    rescue OodCore::JobAdapterError => e
-      raise AdapterError, "Failed to list queues: #{e.message}"
+      Handlers.with_adapter(cluster, 'list queues') { cluster.job_adapter.queues }
     end
 
     def self.info(clusters:, id:)
       cluster = get(clusters: clusters, id: id)
-      cluster.job_adapter.cluster_info
-    rescue OodCore::JobAdapterError => e
-      raise AdapterError, "Failed to get cluster info: #{e.message}"
-    rescue NotImplementedError => e
-      raise AdapterError, "Failed to get cluster info: #{e.message}"
+      Handlers.with_adapter(cluster, 'get cluster info') { cluster.job_adapter.cluster_info }
     end
   end
 end
