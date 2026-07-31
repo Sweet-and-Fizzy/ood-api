@@ -246,18 +246,15 @@ and Cursor — including auto-refreshing tokens — is in
 
 ### 3.2 Available tools
 
-Nineteen tools, grouped by area. Required parameters are in **bold**.
+Nineteen tools, grouped by area, required parameters in **bold**. Chatting
+with an AI client? You don't need to memorize this, it fills in the tool and
+parameters itself. This reference matters most for calling tools directly or
+scripting against the REST API.
 
-If you're chatting with an AI client, you don't need to memorize any of this —
-the client reads your request in plain language and fills in the right tool
-and parameters itself. These tables matter most if you're calling tools
-directly, writing scripts against the REST API, or are just curious what's
-under the hood.
-
-Four of them depend on your scheduler: `list_accounts`, `list_queues`,
-`get_cluster_info`, and `list_historic_jobs` are fully supported on Slurm, and
-on other schedulers commonly return "not supported by the … adapter". That is
-your site's scheduler, not a broken install.
+Four tools depend on your scheduler (`list_accounts`, `list_queues`,
+`get_cluster_info`, `list_historic_jobs`): fully supported on Slurm, elsewhere
+they often return "not supported by the … adapter", that's your scheduler,
+not a broken install.
 
 **Clusters**
 
