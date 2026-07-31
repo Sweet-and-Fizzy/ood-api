@@ -37,7 +37,7 @@ module OodApi
     # bearer token server-to-server without a CORS preflight. The only
     # genuinely cross-origin surface — the /.well-known/oauth-* discovery
     # documents — is served by Apache, which sets its own
-    # Access-Control-Allow-Origin (see docs/mcp-oauth.md). A wildcard here
+    # Access-Control-Allow-Origin (see docs/mcp-auth.md). A wildcard here
     # would grant any website scripted access to a logged-in user's session
     # without protecting anything. If a site ever fronts this API with a
     # cross-origin SPA, add an explicit, origin-scoped allow-list then.

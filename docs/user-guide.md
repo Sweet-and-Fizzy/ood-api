@@ -10,7 +10,7 @@ site administrator can provide these, and sites are encouraged to copy this
 guide and fill in their specifics for their own users.
 
 > **Admins:** this is the user-facing companion to the setup docs. See the
-> [README](../README.md) for installation and [MCP authentication](mcp-oauth.md)
+> [Installation guide](installation.md) and [MCP authentication](mcp-auth.md)
 > for configuring the auth methods below. Point your users here.
 
 ---
@@ -27,22 +27,36 @@ not sure which applies, ask your administrator.
 
 Most sites authenticate with an OpenID Connect identity provider and use
 **bearer JWTs** (§1.1) — that is the normal path for calling the API and for
-connecting MCP clients. **Application tokens** (§1.2) are a fallback that some
-sites enable when their provider can't issue a verifiable JWT; you'll know your
-site uses them if your OOD Dashboard has an API Tokens page.
+connecting MCP clients. Some sites additionally enable **application tokens**
+(§1.2), either because their provider can't issue a verifiable JWT or because
+they want a separate revocable credential per client. You'll know your site
+uses them if your OOD Dashboard has an API Tokens page.
 
 | You want to… | Use |
 |---|---|
 | Call the API or connect an MCP client (Claude Code, Claude Desktop, Cursor, …) | **Bearer JWT** (§1.1) — the usual method |
 | Run unattended automation or CI | **Bearer JWT** (§1.1) |
-| Use a site that has no verifiable-JWT provider (e.g. Google OIDC) | **Application token** (§1.2), if your Dashboard offers one |
+| Use a site whose Dashboard has an API Tokens page | Whatever gets you past your site's login, **plus** an application token (§1.2) |
+| Use a site that has no verifiable-JWT provider (e.g. Google OIDC) | Session cookie **plus** an application token (§1.2) |
 
-Quick test that you can reach the API at all (the health endpoint needs no auth):
+An application token never travels alone — it accompanies whatever your site's
+Apache accepts. If that is a JWT, the pairing is easy. If your site has no
+verifiable-JWT provider, it is a **browser session cookie**, which you have to
+copy out of DevTools and which expires with your OIDC session (8 hours by
+default). That is tolerable for occasional interactive use and awkward for
+anything unattended — see §1.2 before building a pipeline on it.
+
+Quick test that you can reach the API at all:
 
 ```bash
-curl https://<your-ood-host>/pun/sys/ood-api/health
+curl -H "Authorization: Bearer $TOKEN" \
+  https://<your-ood-host>/pun/sys/ood-api/health
 # -> {"status":"ok"}
 ```
+
+`/health` skips the application-token check, but Apache still guards it like
+every other path — without a valid session or JWT you get a redirect to your
+identity provider, not a reply.
 
 ### 1.1 Bearer JWT (from your identity provider)
 
@@ -83,13 +97,14 @@ isn't available — use application tokens (§1.2) instead.
 
 > MCP clients using OAuth discovery can skip all of this — the client performs the
 > login flow for you in a browser. See §3.1 and
-> [MCP authentication](mcp-oauth.md).
+> [MCP authentication](mcp-auth.md).
 
-### 1.2 Application tokens (fallback, if your site enabled them)
+### 1.2 Application tokens (if your site enabled them)
 
-Some sites — typically those whose IdP can't issue a verifiable JWT — enable
-application-level tokens instead. You'll know this applies if your OOD Dashboard
-has a **Settings → API Tokens** page (`/settings/api_tokens`). If it does, you can
+Some sites enable application tokens as well — either because their IdP
+can't issue a verifiable JWT, or so you can hold a separate revocable credential
+per client. You'll know this applies if your OOD Dashboard has a
+**Settings → API Tokens** page (`/settings/api_tokens`). If it does, you can
 issue a token yourself:
 
 1. Open the OOD Dashboard in your browser and log in as usual.
@@ -105,15 +120,18 @@ session cookie and the token. Grab the session cookie from your browser once
 
 ```bash
 curl -H "Cookie: mod_auth_openidc_session=<your-session-cookie>" \
-     -H "Authorization: Bearer <your-app-token>" \
+     -H "X-OOD-API-Token: <your-app-token>" \
      https://<your-ood-host>/pun/sys/ood-api/api/v1/clusters
 ```
 
 The token itself doesn't expire on its own (it lives until you revoke it in the
-Dashboard), but the session cookie you must pair with it lasts only as long as
-your OIDC session — log in again to refresh it. MCP clients can't use application
-tokens (they can't carry your browser cookie past Apache), so for MCP or
-unattended work use a JWT (§1.1).
+Dashboard), but if you're pairing it with a browser session cookie, that cookie
+lasts only as long as your OIDC session — log in again to refresh it.
+
+An app token always accompanies something Apache accepts; it never replaces it.
+MCP clients can use one if they can set two headers (`Authorization: Bearer
+<your-jwt>` plus `X-OOD-API-Token`). For unattended work, a JWT alone (§1.1) is
+simpler.
 
 ---
 
@@ -156,7 +174,7 @@ claude mcp add ood-hpc --transport http \
 If your site set up OAuth discovery, you can omit the header and the client
 handles login in a browser. Full client setup for Claude Code, Claude Desktop,
 and Cursor — including auto-refreshing tokens — is in
-**[MCP authentication](mcp-oauth.md)**.
+**[MCP authentication](mcp-auth.md)**.
 
 ### 3.2 Available tools
 
@@ -168,9 +186,13 @@ Nineteen tools, grouped by area. Required parameters are in **bold**.
 |---|---|---|
 | `list_clusters` | — | List clusters you can reach |
 | `get_cluster` | **cluster_id** | Cluster details |
-| `list_accounts` | **cluster_id** | Accounts you can charge jobs to |
-| `list_queues` | **cluster_id** | Queues/partitions |
-| `get_cluster_info` | **cluster_id** | Node/CPU/GPU utilization |
+| `list_accounts` | **cluster_id** | Accounts you can charge jobs to † |
+| `list_queues` | **cluster_id** | Queues/partitions † |
+| `get_cluster_info` | **cluster_id** | Node/CPU/GPU utilization † |
+
+† Fully supported on Slurm. On other schedulers these — and
+`list_historic_jobs` below — commonly return "not supported by the … adapter".
+That is your site's scheduler, not a broken install.
 
 **Jobs**
 
@@ -184,7 +206,20 @@ Nineteen tools, grouped by area. Required parameters are in **bold**.
 | `hold_job` | **cluster_id**, **job_id** | Hold a queued job |
 | `release_job` | **cluster_id**, **job_id** | Release a held job |
 
-**Files** (paths must be absolute and within your allowed roots)
+> MCP tools take **flat** parameters, as listed above — `script_content`,
+> `job_name`, `wall_time`. The REST API nests the same values under `script`
+> and `options` (`script.content`, `options.job_name`). If you are switching
+> between the two, see [the REST reference](api.md#submit-job).
+
+**Files** (paths must be absolute and within your allowed roots — normally your
+home directory and `/tmp`)
+
+A few paths inside your home are off limits even though you own them: `~/.ssh`,
+your shell startup files (`.bashrc`, `.zshrc`, `.profile`, …),
+`~/.config/ondemand`, and `~/.config/systemd/user`. Reads and writes both return
+"not accessible through this API". You can still edit them normally in a shell
+or the Files app — the restriction only stops an assistant from changing how you
+log in.
 
 | Tool | Parameters | Does |
 |---|---|---|
@@ -231,6 +266,7 @@ the most common submission errors, since valid values differ per site.
 ## See also
 
 - **[docs/api.md](api.md)** — complete REST API reference with examples
-- **[docs/mcp-oauth.md](mcp-oauth.md)** — MCP client auth setup (static token and
+- **[docs/mcp-auth.md](mcp-auth.md)** — MCP client auth setup (static token and
   OAuth discovery)
-- **[README](../README.md)** — overview, installation, and configuration
+- **[README](../README.md)** — what the app does, and what it can reach
+- **[Installation](installation.md)** — for your administrator

@@ -32,7 +32,7 @@ class ApiTest < Minitest::Test
 
   # CORS — the app must not emit cross-origin headers. It is served
   # same-origin under the OOD proxy; a wildcard would expose a logged-in
-  # user's session to any website. See docs/api.md and docs/mcp-oauth.md.
+  # user's session to any website. See docs/api.md and docs/mcp-auth.md.
 
   def test_no_cors_headers_on_responses
     get '/health'

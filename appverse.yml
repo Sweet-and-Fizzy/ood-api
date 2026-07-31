@@ -4,7 +4,7 @@ description: >-
   cluster, job, file, and environment operations to scripts and to MCP
   clients, running as the authenticated user.
 
-software: "Open OnDemand API"
+software: "API Access"
 app_type: "companion_app"
 
 implementation_tags:

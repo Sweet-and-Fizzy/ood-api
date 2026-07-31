@@ -13,3 +13,11 @@ tmp/
 
 # Coverage
 coverage/
+
+# Local dev container helper
+docker/
+
+# Working artifacts, not deliverables
+docs/proposals/
+docs/superpowers/
+review-*.md
