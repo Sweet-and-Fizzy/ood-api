@@ -9,7 +9,7 @@ scripts, and an MCP server so an AI assistant can do the work conversationally.
 Every request runs as the authenticated user, through OOD's existing per-user
 process model.
 
-**What people do with it:**
+**What people can do with it:**
 
 | | |
 |---|---|
@@ -75,11 +75,11 @@ LLM through the MCP endpoint, not just a person clicking through the dashboard.
 It is constrained by an allowlist of path roots, a deny-list covering `~/.ssh`,
 shell init files, and the app's own token store, an environment-variable
 allowlist, and audit logging of every operation. Two gaps have no fix inside
-the app: there is **no rate limiting**, so a looping agent can saturate a
-scheduler your other users share, and **no read-only mode**, so you cannot
-offer the read surface without also offering write, delete, and job submission.
-[Security posture](#security-posture) covers both, including what you can do
-about them at the Apache and scheduler layers.
+the app. **No rate limiting** means a looping agent can saturate a scheduler
+your other users share. **No read-only mode** means you cannot offer the read
+surface without also offering write, delete, and job submission.
+[Security posture](#security-posture) covers both gaps, including what you can
+do about them at the Apache and scheduler layers.
 
 ## Architecture
 
