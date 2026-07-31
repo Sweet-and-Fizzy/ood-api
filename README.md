@@ -57,8 +57,12 @@ If you don't run Slurm, roughly a quarter of the surface will return
 for the per-adapter detail.
 
 **What this app can do as the user.** It runs inside OOD's per-user NGINX (PUN)
-as the authenticated user, so it can do what that user can do: submit and cancel
-jobs, and read, write, and recursively delete files under `$HOME` and `/tmp`.
+as the authenticated user, so it can do what that user can do:
+
+- Submit and cancel jobs.
+- Read and write files under `$HOME` and `/tmp`.
+- Delete files, including recursively.
+
 That surface is reachable by an LLM through the MCP endpoint. It is constrained
 by an allowlist of path roots, a deny-list covering `~/.ssh`, shell init files,
 and the app's own token store, an environment-variable allowlist, and audit
