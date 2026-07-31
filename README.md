@@ -57,13 +57,17 @@ If you don't run Slurm, roughly a quarter of the surface will return
 for the per-adapter detail.
 
 **What this app can do as the user.** It runs inside OOD's per-user NGINX (PUN)
-as the authenticated user, so it can do what that user can do. The full surface
-is in [What it exposes](#what-it-exposes); the parts worth weighing before you
-install are:
+as the authenticated user, so it can do what that user can do. Most of that
+surface is read-only ([What it exposes](#what-it-exposes) has the full list).
+Three operations destroy or overwrite data, and cannot be undone through the
+API:
 
-- Submitting and cancelling jobs.
-- Reading and writing files under `$HOME` and `/tmp`.
-- Deleting files, including whole directory trees.
+- **Cancelling a job**, losing whatever compute it had accumulated.
+- **Writing a file**, replacing its contents.
+- **Deleting a file or directory**, recursively if asked.
+
+Submitting jobs is not destructive but does consume allocation, so a client in
+a loop costs real money.
 
 That surface is reachable by an LLM through the MCP endpoint. It is constrained
 by an allowlist of path roots, a deny-list covering `~/.ssh`, shell init files,
