@@ -6,6 +6,11 @@ A guide for **end users** of an Open OnDemand site that has deployed the OOD
 API. It covers how to authenticate, call the REST API, and drive the MCP tools
 from an LLM client.
 
+This guide covers, in order: connecting an AI assistant (the fast path),
+authenticating and calling the REST API directly, and the full MCP tool
+reference with an example session. Skip to whichever one matches what you're
+doing.
+
 This guide is written generically. Wherever you see a placeholder like
 `<your-ood-host>` or `<your-idp>`, substitute the value for your site.
 
@@ -62,7 +67,10 @@ claude mcp add ood-hpc --transport http \
 > "Is my job running yet?"
 
 That's it, the assistant handles the rest. Writing a script instead, or want
-the full detail on authentication? Keep reading below.
+the full detail on authentication? Keep reading below. [Section 3](#3-using-the-mcp-tools)
+covers the same ground in more depth if you want to see all 19 available
+tools or what's happening under the hood, it's not required reading if the
+steps above already worked for you.
 
 ---
 
@@ -75,6 +83,10 @@ enabled. There are two, and **your site may support one or both** — if you are
 not sure which applies, ask your administrator.
 
 ### Which method do I use?
+
+Already connected an AI assistant using the quick start above? You're done,
+this section and the rest of the guide are for scripting and the full
+authentication reference.
 
 Most sites authenticate with an OpenID Connect identity provider and use
 **bearer JWTs** (§1.1) — that is the normal path for calling the API and for
@@ -306,7 +318,7 @@ log in.
 There is also an `ood://context` resource carrying your site's policies and
 guidance; a well-behaved client reads it before acting.
 
-### 3.3 A worked flow
+### 3.3 Example session
 
 Once connected, you drive the tools in natural language. A typical
 submit-and-monitor session:
