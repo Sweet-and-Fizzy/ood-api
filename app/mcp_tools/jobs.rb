@@ -34,7 +34,8 @@ class ListJobsTool < MCP::Tool
     end
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
-         Handlers::ForbiddenError, Handlers::AdapterError => e
+         Handlers::ForbiddenError, Handlers::AdapterError,
+         Handlers::NotSupportedError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
   end
 end
@@ -73,7 +74,8 @@ class GetJobTool < MCP::Tool
     TEXT
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
-         Handlers::ForbiddenError, Handlers::AdapterError => e
+         Handlers::ForbiddenError, Handlers::AdapterError,
+         Handlers::NotSupportedError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
   end
 end
@@ -108,7 +110,8 @@ class ListHistoricJobsTool < MCP::Tool
     end
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
-         Handlers::ForbiddenError, Handlers::AdapterError => e
+         Handlers::ForbiddenError, Handlers::AdapterError,
+         Handlers::NotSupportedError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
   end
 end
@@ -168,7 +171,8 @@ description: 'Job IDs that must complete (any status)' }
     text = "Job submitted successfully.\nJob ID: #{job_info.id}\nCluster: #{cluster.id}\nStatus: #{job_info.status}"
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
-         Handlers::ForbiddenError, Handlers::AdapterError => e
+         Handlers::ForbiddenError, Handlers::AdapterError,
+         Handlers::NotSupportedError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
   end
 end
@@ -197,7 +201,8 @@ class CancelJobTool < MCP::Tool
     text = "Job #{result[:job_id]} has been cancelled."
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
-         Handlers::ForbiddenError, Handlers::AdapterError => e
+         Handlers::ForbiddenError, Handlers::AdapterError,
+         Handlers::NotSupportedError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
   end
 end
@@ -220,7 +225,7 @@ class HoldJobTool < MCP::Tool
       Handlers::Jobs.hold(clusters: OodApi::App.clusters, cluster_id: cluster_id, job_id: job_id)
     end
     MCP::Tool::Response.new([{ type: 'text', text: "Job #{job_id} held." }])
-  rescue Handlers::NotFoundError, Handlers::AdapterError => e
+  rescue Handlers::NotFoundError, Handlers::AdapterError, Handlers::NotSupportedError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
   end
 end
@@ -243,7 +248,7 @@ class ReleaseJobTool < MCP::Tool
       Handlers::Jobs.release(clusters: OodApi::App.clusters, cluster_id: cluster_id, job_id: job_id)
     end
     MCP::Tool::Response.new([{ type: 'text', text: "Job #{job_id} released." }])
-  rescue Handlers::NotFoundError, Handlers::AdapterError => e
+  rescue Handlers::NotFoundError, Handlers::AdapterError, Handlers::NotSupportedError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
   end
 end

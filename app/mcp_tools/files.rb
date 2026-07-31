@@ -4,6 +4,23 @@ require 'mcp'
 require_relative '../handlers/audit'
 require_relative '../handlers/files'
 
+# Tool responses are serialised with to_json, which raises on a string that is
+# not valid in its own encoding — and the transport turns that into a bare HTTP
+# 500 with no JSON-RPC envelope, after the handler has already run.
+#
+# File contents are the common case. The PUN starts with no LANG, so
+# Encoding.default_external is US-ASCII and File.read tags the result US-ASCII;
+# a single accented character then makes the string invalid and read_file 500s
+# on a file it had just written. Real files are arbitrary bytes in any case, so
+# reinterpret as UTF-8 and replace whatever still does not decode.
+module McpText
+  def self.safe_text(value)
+    text = value.to_s
+    text = text.dup.force_encoding(Encoding::UTF_8) unless text.encoding == Encoding::UTF_8
+    text.valid_encoding? ? text : text.scrub('?')
+  end
+end
+
 class ListFilesTool < MCP::Tool
   tool_name 'list_files'
   description 'List contents of a directory or get file metadata'
@@ -31,8 +48,11 @@ class ListFilesTool < MCP::Tool
     end
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
-         Handlers::ForbiddenError, Handlers::PayloadTooLargeError => e
+         Handlers::ForbiddenError, Handlers::PayloadTooLargeError,
+         Handlers::StorageError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
+  rescue ArgumentError => e
+    MCP::Tool::Response.new([{ type: 'text', text: "Invalid path: #{e.message}" }], error: true)
   end
 end
 
@@ -53,10 +73,13 @@ class ReadFileTool < MCP::Tool
     content = Handlers::Audit.log(op: 'read_file', user: user, source: 'mcp', path: path) do
       Handlers::Files.read(path: path, max_size: max_size)
     end
-    MCP::Tool::Response.new([{ type: 'text', text: content }])
+    MCP::Tool::Response.new([{ type: 'text', text: McpText.safe_text(content) }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
-         Handlers::ForbiddenError, Handlers::PayloadTooLargeError => e
+         Handlers::ForbiddenError, Handlers::PayloadTooLargeError,
+         Handlers::StorageError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
+  rescue ArgumentError => e
+    MCP::Tool::Response.new([{ type: 'text', text: "Invalid path: #{e.message}" }], error: true)
   end
 end
 
@@ -84,6 +107,8 @@ class WriteFileTool < MCP::Tool
          Handlers::ForbiddenError, Handlers::PayloadTooLargeError,
          Handlers::StorageError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
+  rescue ArgumentError => e
+    MCP::Tool::Response.new([{ type: 'text', text: "Invalid path: #{e.message}" }], error: true)
   end
 end
 
@@ -106,8 +131,10 @@ class CreateDirectoryTool < MCP::Tool
     text = "Directory created: #{result}"
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
-         Handlers::ForbiddenError => e
+         Handlers::ForbiddenError, Handlers::StorageError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
+  rescue ArgumentError => e
+    MCP::Tool::Response.new([{ type: 'text', text: "Invalid path: #{e.message}" }], error: true)
   end
 end
 
@@ -131,7 +158,9 @@ class DeleteFileTool < MCP::Tool
     text = "Deleted: #{result[:path]}"
     MCP::Tool::Response.new([{ type: 'text', text: text }])
   rescue Handlers::NotFoundError, Handlers::ValidationError,
-         Handlers::ForbiddenError => e
+         Handlers::ForbiddenError, Handlers::StorageError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
+  rescue ArgumentError => e
+    MCP::Tool::Response.new([{ type: 'text', text: "Invalid path: #{e.message}" }], error: true)
   end
 end

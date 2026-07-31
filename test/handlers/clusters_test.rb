@@ -97,13 +97,39 @@ class HandlersClustersTest < Minitest::Test
     end
   end
 
-  def test_info_raises_adapter_error_for_not_implemented
+  def test_info_raises_not_supported_for_not_implemented
     adapter = mock('adapter')
     adapter.expects(:cluster_info).raises(NotImplementedError, 'not supported')
     @clusters[0].stubs(:job_adapter).returns(adapter)
 
-    assert_raises(Handlers::AdapterError) do
+    assert_raises(Handlers::NotSupportedError) do
       Handlers::Clusters.info(clusters: @clusters, id: 'cluster1')
+    end
+  end
+
+  # Adapters raise their own error classes that do NOT descend from
+  # OodCore::JobAdapterError — e.g. OodCore::Job::Adapters::Slurm::Batch::Error,
+  # which derives straight from StandardError. Before with_adapter these
+  # escaped as unhandled 500s.
+  def test_accounts_wraps_adapter_specific_error
+    adapter_error = Class.new(StandardError)
+    adapter = mock('adapter')
+    adapter.expects(:accounts).raises(adapter_error, 'sacctmgr failed')
+    @clusters[0].stubs(:job_adapter).returns(adapter)
+
+    error = assert_raises(Handlers::AdapterError) do
+      Handlers::Clusters.accounts(clusters: @clusters, id: 'cluster1')
+    end
+    assert_match(/sacctmgr failed/, error.message)
+  end
+
+  def test_queues_raises_not_supported_for_not_implemented
+    adapter = mock('adapter')
+    adapter.expects(:queues).raises(NotImplementedError, 'no queues')
+    @clusters[0].stubs(:job_adapter).returns(adapter)
+
+    assert_raises(Handlers::NotSupportedError) do
+      Handlers::Clusters.queues(clusters: @clusters, id: 'cluster1')
     end
   end
 end

@@ -171,6 +171,7 @@ class CancelJobToolTest < Minitest::Test
 
   def test_cancels_job
     adapter = mock('adapter')
+    adapter.stubs(:info).with('123').returns(mock_job_info(id: '123', job_owner: 'drew'))
     adapter.stubs(:delete).with('123')
     @cluster.stubs(:job_adapter).returns(adapter)
 
@@ -202,6 +203,7 @@ class HoldJobToolTest < Minitest::Test
 
   def test_holds_job
     adapter = mock('adapter')
+    adapter.stubs(:info).with('123').returns(mock_job_info(id: '123', job_owner: 'drew'))
     adapter.stubs(:hold).with('123')
     @cluster.stubs(:job_adapter).returns(adapter)
 
@@ -233,6 +235,7 @@ class ReleaseJobToolTest < Minitest::Test
 
   def test_releases_job
     adapter = mock('adapter')
+    adapter.stubs(:info).with('123').returns(mock_job_info(id: '123', job_owner: 'drew'))
     adapter.stubs(:release).with('123')
     @cluster.stubs(:job_adapter).returns(adapter)
 

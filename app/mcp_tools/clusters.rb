@@ -22,7 +22,7 @@ class ListClustersTool < MCP::Tool
     end
     text = "Found #{clusters.size} cluster(s):\n#{lines.join("\n")}"
     MCP::Tool::Response.new([{ type: 'text', text: text }])
-  rescue Handlers::AdapterError => e
+  rescue Handlers::AdapterError, Handlers::NotSupportedError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
   end
 end
@@ -76,7 +76,7 @@ class ListAccountsTool < MCP::Tool
       text = "Accounts on #{cluster_id}:\n#{lines.join("\n")}"
     end
     MCP::Tool::Response.new([{ type: 'text', text: text }])
-  rescue Handlers::NotFoundError, Handlers::AdapterError => e
+  rescue Handlers::NotFoundError, Handlers::AdapterError, Handlers::NotSupportedError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
   end
 end
@@ -101,7 +101,7 @@ class GetClusterInfoTool < MCP::Tool
            "CPUs: #{info.active_processors}/#{info.total_processors} active\n" \
            "GPUs: #{info.active_gpus}/#{info.total_gpus} active"
     MCP::Tool::Response.new([{ type: 'text', text: text }])
-  rescue Handlers::NotFoundError, Handlers::AdapterError => e
+  rescue Handlers::NotFoundError, Handlers::AdapterError, Handlers::NotSupportedError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
   end
 end
@@ -129,7 +129,7 @@ class ListQueuesTool < MCP::Tool
       text = "Queues on #{cluster_id}:\n#{lines.join("\n")}"
     end
     MCP::Tool::Response.new([{ type: 'text', text: text }])
-  rescue Handlers::NotFoundError, Handlers::AdapterError => e
+  rescue Handlers::NotFoundError, Handlers::AdapterError, Handlers::NotSupportedError => e
     MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
   end
 end

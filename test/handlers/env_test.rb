@@ -92,15 +92,46 @@ class HandlersEnvTest < Minitest::Test
   # --- custom allowlist ---
 
   def test_custom_allowlist_replaces_defaults
-    ENV['OOD_API_ENV_ALLOWLIST'] = 'SECRET_PASSWORD,CUSTOM_*'
+    ENV['OOD_API_ENV_ALLOWLIST'] = 'SITE_NOTE,CUSTOM_*'
+    ENV['SITE_NOTE'] = 'note'
     ENV['CUSTOM_VAR'] = 'hello'
 
     result = Handlers::Env.list
-    assert result.key?('SECRET_PASSWORD')
+    assert result.key?('SITE_NOTE')
     assert result.key?('CUSTOM_VAR')
     refute result.key?('SLURM_JOB_ID'), 'Default prefix SLURM_ should not be included with custom allowlist'
     refute result.key?('HOME'), 'Default exact match HOME should not be included with custom allowlist'
   ensure
     ENV.delete('CUSTOM_VAR')
+    ENV.delete('SITE_NOTE')
+  end
+
+  # An allowlist alone is not enough: the scheduler prefixes it grants are
+  # exactly where credentials show up. SLURM_JWT is a real Slurm variable
+  # holding a bearer token for slurmrestd, and it matches the allowed `SLURM_`
+  # prefix — so it leaked under any site policy until the deny pass existed.
+  def test_denies_credentials_that_match_an_allowed_prefix
+    ENV['SLURM_JWT'] = 'a-real-token'
+    ENV['OOD_API_SECRET_KEY'] = 'shh'
+    ENV['MODULES_AWS_KEY'] = 'shh'
+
+    result = Handlers::Env.list
+    refute result.key?('SLURM_JWT'), 'SLURM_JWT must never be disclosed'
+    refute result.key?('OOD_API_SECRET_KEY')
+    refute result.key?('MODULES_AWS_KEY')
+    assert result.key?('SLURM_JOB_ID'), 'ordinary SLURM_ variables must still be allowed'
+  ensure
+    ['SLURM_JWT', 'OOD_API_SECRET_KEY', 'MODULES_AWS_KEY'].each { |k| ENV.delete(k) }
+  end
+
+  # The deny pass is a backstop, not something a site can opt out of.
+  def test_deny_pass_overrides_an_explicit_allowlist_entry
+    ENV['OOD_API_ENV_ALLOWLIST'] = 'SLURM_JWT'
+    ENV['SLURM_JWT'] = 'a-real-token'
+
+    assert_raises(Handlers::ForbiddenError) { Handlers::Env.get(name: 'SLURM_JWT') }
+    refute Handlers::Env.list.key?('SLURM_JWT')
+  ensure
+    ENV.delete('SLURM_JWT')
   end
 end

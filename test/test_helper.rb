@@ -36,8 +36,9 @@ module TestHelpers
     OodApi::App
   end
 
+  # App tokens go in their own header — Apache owns Authorization.
   def auth_header(token)
-    { 'HTTP_AUTHORIZATION' => "Bearer #{token.token}" }
+    { 'HTTP_X_OOD_API_TOKEN' => token.token }
   end
 
   def json_response
@@ -49,10 +50,14 @@ module TestHelpers
     @test_token_file = File.join(@test_token_dir, 'tokens.json')
 
     # Override the constants
-    OodApi::ApiToken.send(:remove_const, :TOKENS_DIR) if OodApi::ApiToken.const_defined?(:TOKENS_DIR)
-    OodApi::ApiToken.send(:remove_const, :TOKENS_FILE) if OodApi::ApiToken.const_defined?(:TOKENS_FILE)
+    # LOCK_FILE must be redirected too, or tests contend on the real
+    # ~/.config/ondemand lock and serialise against the developer's own PUN.
+    [:TOKENS_DIR, :TOKENS_FILE, :LOCK_FILE].each do |c|
+      OodApi::ApiToken.send(:remove_const, c) if OodApi::ApiToken.const_defined?(c)
+    end
     OodApi::ApiToken.const_set(:TOKENS_DIR, @test_token_dir)
     OodApi::ApiToken.const_set(:TOKENS_FILE, @test_token_file)
+    OodApi::ApiToken.const_set(:LOCK_FILE, File.join(@test_token_dir, '.tokens.json.lock'))
 
     # Tests in this suite exercise the opt-in app-token flow; the default
     # trust-PUN mode is covered by dedicated tests that unset this var.

@@ -2,308 +2,234 @@
 
 ## Overview
 
-OOD API is an Open OnDemand Passenger app that provides a REST API and Model Context Protocol (MCP) endpoint for programmatic access to HPC cluster resources. It is designed for researchers, developers, and AI assistants that need to interact with HPC systems without a browser — submitting jobs, managing files, querying clusters, and inspecting the runtime environment via HTTP or MCP.
+OOD API lets your users submit jobs, manage files, and monitor their HPC
+cluster without a browser or SSH access. It installs as an Open OnDemand app
+and exposes the same operations through two interfaces: a REST API for
+scripts, and an MCP server so an AI assistant can do the work conversationally.
+Every request runs as the authenticated user, through OOD's existing per-user
+process model.
 
-An optional Dashboard plugin provides a token management UI for sites using application-level authentication.
+**What people can do with it:**
 
-**End users:** see the [User Guide](docs/user-guide.md) for how to authenticate,
-call the REST API, and use the MCP tools. The rest of this README is aimed at
-administrators deploying the app.
+| | |
+|---|---|
+| **A researcher with Claude Desktop** | "What happened to my jobs overnight?" — the assistant lists their queue, reads the failed job's stderr, and submits a corrected script. No terminal. |
+| **A lab's analysis pipeline** | A Python script authenticates with a JWT, submits a chain of dependent jobs (each starting only after the previous one succeeds), and polls for completion — no SSH keys to distribute or rotate. |
+| **A CI runner** | A push to a repo triggers a benchmark job on the cluster, which reports its result back — using a revocable token rather than a shared account. |
+| **A group's dashboard** | A web app shows queue depth, allocation usage, and running jobs for a research group — each viewer sees only what their own account can access, since the dashboard queries the API using their identity, not a shared one. |
+| **A site operator** | Drops a markdown file in `agents.d/` stating local policy — which partitions to use, which accounts to charge — and every AI client reads it before acting. |
 
-- Upstream project: [Model Context Protocol](https://modelcontextprotocol.io/)
-- Repository: [Sweet-and-Fizzy/ood-api](https://github.com/Sweet-and-Fizzy/ood-api)
+It is a headless API with no end-user UI, though an optional Dashboard plugin
+adds a token management page at `/settings/api_tokens`.
 
-## Screenshots
+This README is for administrators evaluating the app. The guides:
 
-This is a headless API with no end-user UI. The optional Dashboard plugin adds a token management page at `/settings/api_tokens`.
+| | |
+|---|---|
+| [Installation](docs/installation.md) | Deploy it: install, configure auth, register, verify, troubleshoot |
+| [User Guide](docs/user-guide.md) | For your users: authenticate, call the API, use the MCP tools |
+| [REST API](docs/api.md) | Endpoints, auth, errors, examples, application tokens |
+| [MCP Authentication](docs/mcp-auth.md) | Point an MCP client at your site, with or without OAuth discovery |
+| [Development](docs/development.md) | Local dev container |
+| [Contributing](CONTRIBUTING.md) | Conventions, testing, how to submit a change |
 
-## Features
+## Before you evaluate
 
-- REST API and built-in MCP endpoint for clusters, jobs, files, environment variables, and site context
-- 19 MCP tools + 1 resource — agents can discover accounts/queues, submit jobs with dependencies, hold/release jobs, view job history, read/write/append files, and query the runtime environment
-- Structured audit logging (key=value to stderr) for all operations across both REST and MCP
-- Site-operator-managed agent context (`/etc/ood/config/agents.d/*.md`) exposed as an MCP resource
-- Two authentication modes: Apache JWT validation (CILogon, Keycloak) or application-level tokens
-- Per-user isolation via OOD's existing PUN architecture
-- All scheduler operations use the `ood_core` abstraction layer — works with Slurm, PBS, LSF, etc.
-- Optional Dashboard plugin for token management (OOD 4.0+)
-- No browser session required when using Apache JWT validation
+Three things worth knowing before you read further.
 
-## Requirements
+**Maturity.** v0.1.0. Verified against OOD 4.2.3 with Slurm, and running at a
+small number of sites — see [Testing](#testing) for the current list. Treat it
+as early software.
 
-### Compute Node Software
+**Scheduler support is uneven.** Job submission, monitoring, cancellation, and
+file operations work through [`ood_core`](https://github.com/OSC/ood_core), OOD's
+scheduler adapter layer, on any adapter (Slurm, PBS, LSF, Torque, SGE). But
+account discovery, queue listing, cluster utilization, and job history are
+Slurm-mostly:
 
-No compute node software is required. The API runs on the OOD host and communicates with clusters via `ood_core`.
+| Capability | Slurm | PBS Pro / LSF / Torque / SGE |
+|---|---|---|
+| Jobs: submit, list, get, cancel, hold, release | Yes | Yes |
+| Files, environment, site context | Yes | Yes |
+| Accounts, queues, cluster info, job history | Yes | Mostly unsupported — returns `501` |
 
-### Open OnDemand
+If you don't run Slurm, roughly a quarter of the surface will return
+`501 not_implemented`. See [Compatibility & Maintenance](#compatibility--maintenance)
+for the per-adapter detail.
 
-- Open OnDemand 3.x or 4.x
-- Open OnDemand 4.0+ required for Dashboard plugin (token management UI)
+**What this app can do as the user.** It runs inside OOD's per-user NGINX (PUN)
+as the authenticated user, so it can do what that user can do. Most of that
+surface is read-only ([What it exposes](#what-it-exposes) has the full list).
+Three operations destroy or overwrite data, and cannot be undone through the
+API:
 
-### Optional
+- **Cancelling a job**, losing whatever compute it had accumulated.
+- **Writing a file**, replacing its contents.
+- **Deleting a file or directory**, recursively if asked.
 
-- `mod_auth_openidc` (already included with OOD; needed for Apache JWT validation)
+Submitting jobs is not destructive but does consume allocation, so a client in
+a loop costs real money.
 
-## App Installation
-
-### 1. Clone the repository
-
-```bash
-cd /var/www/ood/apps/sys
-git clone https://github.com/Sweet-and-Fizzy/ood-api.git
-cd ood-api
-bundle install --path vendor/bundle
-
-# Pin to a release (recommended)
-# git checkout v0.1.0
-```
-
-### 2. Configure for your site
-
-Choose an authentication method:
-
-#### Option A: Apache JWT Validation (Recommended)
-
-For sites using CILogon, Keycloak, or other OIDC providers with a JWKS endpoint. Enables both browser login and bearer token access for API and MCP clients.
-
-Edit `/etc/ood/config/ood_portal.yml`:
-
-```yaml
-auth:
-  - "AuthType auth-openidc"
-  - "Require valid-user"
-oidc_settings:
-  OIDCOAuthVerifyJwksUri: "https://cilogon.org/oauth2/certs"
-  OIDCOAuthRemoteUserClaim: "sub"
-```
-
-The `auth` override switches from `openid-connect` (browser sessions only) to `auth-openidc` (sessions + bearer tokens). This is the same Apache module — browser login works exactly as before. See [MCP Authentication](docs/mcp-oauth.md) for the full guide, including automatic OAuth discovery for MCP clients.
-
-Then regenerate the Apache config:
-
-```bash
-sudo /opt/ood/ood-portal-generator/sbin/update_ood_portal
-sudo systemctl restart httpd
-```
-
-#### Option B: Application-Level Tokens
-
-For REST API access by clients that can carry an OIDC session cookie — typically JS running in the Dashboard, browser extensions, or terminal scripts that pass both the session cookie and the app token as parameters. Not usable by MCP clients, and not a drop-in for CI/CD: the cookie expires with the configured OIDC session lifetime (default 8h). Requires OOD 4.0+ for the Dashboard plugin. See [docs/api.md](docs/api.md#option-2-application-level-tokens) for the full auth flow and curl examples.
-
-Install the Dashboard plugin (OOD 4.0+ only):
-
-```bash
-ln -s /var/www/ood/apps/sys/ood-api/dashboard-plugin /etc/ood/config/plugins/ood-api
-```
-
-Restart the PUN or web server. Token management will be available at `/settings/api_tokens`.
-
-Tokens can also be created manually:
-
-```bash
-mkdir -p ~/.config/ondemand
-TOKEN=$(python -c "import secrets; print(secrets.token_hex(32))")
-cat > ~/.config/ondemand/tokens.json << EOF
-[{"id": "$(uuidgen)", "name": "My Token", "token": "$TOKEN", "created_at": "$(date -Iseconds)"}]
-EOF
-chmod 600 ~/.config/ondemand/tokens.json
-echo "Your token: $TOKEN"
-```
-
-### 3. MCP Endpoint
-
-The MCP endpoint is at `/mcp`. Configure your MCP client to connect via HTTP:
-
-**Claude Code CLI:**
-
-```bash
-claude mcp add ood-hpc --transport http https://ondemand.example.edu/pun/sys/ood-api/mcp
-```
-
-**Claude Desktop (via mcp-remote):**
-
-```json
-{
-  "mcpServers": {
-    "ood-hpc": {
-      "command": "npx",
-      "args": ["mcp-remote", "https://ondemand.example.edu/pun/sys/ood-api/mcp"]
-    }
-  }
-}
-```
-
-MCP clients authenticate via JWT bearer tokens validated by Apache. This requires the `auth` override described in Option A above. See [MCP Authentication](docs/mcp-oauth.md) for two setup methods: static bearer tokens (minimal config) or automatic OAuth discovery (best UX).
-
-File size limits (`OOD_API_MAX_FILE_READ`, `OOD_API_MAX_FILE_WRITE`), allowed path roots, and the environment-variable allowlist apply to **both** REST and MCP — MCP tools return an error response in the protocol instead of HTTP status codes like 413.
-
-### 4. Verify
-
-Restart the app from the OOD developer dashboard, or restart the PUN. Then test:
-
-```bash
-curl -H "Authorization: Bearer <your-token>" \
-  https://ondemand.example.edu/pun/sys/ood-api/health
-```
-
-A successful response confirms the API is running.
-
-## Configuration
-
-### Authentication
-
-| Setting | Location | Description |
-|---------|----------|-------------|
-| `OIDCOAuthVerifyJwksUri` | `ood_portal.yml` | JWKS endpoint for JWT validation (Option A) |
-| `OIDCOAuthRemoteUserClaim` | `ood_portal.yml` | JWT claim to use as username (Option A) |
-| Dashboard plugin symlink | `/etc/ood/config/plugins/ood-api` | Enables token management UI (Option B) |
-
-### Session Timeouts
-
-| Component | Default | Configurable |
-|-----------|---------|--------------|
-| OIDC Session | 8 hours inactivity / 8 hours max | `oidc_session_inactivity_timeout` in `ood_portal.yml` |
-| PUN Cleanup | Every 2 hours | Edit `/etc/cron.d/ood` |
-
-### Environment Variables (API)
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `OOD_CLUSTERS` | No | `/etc/ood/config/clusters.d` | Path to cluster config directory |
-| `OOD_API_MAX_FILE_READ` | No | `10485760` (10 MB) | Maximum file read size in bytes (REST and MCP `read_file`) |
-| `OOD_API_MAX_FILE_WRITE` | No | `52428800` (50 MB) | Maximum file write body size in bytes (REST `PUT` and MCP `write_file`) |
-| `OOD_API_ENV_ALLOWLIST` | No | See [docs/api.md](docs/api.md#environment-variable-allowlist) | Comma-separated allowlist for env vars endpoint. Entries ending in `*` are prefix matches. |
-| `OOD_API_CONTEXT_PATH` | No | `/etc/ood/config/agents.d` | Path to directory containing site-specific agent context files (*.md) |
+All of this, reads plus the destructive operations above, is reachable by an
+LLM through the MCP endpoint, not just a person clicking through the dashboard.
+It is constrained by an allowlist of path roots, a deny-list covering `~/.ssh`,
+shell init files, and the app's own token store, an environment-variable
+allowlist, and audit logging of every operation. Two gaps have no fix inside
+the app. **No rate limiting** means a looping agent can saturate a scheduler
+your other users share. **No read-only mode** means you cannot offer the read
+surface without also offering write, delete, and job submission.
+[Security posture](#security-posture) covers both gaps, including what you can
+do about them at the Apache and scheduler layers.
 
 ## Architecture
 
+ood-api adds no new trust boundary. It sits inside the machinery OOD already
+uses to run apps as the logged-in user.
+
 ```
-┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-│    curl /    │ │   Scripts    │ │  MCP Client  │
-│   Postman    │ │   CI/CD      │ │   (Claude)   │
-└──────┬───────┘ └──────┬───────┘ └──────┬───────┘
-       │                │                │
-       │   HTTP + Bearer Token           │ MCP Protocol (HTTP)
-       └────────────────┴────────────────┘
-                        │
-                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│                         Apache                              │
-│           mod_auth_openidc (OIDC / JWT validation)          │
-└─────────────────────────────┬───────────────────────────────┘
-                              │ REMOTE_USER
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                   Per-User Nginx (PUN)                      │
-│  ┌───────────────────────────────────────────────────────┐  │
-│  │                   OOD API (Sinatra)                   │  │
-│  │  ┌─────────────────┐    ┌──────────────────────────┐  │  │
-│  │  │   REST Routes    │    │   MCP Transport (/mcp)   │  │  │
-│  │  │  /api/v1/*      │    │   19 tools + 1 resource  │  │  │
-│  │  └────────┬────────┘    └────────────┬─────────────┘  │  │
-│  │           └──────────┬───────────────┘                │  │
-│  │                      ▼                                │  │
-│  │              Handler Layer                            │  │
-│  │     Clusters │ Jobs │ Files │ Env │ Context           │  │
-│  └───────────────────────────────────────────────────────┘  │
-└─────────────────────────────┬───────────────────────────────┘
-                              │ ood_core
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      HPC Clusters                           │
-│                  (Slurm, PBS, LSF, etc.)                    │
-└─────────────────────────────────────────────────────────────┘
+   curl · scripts · CI                Claude · Cursor · MCP clients
+              │                                    │
+              └─────────────────┬──────────────────┘
+                                │  Authorization: Bearer <jwt>
+                                ▼
+        ┌──────────────────────────────────────────────┐
+        │  Apache — mod_auth_openidc                   │
+        │  validates the JWT against your IdP          │
+        └──────────────────────┬───────────────────────┘
+                               │  REMOTE_USER = alice
+                               ▼
+        ┌──────────────────────────────────────────────┐
+        │  alice's PUN — OOD's per-user process        │
+        │                                              │
+        │      ┌────────────────────────────────┐      │
+        │      │  ood-api                       │      │
+        │      │  /api/v1/*  and  /mcp          │      │
+        │      │            │                   │      │
+        │      │            ▼                   │      │
+        │      │  clusters · jobs · files · env │      │
+        │      └────────────────────────────────┘      │
+        └──────────────────────┬───────────────────────┘
+                               │  ood_core
+                               ▼
+              Slurm · PBS · LSF · Torque · SGE
 ```
 
-## API Reference
+The consequence: a request can only ever do what that user could already do
+from a shell. See [Security posture](#security-posture) for the limits placed
+on top of that.
 
-### REST API Endpoints
+## Requirements
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check (no auth) |
-| GET | `/api/v1/clusters` | List available clusters |
-| GET | `/api/v1/clusters/:id` | Get cluster details |
-| GET | `/api/v1/jobs?cluster=X` | List user's jobs |
-| GET | `/api/v1/jobs/:id?cluster=X` | Get job details |
-| POST | `/api/v1/jobs` | Submit a job |
-| DELETE | `/api/v1/jobs/:id?cluster=X` | Cancel a job |
-| GET | `/api/v1/jobs/historic?cluster=X` | List completed jobs |
-| POST | `/api/v1/jobs/:id/hold?cluster=X` | Hold a queued job |
-| POST | `/api/v1/jobs/:id/release?cluster=X` | Release a held job |
-| GET | `/api/v1/files?path=X` | List directory or get file info |
-| GET | `/api/v1/files/content?path=X` | Read file contents |
-| POST | `/api/v1/files?path=X&type=directory` | Create directory |
-| PUT | `/api/v1/files?path=X` | Write file contents |
-| DELETE | `/api/v1/files?path=X` | Delete file or directory |
-| GET | `/api/v1/env` | List allowed environment variables |
-| GET | `/api/v1/env/:name` | Get single environment variable |
-| GET | `/api/v1/context` | Get site-specific agent context |
-| GET | `/api/v1/accounts?cluster=X` | List accounts for job submission |
-| GET | `/api/v1/queues?cluster=X` | List queues/partitions |
-| GET | `/api/v1/cluster_info?cluster=X` | Get cluster resource utilization |
+- **Open OnDemand 3.x or 4.x**, verified through 4.2.3 (Ruby 3.3.10). The
+  optional Dashboard plugin needs 4.0+.
+- **An OIDC identity provider that issues JWTs**, with a JWKS endpoint Apache
+  can reach. This is the part most likely to constrain you — see
+  [installation](docs/installation.md#2-configure-authentication).
+- Nothing on your compute nodes. The app runs on the OOD host and reaches
+  clusters through `ood_core`, and `mod_auth_openidc` already ships with OOD.
 
-See [docs/api.md](docs/api.md) for full API documentation.
+## Installation
 
-### MCP Tools
+Clone the app, configure Apache to accept bearer tokens, register it with
+NGINX, verify. Full walkthrough in
+**[docs/installation.md](docs/installation.md)**.
 
-| Tool | Description |
-|------|-------------|
-| `list_clusters` | List available HPC clusters |
-| `get_cluster` | Get cluster details |
-| `list_accounts` | List accounts available for job submission |
-| `list_queues` | List queues/partitions on a cluster |
-| `get_cluster_info` | Get cluster resource utilization (nodes, CPUs, GPUs) |
-| `list_jobs` | List user's active jobs on a cluster |
-| `get_job` | Get job details |
-| `list_historic_jobs` | List completed jobs from accounting database |
-| `submit_job` | Submit a batch job (supports dependencies) |
-| `cancel_job` | Cancel a job |
-| `hold_job` | Put a queued job on hold |
-| `release_job` | Release a held job |
-| `list_files` | List directory contents |
-| `read_file` | Read file contents (supports max_size limit) |
-| `write_file` | Write or append content to a file |
-| `create_directory` | Create a new directory |
-| `delete_file` | Delete a file or directory |
-| `list_env` | List allowed environment variables |
-| `get_env` | Get a single environment variable |
+How long it takes depends almost entirely on your identity provider. If it
+already issues JWTs and you know which claim maps to your usernames, it is a
+short job. If not, expect to spend your time there rather than on the app.
 
-### MCP Resources
 
-| Resource | URI | Description |
-|----------|-----|-------------|
-| Cluster Context | `ood://context` | Site-specific policies and guidelines from `/etc/ood/config/agents.d/` |
+## What it exposes
 
-## Troubleshooting
+Everything below is available on both surfaces — as a REST endpoint and as an
+MCP tool.
 
-### Health check returns 502 or connection refused
+- **Clusters** — list configured clusters and their details, plus queues,
+  accounts, and current utilization.
+- **Jobs** — submit (optionally with dependencies), list, get, cancel, hold,
+  release, and query history.
+- **Files** — list, read, write, append, make directories, touch, and delete,
+  confined to allowed roots.
+- **Environment** — list and read allowlisted variables.
+- **Site context** — operator-authored markdown from `agents.d/`, so an agent
+  can read local policy before acting. Exposed as an MCP *resource* rather than
+  a tool.
 
-1. Verify the app is installed: `ls /var/www/ood/apps/sys/ood-api/`
-2. Check that `bundle install` completed successfully
-3. Restart the PUN: `sudo /opt/ood/nginx_stage/sbin/nginx_stage nginx_clean`
-4. Check PUN logs: `~/ondemand/data/sys/ood-api/` (if they exist) or `/var/log/ondemand-nginx/<user>/`
+Full detail: **[REST reference](docs/api.md)** for endpoints, request bodies,
+and error codes; **[User Guide](docs/user-guide.md#32-available-tools)** for the
+MCP tools and their parameters.
 
-### 401 Unauthorized with JWT (Option A)
+Note the two surfaces take different parameter shapes — REST nests under
+`script` and `options`, MCP is flat.
 
-1. Verify `OIDCOAuthVerifyJwksUri` is set correctly in `ood_portal.yml`
-2. Confirm the token hasn't expired: `echo '<token>' | cut -d. -f2 | base64 -d | python -m json.tool`
-3. Check that the claim in `OIDCOAuthRemoteUserClaim` matches your IdP's token format
-4. Check Apache error log: `sudo tail /var/log/httpd/error_log`
+Every operation on either surface writes a `key=value` audit line to the PUN
+log with the calling user, the parameters, and the outcome.
 
-### 401 Unauthorized with application-level tokens (Option B)
+### Site context
 
-1. Verify `~/.config/ondemand/tokens.json` exists and is valid JSON
-2. Check file permissions: should be `600`
-3. Ensure the PUN is running (requires an active browser session first)
+`ood://context` serves whatever markdown you place in
+`/etc/ood/config/agents.d/` to MCP clients as a *resource* — read-only context
+a client fetches, as opposed to a *tool* it calls to act. It is **advisory**: a
+well-behaved client reads it before acting, but nothing enforces it. Use it to
+state site policy ("submit test jobs to the `debug` partition"), not as a
+security control.
 
-### PUN not spawning for API requests
 
-With Option A (JWT), the PUN should spawn automatically. If it doesn't:
-1. Verify Apache is setting `REMOTE_USER` by checking the Apache error log for OIDC messages
-2. Check that `pun_proxy.lua` is configured to allow the API path
+## Security posture
 
-With Option B, the user must log in via browser first to spawn the PUN.
+The app runs in the user's PUN as that user, so it grants no new privilege —
+everything it can do, the user could already do from a shell. What changes is
+*who can drive it*: submit and cancel jobs, and read, write, and recursively
+delete files, all reachable by an LLM through the MCP endpoint.
+
+**Constraints.**
+
+- **Allowed roots.** File access is confined to `$HOME`, `/tmp`, and
+  `Dir.tmpdir`.
+- **Denied paths within those roots.** `~/.ssh`, `~/.config/ondemand` (the
+  token store), `~/.config/systemd/user`, and shell init files are refused on
+  both read and write — including reached via symlink or hardlink. Recursive
+  delete refuses outright when one lies in the tree.
+- **Regular files only.** Reading a FIFO or device node is refused rather than
+  blocking the worker.
+- **Allowlisted environment variables**, with credential-shaped names
+  (`*_TOKEN`, `*_JWT`, `*SECRET*`) denied regardless of the allowlist.
+- **Size caps** on reads and writes, via `OOD_API_MAX_FILE_READ` and
+  `OOD_API_MAX_FILE_WRITE`.
+- **Audit logging** of every operation to the PUN log, with control characters
+  escaped so a caller-supplied path cannot forge a record.
+
+The deny-list is not about stopping the user: they can still edit any of those
+files from a shell. It is about ensuring an agent acting on injected input
+cannot establish access that outlives the session.
+
+**What is not constrained** — worth knowing before you deploy:
+
+- **No rate limiting.** A looping agent can hammer your scheduler through
+  `squeue`/`sacct`, and nothing in the app throttles it. Because Apache fronts
+  every request, a request-rate module there covers the whole portal —
+  `mod_qos` or `mod_evasive`, or a reverse proxy such as nginx with
+  `limit_req`. The bundled `mod_ratelimit` throttles bandwidth rather than
+  request rate and will not help. Scheduler-side limits such as `MaxJobCount`
+  or per-association QOS limits bound the damage rather than the rate, and are
+  worth having anyway. We have not tested any of these configurations, so
+  verify whichever you choose on your own site.
+- **No read-only mode.** You cannot disable the write, delete, or job-submission
+  surface while keeping the read surface. `OOD_API_MAX_FILE_WRITE=0` rejects
+  file writes with a 413, which is a partial stand-in, but it does not touch
+  delete, mkdir, or job submission — do not mistake it for a read-only switch.
+- **No per-user or per-group enablement.** As an OOD `sys` app it is available
+  to everyone who can log into the portal. Restricting it means not installing
+  it, or removing it from `/var/www/ood/apps/sys`.
+- **Recursive delete is a documented, valid call.** `DELETE
+  /api/v1/files?path=…&recursive=true` and the `delete_file` MCP tool will remove
+  a directory tree. The deny-list protects the paths listed above and nothing
+  else.
+- **App tokens do not expire.** They are valid until revoked in the Dashboard.
+- **Revoking a JWT at your IdP has no effect until it expires.** Apache
+  validates the signature and expiry statelessly; it never asks the IdP whether
+  the token is still good. Short token lifetimes are the only mitigation
+  available today.
 
 ## Testing
 
@@ -313,43 +239,38 @@ We're actively looking for sites to test ood-api on different schedulers and OOD
 |------|-------------|-----------|--------|
 | University of Kentucky | 3.x | Slurm | Tested |
 | Wake Forest University | 4.1 | Slurm | In progress |
+| Demo container (`travertosc/ood-demo`) | 4.2.3 | Slurm 22.05.9 | Tested — full REST + MCP surface, Keycloak JWT auth |
 
-To verify your installation:
+The 4.2.3 run covered the whole job lifecycle (submit, get, list, hold,
+release, cancel), queues, cluster info, file and environment operations, and
+all 19 MCP tools, on Ruby 3.3.10 with `mod_auth_openidc` validating Keycloak
+JWTs. `accounts` returns 503 on a cluster without `slurmdbd`, which is
+expected — `sacctmgr` needs an accounting store.
 
-1. Hit the health endpoint (no auth required): `curl https://ondemand.example.edu/pun/sys/ood-api/health`
-2. List clusters with auth: `curl -H "Authorization: Bearer <token>" https://ondemand.example.edu/pun/sys/ood-api/api/v1/clusters`
-3. Submit a test job and verify it appears in the scheduler
+The demo image ships OOD alone: Slurm was installed into the container as
+RPMs and Keycloak run alongside it as a separate container, so pulling the
+image by itself does not reproduce that environment.
 
-### Local development server
-
-```bash
-bundle exec ruby bin/dev
-```
-
-Starts Puma directly, serving both the REST API and MCP endpoint at `http://localhost:9292`. See `docs/development.md` for the full OOD dev container setup.
-
-**Note:** When running locally without a reverse proxy, the `/mcp` endpoint is unauthenticated. In production, Apache + mod_auth_openidc handles authentication for both REST and MCP.
-
-### Running the test suite
-
-```bash
-bundle exec rake test
-```
+To verify a deployment, see
+[step 5 of the installation guide](docs/installation.md#5-verify). To work on
+the code, see [Contributing](CONTRIBUTING.md) and
+[docs/development.md](docs/development.md).
 
 ## Known Limitations
 
-- Application-level tokens (Option B) require an active browser session to spawn the PUN
+- Application tokens are a second factor and never stand alone — a request must also satisfy Apache, with either a JWT or a session cookie
 - PUN cleanup cron runs every 2 hours by default — long-running API workflows may need this adjusted
 - Dashboard plugin requires OOD 4.0+
 - MCP transport runs in stateless mode — server-initiated notifications are not supported (tool list is static, so this has no practical impact)
 - Job history, hold/release, and dependencies are scheduler-dependent — not all schedulers support all features
-- Account discovery, queue listing, cluster info, and historic jobs are only fully supported on Slurm — other schedulers may return empty results or errors. Contributions to expand adapter coverage in `ood_core` would benefit all ood-api sites
+- Account discovery, queue listing, cluster info, and historic jobs are only fully supported on Slurm — other schedulers return `501 not_implemented`. See the scheduler table under [Before you evaluate](#before-you-evaluate). Contributions to expand adapter coverage in `ood_core` would benefit all ood-api sites
+- No rate limiting, and no read-only mode — see [Security posture](#security-posture)
 - Historic job listings are **filtered to the authenticated user** (`job_owner` must match); the raw accounting API may return broader data on some schedulers
 - Audit log output goes to stderr (PUN error.log) — no dedicated log file or rotation beyond OS logrotate
 
 ## Compatibility & Maintenance
 
-ood-api uses `ood_core` (`~> 0.24`, same constraint as the OOD Dashboard) for all scheduler operations. We call only the public adapter interface.
+ood-api uses [`ood_core`](https://github.com/OSC/ood_core) (`~> 0.24`, same constraint as the OOD Dashboard) for all scheduler operations. We call only the public adapter interface.
 
 | Adapter method | Used by | Supported adapters (ood_core 0.30) |
 |---|---|---|
@@ -364,22 +285,12 @@ Operations on unsupported adapters return empty results or a clear error. When `
 
 ## Contributing
 
-We welcome contributions at any level:
-
-- **Test on your cluster** — try ood-api on your scheduler and [let us know](https://github.com/Sweet-and-Fizzy/ood-api/issues) what works. Reports from PBS, LSF, and other non-Slurm sites are especially valuable.
-- **Expand scheduler coverage** — adding `queues` or `accounts` to a PBS or LSF adapter in `ood_core` would immediately benefit every ood-api site on that scheduler.
-- **Share agent context** — if you create useful `/etc/ood/config/agents.d/` files, share them so other sites can learn from your policies.
-- **Report bugs or request features** — [open an issue](https://github.com/Sweet-and-Fizzy/ood-api/issues)
-- **Code contributions** — fork, branch, and submit a pull request. See `docs/development.md` for the local dev setup.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, conventions, and what CI
+expects. The most useful contribution right now is **testing on a non-Slurm
+scheduler** — PBS Pro, LSF, Torque, or SGE — and
+[telling us what happened](https://github.com/Sweet-and-Fizzy/ood-api/issues).
 
 This app is part of the [OOD Appverse](https://openondemand.connectci.org/affinity-groups/ood-appverse). Join the Appverse Affinity Group to connect with other contributors.
-
-## References
-
-- [Model Context Protocol](https://modelcontextprotocol.io/) — the AI assistant protocol used by the built-in MCP endpoint
-- [Open OnDemand](https://openondemand.org/) — the HPC portal framework
-- [Sinatra](https://sinatrarb.com/) — the Ruby web framework powering the REST API
-- [CILogon](https://www.cilogon.org/) — identity provider commonly used with OOD
 
 ## License
 

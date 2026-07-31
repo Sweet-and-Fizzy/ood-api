@@ -4,6 +4,8 @@
 # Shared between config.ru (Passenger/production) and bin/dev (local development).
 
 require 'mcp'
+require 'json'
+require_relative '../lib/app_auth'
 require_relative 'mcp_tools/clusters'
 require_relative 'mcp_tools/jobs'
 require_relative 'mcp_tools/files'
@@ -13,18 +15,34 @@ require_relative 'handlers/audit'
 require_relative 'handlers/context'
 
 MCP.configure do |config|
-  config.instrumentation_callback = lambda do |data|
-    if data[:method] == 'initialize' && data[:client]
-      user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
-      Handlers::Audit.emit_event(
-        op:             'mcp_initialize',
-        user:           user,
-        source:         'mcp',
-        client:         data[:client][:name],
-        client_version: data[:client][:version],
-        duration:       data[:duration]&.round(4)
-      )
+  # `around_request` wraps the request; `instrumentation_callback` is
+  # soft-deprecated upstream and slated for removal. It must call the block and
+  # return its value, and the audit has to run *after* that call — `client` is
+  # only added to `data` while the request handler is running.
+  #
+  # The rescue is not decoration. Upstream invokes this from an `ensure` with
+  # no rescue of its own, so a raise here discards an already-successful result
+  # and turns it into an error the client cannot get past. `client` is also
+  # caller-supplied and need not be a Hash.
+  config.around_request = lambda do |data, &request_handler|
+    result = request_handler.call
+    begin
+      client = data[:client]
+      if data[:method] == 'initialize' && client.is_a?(Hash)
+        user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+        Handlers::Audit.emit_event(
+          op:             'mcp_initialize',
+          user:           user,
+          source:         'mcp',
+          client:         client[:name],
+          client_version: client[:version],
+          duration:       data[:duration]&.round(4)
+        )
+      end
+    rescue StandardError => e
+      warn "ood_api_audit op=mcp_instrumentation_failed status=error error=#{e.class}"
     end
+    result
   end
 end
 
@@ -65,10 +83,50 @@ module OodApi
     # Stateless supports all tool calls and resource reads; the only
     # thing lost is server-initiated notifications (tools/list changed),
     # which we don't use since our tool list is static.
-    MCP::Server::Transports::StreamableHTTPTransport.new(server, stateless: true)
+    # The transport defaults to a 4 MiB body cap, but write_file advertises
+    # MAX_FILE_WRITE (50 MB by default), so the default would reject a
+    # legitimate write before the handler ever saw it. Keep the two limits
+    # equal, and let a site that raises OOD_API_MAX_FILE_WRITE raise both.
+    #
+    # Some headroom on top: the body is a JSON envelope around the content, so
+    # escaping (\n, \", non-ASCII) makes the encoded form larger than the file
+    # it carries. Without it a file just under the limit could still be
+    # refused.
+    max_bytes = (Handlers::Files::MAX_FILE_WRITE * 1.5).to_i
+    MCP::Server::Transports::StreamableHTTPTransport.new(server, stateless: true, max_request_bytes: max_bytes)
+  end
+
+  JSONRPC_INTERNAL_ERROR = -32_603
+
+  def self.jsonrpc_error(status, message)
+    [status,
+     { 'Content-Type' => 'application/json' },
+     [{ jsonrpc: '2.0', id: nil,
+        error: { code: JSONRPC_INTERNAL_ERROR, message: message } }.to_json]]
   end
 
   def self.mcp_rack_app(transport = build_mcp_transport)
-    ->(env) { transport.handle_request(Rack::Request.new(env)) }
+    # /mcp is mounted as a sibling Rack app in config.ru, outside the Sinatra
+    # app and therefore outside its `before` filters. Without this the MCP
+    # surface would serve the full toolset with no app-token check while
+    # /api/v1/* enforced one — the same capabilities behind weaker auth.
+    lambda do |env|
+      if OodApi::AppAuth.authenticate(env) == false
+        return [401,
+                { 'Content-Type' => 'application/json' },
+                [{ error: 'unauthorized', message: 'Invalid or missing API token' }.to_json]]
+      end
+
+      transport.handle_request(Rack::Request.new(env))
+    rescue Interrupt, SystemExit
+      raise
+    rescue Exception => e # rubocop:disable Lint/RescueException
+      # ScriptError (NotImplementedError, LoadError) is not a StandardError, so
+      # neither the gem's handler nor its transport catches it — it escaped to
+      # Passenger and killed the worker with a 502. The REST side has an
+      # `error ScriptError` handler for exactly this; /mcp had no equivalent.
+      Handlers::Audit.emit_event(op: 'mcp_request_failed', user: nil, source: 'mcp', error: e.class.to_s)
+      jsonrpc_error(500, "Internal error: #{e.class}")
+    end
   end
 end

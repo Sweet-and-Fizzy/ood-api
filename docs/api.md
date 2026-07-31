@@ -6,127 +6,52 @@ The Open OnDemand REST API provides programmatic access to HPC resources through
 
 - [Overview](#overview)
 - [Authentication](#authentication)
-- [API Reference](#api-reference)
-  - [Clusters](#clusters)
-  - [Jobs](#jobs)
-  - [Historic Jobs](#historic-jobs)
-  - [Files](#files)
-  - [Environment Variables](#environment-variables)
-  - [Accounts](#accounts)
-  - [Queues](#queues)
-  - [Cluster Info](#cluster-info)
+- [API Reference](#api-reference) — [Health](#health) · [Clusters](#clusters) · [Jobs](#jobs) ·
+  [Historic Jobs](#historic-jobs) · [Files](#files) ·
+  [Environment Variables](#environment-variables) · [Accounts](#accounts) ·
+  [Queues](#queues) · [Cluster Info](#cluster-info) · [Context](#context)
 - [Error Handling](#error-handling)
 - [Examples](#examples)
+- [Application tokens](#application-tokens)
 - [Security Considerations](#security-considerations)
 
 ## Overview
 
-The API provides:
+JSON over HTTP, rooted at:
 
-- **Cluster Discovery**: List available HPC clusters and their configurations
-- **Job Management**: Submit, monitor, cancel, hold, and release batch jobs; query historic (completed) jobs
-- **File Operations**: Read, write, and manage files on the cluster
-- **Environment Discovery**: Inspect allowed environment variables (modules, scheduler settings, paths)
-- **Account & Queue Discovery**: List available accounts and queues for job submission
-- **Cluster Utilization**: Query active/total nodes, CPUs, and GPUs
-- **Flexible Authentication**: Apache JWT validation or application-level tokens
+```
+https://<your-ood-host>/pun/sys/ood-api/api/v1
+```
 
-Key characteristics:
+Scheduler operations go through OOD's `ood_core` adapters, so behaviour follows
+whatever your site runs. Some endpoints are Slurm-only — see
+[Compatibility](../README.md#compatibility--maintenance).
 
-- RESTful JSON API at `/api/v1/`
-- Bearer token authentication
-- Uses OOD's existing scheduler adapters (Slurm, PBS, LSF, etc.)
+The same operations are also exposed as MCP tools at `/mcp`, backed by the same
+handlers. Tool names and parameters are listed in the
+[User Guide](user-guide.md#32-available-tools); note the MCP tools take flat
+parameters where REST nests them.
 
 ## Authentication
 
-ood-api delegates authentication to the OOD stack. Apache (with mod_auth_openidc) authenticates the user before the request reaches ood-api, and OOD's per-user nginx (PUN) runs the app as that user. The app trusts that identity.
-
-Pick one of the two flows below based on your site's identity provider.
-
-### Option 1: Apache JWT Validation (Default, Recommended)
-
-For sites using CILogon, Keycloak, or other OIDC providers that publish a JWKS endpoint, Apache can validate JWT bearer tokens directly. This requires configuration in `ood_portal.yml`:
-
-```yaml
-oidc_settings:
-  OIDCOAuthVerifyJwksUri: "https://cilogon.org/oauth2/certs"
-  OIDCOAuthRemoteUserClaim: "sub"
-```
-
-With this configuration:
-1. Obtain a JWT from your identity provider
-2. Include it in the `Authorization` header:
+Apache authenticates the request before it reaches ood-api, and OOD's per-user
+nginx (PUN) runs the app as that user. Send an **`Authorization: Bearer <jwt>`**
+header with a JWT from your identity provider:
 
 ```bash
-curl -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+curl -H "Authorization: Bearer $TOKEN" \
   https://ondemand.example.com/pun/sys/ood-api/api/v1/clusters
 ```
 
-Apache validates the JWT and lets the request through to your PUN, which runs as the authenticated user. No browser session is required.
+That is all most clients need, and it is what every example below assumes. It
+requires your site to have configured Apache for bearer validation — see the
+[installation guide](installation.md#2-configure-authentication).
 
-This is the default ood-api behavior; no extra app-side config is needed.
+Sites may additionally require a per-client **application token** in an
+`X-OOD-API-Token` header, alongside the JWT. If your OOD Dashboard has an
+**API Tokens** page, yours is one of them — see
+[Application tokens](#application-tokens) at the end of this document.
 
-### Option 2: Application-Level Tokens (Opt-in)
-
-For sites using Google OIDC or other IdPs that don't publish a JWKS endpoint with verifiable access tokens, ood-api can manage its own tokens. Enable this mode by setting an environment variable on the PUN (e.g. via `passenger_env_var` in your `pun.conf.erb`):
-
-```
-OOD_API_APP_TOKENS=true
-```
-
-With this set, every `/api/v1/*` request must carry a valid `Authorization: Bearer <token>` where `<token>` was issued by the Dashboard plugin. Without the flag, the Authorization header is ignored and the JWT flow above applies.
-
-**Important:** Application-level tokens do not replace Apache's auth. With OOD's default `AuthType openid-connect`, Apache only accepts an OIDC **session cookie** — it will not accept a bearer token on its own. Every request must carry both:
-
-- the OIDC session cookie (gets past Apache)
-- the app-level token (identifies you to ood-api)
-
-A request from a fresh terminal with only `Authorization: Bearer ...` and no session cookie will be 302-redirected to your IdP's login page before it ever reaches ood-api.
-
-#### Generating a Token
-
-1. Log in to Open OnDemand in a browser
-2. Navigate to **Settings > API Tokens** (`/settings/api_tokens`)
-3. Enter a descriptive name for your token (e.g., "My Script", "CI Pipeline")
-4. Click **Generate Token**
-5. **Copy the token immediately** - it will only be shown once
-
-#### Using a Token
-
-From inside the browser session (Dashboard JS, browser extension, fetch from a bookmarklet), include the token in the `Authorization` header — the session cookie rides along automatically:
-
-```js
-fetch('/pun/sys/ood-api/api/v1/clusters', {
-  headers: { 'Authorization': 'Bearer YOUR_TOKEN_HERE' }
-})
-```
-
-#### Using a Token from a Terminal or Script
-
-From a terminal or CI job, pass **both** the session cookie and the token as parameters. Grab the OIDC session cookie from your browser once (DevTools → Application → Cookies → `mod_auth_openidc_session`), then:
-
-```bash
-curl -H "Cookie: mod_auth_openidc_session=YOUR_SESSION_COOKIE" \
-     -H "Authorization: Bearer YOUR_TOKEN_HERE" \
-  https://ondemand.example.com/pun/sys/ood-api/api/v1/clusters
-```
-
-The session cookie is valid for the configured OIDC session lifetime — by default 8 hours inactivity / 8 hours max (see `OIDCSessionInactivityTimeout` and `OIDCSessionMaxDuration` in `ood_portal.yml`). Refresh the cookie by logging in again when it expires.
-
-For unattended CI or long-running jobs, use **Option 1** instead — app-level tokens are scoped to your browser session's lifetime.
-
-#### Token Storage
-
-Tokens are stored in the user's home directory at `~/.config/ondemand/tokens.json` with `600` permissions (readable only by the owner). Each token includes:
-
-- Unique ID
-- User-defined name
-- Creation timestamp
-- Last used timestamp
-
-#### Revoking Tokens
-
-Tokens can be revoked through the web interface at **Settings > API Tokens**. Revoked tokens are immediately invalidated.
 
 ## API Reference
 
@@ -146,6 +71,35 @@ All endpoints return JSON responses with the following structure:
   "message": "Cluster not found"
 }
 ```
+
+### Health
+
+Confirms the app is running and serving requests. Used by the install and
+upgrade checks, and suitable for a monitoring probe.
+
+```
+GET /health
+```
+
+**Response:**
+```json
+{
+  "status": "ok"
+}
+```
+
+Returns only that. No version, cluster list, or configuration is exposed.
+
+**Authentication.** This is the one endpoint outside the application-token
+check — it is not under `/api/v1/`, which is what that filter guards. It is
+**not** unauthenticated: Apache sits in front of the whole portal, so a request
+with no valid session or JWT gets a **302** to your IdP rather than a 200. A
+monitoring probe therefore needs a credential like any other client, and a
+probe that follows redirects will report success on the IdP's login page —
+check for `200` with `{"status":"ok"}`, not merely a non-error.
+
+**Errors:**
+- 302 - No valid session or bearer token (redirect to the IdP, from Apache)
 
 ### Clusters
 
@@ -180,7 +134,7 @@ GET /api/v1/clusters
 **Example:**
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  https://ondemand.example.com/api/v1/clusters
+  https://ondemand.example.com/pun/sys/ood-api/api/v1/clusters
 ```
 
 #### Get Cluster
@@ -209,7 +163,7 @@ GET /api/v1/clusters/:id
 **Example:**
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  https://ondemand.example.com/api/v1/clusters/cluster1
+  https://ondemand.example.com/pun/sys/ood-api/api/v1/clusters/cluster1
 ```
 
 ### Jobs
@@ -256,12 +210,26 @@ GET /api/v1/jobs?cluster=:cluster_id
 **Example:**
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "https://ondemand.example.com/api/v1/jobs?cluster=cluster1"
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/jobs?cluster=cluster1"
 ```
+
+**Errors:**
+- 400 - Missing `cluster` parameter
+- 404 - Cluster not found
+- 501 - Not supported by this cluster's scheduler adapter
+- 503 - Scheduler communication error
 
 #### Get Job
 
 Returns details for a specific job.
+
+> **Finished jobs age out.** A job stays queryable here for as long as your
+> scheduler retains it — Slurm's `MinJobAge`, 300 seconds by default. After
+> that it is gone from the active queue and this endpoint returns **404**; use
+> [List Historic Jobs](#list-historic-jobs) for completed work. A polling loop
+> should therefore treat 404 as "finished and aged out", not as an error, and
+> should stop rather than retrying. A scheduler this endpoint cannot reach is
+> reported as **503**, never as 404, so the two cases are safe to tell apart.
 
 ```
 GET /api/v1/jobs/:id?cluster=:cluster_id
@@ -293,12 +261,24 @@ GET /api/v1/jobs/:id?cluster=:cluster_id
 **Example:**
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "https://ondemand.example.com/api/v1/jobs/12345?cluster=cluster1"
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/jobs/12345?cluster=cluster1"
 ```
+
+**Errors:**
+- 400 - Missing `cluster` parameter
+- 404 - Cluster not found, or no such job (see note above)
+- 501 - Not supported by this cluster's scheduler adapter
+- 503 - Scheduler communication error
 
 #### Submit Job
 
 Submits a new job to the specified cluster. Unlike other job endpoints that use a query parameter, the cluster is specified in the JSON request body.
+
+> The REST body **nests** the script and options (`script.content`,
+> `options.job_name`, `options.wall_time`). The equivalent MCP tool takes the
+> same values **flat** (`script_content`, `job_name`, `wall_time`) — see the
+> [MCP tool reference](user-guide.md#32-available-tools). Sending the flat form to REST
+> returns 400 `"script.content must be a string"`.
 
 ```
 POST /api/v1/jobs
@@ -373,8 +353,16 @@ curl -X POST \
       "wall_time": 300
     }
   }' \
-  https://ondemand.example.com/api/v1/jobs
+  https://ondemand.example.com/pun/sys/ood-api/api/v1/jobs
 ```
+
+**Errors:**
+- 400 - Missing `cluster`, or `script.content` is absent or not a string
+- 404 - Cluster not found
+- 422 - The scheduler rejected the job (bad queue, account, or resource request);
+  the message carries the scheduler's own text
+- 501 - Not supported by this cluster's scheduler adapter
+- 503 - Scheduler communication error
 
 #### Cancel Job
 
@@ -402,8 +390,15 @@ DELETE /api/v1/jobs/:id?cluster=:cluster_id
 ```bash
 curl -X DELETE \
   -H "Authorization: Bearer $TOKEN" \
-  "https://ondemand.example.com/api/v1/jobs/12345?cluster=cluster1"
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/jobs/12345?cluster=cluster1"
 ```
+
+**Errors:**
+- 400 - Missing `cluster` parameter
+- 404 - Cluster or job not found
+- 422 - The scheduler refused the cancellation
+- 501 - Not supported by this cluster's scheduler adapter
+- 503 - Scheduler communication error
 
 #### Hold Job
 
@@ -431,8 +426,15 @@ POST /api/v1/jobs/:id/hold?cluster=:cluster_id
 ```bash
 curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
-  "https://ondemand.example.com/api/v1/jobs/12345/hold?cluster=cluster1"
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/jobs/12345/hold?cluster=cluster1"
 ```
+
+**Errors:**
+- 400 - Missing `cluster` parameter
+- 404 - Cluster or job not found
+- 422 - The scheduler refused the hold (a running job cannot be held)
+- 501 - Not supported by this cluster's scheduler adapter
+- 503 - Scheduler communication error
 
 #### Release Job
 
@@ -460,10 +462,23 @@ POST /api/v1/jobs/:id/release?cluster=:cluster_id
 ```bash
 curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
-  "https://ondemand.example.com/api/v1/jobs/12345/release?cluster=cluster1"
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/jobs/12345/release?cluster=cluster1"
 ```
 
+**Errors:**
+- 400 - Missing `cluster` parameter
+- 404 - Cluster or job not found
+- 422 - The scheduler refused the release
+- 501 - Not supported by this cluster's scheduler adapter
+- 503 - Scheduler communication error
+
 ### Historic Jobs
+
+> **Slurm-mostly.** This is one of four capability areas — accounts, queues,
+> cluster info, and job history — that depend on adapter features `ood_core`
+> implements fully only for Slurm. On PBS Pro, LSF, Torque, or SGE these
+> commonly return **501 `not_implemented`**. Handle that code; it means your
+> site's scheduler, not a broken request.
 
 The Historic Jobs API returns completed jobs from the scheduler's accounting database. Unlike the regular jobs endpoint which shows only active jobs, this endpoint returns jobs that have already finished.
 
@@ -504,17 +519,33 @@ GET /api/v1/jobs/historic?cluster=:cluster_id
 **Errors:**
 - 400 - Missing `cluster` parameter
 - 404 - Cluster not found
+- **501 - Not supported by this cluster's scheduler adapter** (see note above)
 - 503 - Scheduler communication error
 
 **Example:**
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
-  "https://ondemand.example.com/api/v1/jobs/historic?cluster=cluster1"
+  "https://ondemand.example.com/pun/sys/ood-api/api/v1/jobs/historic?cluster=cluster1"
 ```
 
 ### Files
 
 The Files API provides access to files on the cluster. Access is restricted to the user's home directory and system temp directories.
+
+**Denied paths.** Within those roots, a few locations are refused for both read
+and write, and return `403 forbidden`:
+
+| Path | Why |
+|---|---|
+| `~/.ssh` | SSH keys — write access would let a caller establish persistent login |
+| `.bashrc`, `.zshrc`, `.profile`, and other shell init files | Executed on every login |
+| `~/.config/ondemand` | This API's own token store |
+| `~/.config/systemd/user` | User services survive the session |
+
+Symlinks and hardlinks into these paths are refused too, and a recursive delete
+of a parent directory is refused if a denied path lies beneath it. The user can
+still edit these files by other means; the restriction exists so that an agent
+acting on untrusted input cannot establish access that outlives the session.
 
 **Limits (configurable via environment variables):**
 
@@ -662,17 +693,24 @@ curl -X PUT \
   "https://ondemand.example.com/pun/sys/ood-api/api/v1/files?path=~/remote_file.txt"
 ```
 
-#### Create Directory
+#### Create Directory or Empty File
 
-Create a new directory.
+Create a directory, or an empty file.
 
 ```
-POST /api/v1/files?path=:path&type=directory
+POST /api/v1/files?path=:path&type=directory   # directory
+POST /api/v1/files?path=:path&touch=true       # empty file
 ```
 
 **Parameters:**
-- `path` (query, required) - Path for the new directory
-- `type` (query, required) - Must be `directory`
+- `path` (query, required) - Path to create
+- `type` (query) - Pass `directory` to create a directory
+- `touch` (query) - Pass `true` to create an empty file (like `touch(1)`).
+  Creating a file **with content** is `PUT`, not `POST`.
+
+One of `type=directory` or `touch=true` is required; a `POST` with neither
+returns 400 `"Use PUT to write file contents"`. `touch` on an existing file
+updates its mtime and leaves the contents alone.
 
 **Response (201 Created):**
 ```json
@@ -732,14 +770,6 @@ curl -X DELETE \
   -H "Authorization: Bearer $TOKEN" \
   "https://ondemand.example.com/pun/sys/ood-api/api/v1/files?path=~/old_folder&recursive=true"
 ```
-
-#### Path Restrictions
-
-For security, file operations are restricted to:
-- User's home directory (`~` or `/home/username`)
-- System temp directories (`/tmp`)
-
-Attempts to access paths outside these directories return 403 Forbidden.
 
 ### Environment Variables
 
@@ -841,6 +871,12 @@ Rules:
 
 ### Accounts
 
+> **Slurm-mostly.** This is one of four capability areas — accounts, queues,
+> cluster info, and job history — that depend on adapter features `ood_core`
+> implements fully only for Slurm. On PBS Pro, LSF, Torque, or SGE these
+> commonly return **501 `not_implemented`**. Handle that code; it means your
+> site's scheduler, not a broken request.
+
 The Accounts API lists the scheduler accounts available to the authenticated user on a given cluster. This is useful for AI agents and scripts that need to discover valid `accounting_id` values before submitting jobs.
 
 #### List Accounts
@@ -870,6 +906,7 @@ GET /api/v1/accounts?cluster=:cluster_id
 **Errors:**
 - 400 - Missing `cluster` parameter
 - 404 - Cluster not found
+- **501 - Not supported by this cluster's scheduler adapter** (see note above)
 - 503 - Scheduler communication error
 
 **Example:**
@@ -879,6 +916,12 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```
 
 ### Queues
+
+> **Slurm-mostly.** This is one of four capability areas — accounts, queues,
+> cluster info, and job history — that depend on adapter features `ood_core`
+> implements fully only for Slurm. On PBS Pro, LSF, Torque, or SGE these
+> commonly return **501 `not_implemented`**. Handle that code; it means your
+> site's scheduler, not a broken request.
 
 The Queues API lists the queues (partitions) available on a given cluster. This is useful for AI agents and scripts that need to discover valid `queue_name` values before submitting jobs.
 
@@ -912,6 +955,7 @@ GET /api/v1/queues?cluster=:cluster_id
 **Errors:**
 - 400 - Missing `cluster` parameter
 - 404 - Cluster not found
+- **501 - Not supported by this cluster's scheduler adapter** (see note above)
 - 503 - Scheduler communication error
 
 **Example:**
@@ -921,6 +965,12 @@ curl -H "Authorization: Bearer $TOKEN" \
 ```
 
 ### Cluster Info
+
+> **Slurm-mostly.** This is one of four capability areas — accounts, queues,
+> cluster info, and job history — that depend on adapter features `ood_core`
+> implements fully only for Slurm. On PBS Pro, LSF, Torque, or SGE these
+> commonly return **501 `not_implemented`**. Handle that code; it means your
+> site's scheduler, not a broken request.
 
 The Cluster Info API returns resource utilization for a given cluster, including active and total counts for nodes, processors, and GPUs. This is useful for AI agents that need to reason about cluster load before submitting jobs.
 
@@ -952,6 +1002,7 @@ GET /api/v1/cluster_info?cluster=:cluster_id
 **Errors:**
 - 400 - Missing `cluster` parameter
 - 404 - Cluster not found
+- **501 - Not supported by this cluster's scheduler adapter** (see note above)
 - 503 - Scheduler communication error
 
 **Example:**
@@ -1003,15 +1054,22 @@ The API uses standard HTTP status codes:
 |------|---------|
 | 200 | Success |
 | 201 | Created (job submitted, directory created) |
-| 400 | Bad Request (missing/invalid parameters) |
+| 400 | Bad Request (missing/invalid parameters; also an oversized file **read** — see note) |
 | 401 | Unauthorized (missing/invalid token) |
 | 403 | Forbidden (permission denied, path not allowed) |
 | 404 | Not Found (resource doesn't exist) |
-| 413 | Payload Too Large (file exceeds size limit) |
+| 413 | Payload Too Large (**write** body exceeds the size limit) |
 | 422 | Unprocessable Entity (job submission/cancellation failed) |
 | 500 | Internal Server Error |
+| 501 | Not Implemented (the site's scheduler adapter does not support the operation) |
 | 503 | Service Unavailable (scheduler communication error) |
 | 507 | Insufficient Storage (no space left on device) |
+
+> **413 applies to writes only.** `PUT /api/v1/files` returns 413
+> `payload_too_large` when the request body exceeds `OOD_API_MAX_FILE_WRITE`.
+> Reading a file larger than `OOD_API_MAX_FILE_READ` returns **400
+> `bad_request`**, not 413. Pass `max_size` to read a prefix of a large file
+> instead.
 
 **Error Response Format:**
 ```json
@@ -1029,8 +1087,9 @@ The API uses standard HTTP status codes:
 | `unauthorized` | 401 | Invalid or missing API token |
 | `forbidden` | 403 | Permission denied or path not in allowed directories |
 | `not_found` | 404 | Resource not found |
-| `payload_too_large` | 413 | File exceeds maximum size limit |
+| `payload_too_large` | 413 | Write body exceeds the maximum size limit (writes only; an oversized read returns `bad_request`) |
 | `unprocessable_entity` | 422 | Request understood but could not be processed |
+| `not_implemented` | 501 | The site's scheduler adapter does not support this operation |
 | `service_unavailable` | 503 | Scheduler communication error |
 | `insufficient_storage` | 507 | No space left on device |
 
@@ -1041,8 +1100,8 @@ The API uses standard HTTP status codes:
 ```python
 import requests
 
-BASE_URL = "https://ondemand.example.com"
-TOKEN = "your-api-token-here"
+BASE_URL = "https://ondemand.example.com/pun/sys/ood-api"
+TOKEN = "your-jwt-here"  # an IdP-issued JWT; see Authentication
 
 headers = {
     "Authorization": f"Bearer {TOKEN}",
@@ -1073,11 +1132,11 @@ response = requests.post(
     json=job_data
 )
 
-if response.status_code == 201:
-    job = response.json()["data"]
-    print(f"Submitted job: {job['job_id']}")
-else:
-    print(f"Error: {response.json()['message']}")
+if response.status_code != 201:
+    raise SystemExit(f"Submit failed ({response.status_code}): {response.json()['message']}")
+
+job = response.json()["data"]
+print(f"Submitted job: {job['job_id']}")
 
 # Check job status
 job_id = job["job_id"]
@@ -1101,8 +1160,8 @@ print(f"Job cancelled: {response.json()['data']['status']}")
 ```bash
 #!/bin/bash
 
-BASE_URL="https://ondemand.example.com"
-TOKEN="your-api-token-here"
+BASE_URL="https://ondemand.example.com/pun/sys/ood-api"
+TOKEN="your-jwt-here"      # an IdP-issued JWT; see Authentication
 
 # List clusters
 echo "Available clusters:"
@@ -1128,65 +1187,152 @@ JOB_RESPONSE=$(curl -s -X POST \
 JOB_ID=$(echo $JOB_RESPONSE | jq -r '.data.job_id')
 echo "Submitted job: $JOB_ID"
 
-# Poll for completion
+# Poll for completion.
+#
+# Two ways this loop ends: the job reports `completed`, or it ages out of the
+# scheduler's active queue and the endpoint starts returning 404. Handle both,
+# or the loop never exits. Keep the interval generous — there is no rate
+# limiting, and a tight loop hammers the scheduler for every user on the host.
 while true; do
-  STATUS=$(curl -s -H "Authorization: Bearer $TOKEN" \
-    "$BASE_URL/api/v1/jobs/$JOB_ID?cluster=cluster1" | jq -r '.data.status')
+  BODY=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $TOKEN" \
+    "$BASE_URL/api/v1/jobs/$JOB_ID?cluster=cluster1")
+  CODE=$(printf '%s' "$BODY" | tail -n1)
+  STATUS=$(printf '%s' "$BODY" | sed '$d' | jq -r '.data.status // empty')
 
-  echo "Job status: $STATUS"
-
-  if [ "$STATUS" = "completed" ]; then
-    echo "Job finished!"
+  if [ "$CODE" = "404" ]; then
+    echo "Job finished and aged out of the queue."
     break
+  elif [ "$CODE" != "200" ]; then
+    echo "Error querying job (HTTP $CODE)" >&2
+    exit 1
   fi
 
-  sleep 10
+  echo "Job status: $STATUS"
+  [ "$STATUS" = "completed" ] && { echo "Job finished!"; break; }
+
+  sleep 30
 done
+
+# Whether it succeeded is a separate question — the API reports scheduler
+# state, not exit status. Read the job's output to find out:
+#   curl -H "Authorization: Bearer $TOKEN" \
+#     "$BASE_URL/api/v1/files/content?path=$OUTPUT_PATH"
 ```
+
+## Application tokens
+
+For sites using Google OIDC or other IdPs that don't publish a JWKS endpoint with verifiable access tokens, ood-api can manage its own tokens. Enable this mode by setting an environment variable on the PUN (e.g. via `passenger_env_var` in your `pun.conf.erb`):
+
+```
+OOD_API_APP_TOKENS=true
+```
+
+With this set, **every request to `/api/v1/*` and to `/mcp`** must carry a valid token issued by the Dashboard plugin, in the `X-OOD-API-Token` header:
+
+```
+X-OOD-API-Token: <token>
+```
+
+Without the flag, this header is ignored and the JWT flow in [Authentication](#authentication) applies.
+
+**The token goes in `X-OOD-API-Token`, not `Authorization`.** Apache owns the
+`Authorization` header: when configured for bearer validation
+(`AuthType auth-openidc`) it consumes that header for the IdP's
+JWT, leaving nowhere for a second credential. Giving app tokens their own
+header lets a client satisfy both layers on one request, and is what allows MCP
+clients to use app tokens at all.
+
+**Application tokens do not replace Apache's auth**; they are a second
+factor on top of it. A request must still get past Apache, either with an OIDC
+**session cookie** (OOD's default `AuthType openid-connect`) or with a bearer
+JWT (`AuthType auth-openidc`). A request carrying only `X-OOD-API-Token` and
+nothing Apache accepts is rejected — or 302-redirected to your IdP — before it
+ever reaches ood-api.
+
+### Generating a Token
+
+1. Log in to Open OnDemand in a browser
+2. Navigate to **Settings > API Tokens** (`/settings/api_tokens`)
+3. Enter a descriptive name for your token (e.g., "My Script", "CI Pipeline")
+4. Click **Generate Token**
+5. **Copy the token immediately** - it will only be shown once
+
+### Using a Token
+
+From inside the browser session (Dashboard JS, browser extension, fetch from a bookmarklet), send the token in `X-OOD-API-Token` — the session cookie rides along automatically:
+
+```js
+fetch('/pun/sys/ood-api/api/v1/clusters', {
+  headers: { 'X-OOD-API-Token': 'YOUR_TOKEN_HERE' }
+})
+```
+
+### Using a Token from a Terminal or Script
+
+From a terminal or CI job, pass **both** something Apache accepts and the app token. With OOD's default session-cookie auth, grab the OIDC session cookie from your browser once (DevTools → Application → Cookies → `mod_auth_openidc_session`), then:
+
+```bash
+curl -H "Cookie: mod_auth_openidc_session=YOUR_SESSION_COOKIE" \
+     -H "X-OOD-API-Token: YOUR_TOKEN_HERE" \
+  https://ondemand.example.com/pun/sys/ood-api/api/v1/clusters
+```
+
+At a site running `AuthType auth-openidc`, use a JWT for Apache instead of the cookie — the two headers do not conflict:
+
+```bash
+curl -H "Authorization: Bearer YOUR_JWT" \
+     -H "X-OOD-API-Token: YOUR_TOKEN_HERE" \
+  https://ondemand.example.com/pun/sys/ood-api/api/v1/clusters
+```
+
+### Using a Token with MCP
+
+MCP clients send the same header. With Claude Code:
+
+```bash
+claude mcp add ood-hpc --transport http \
+  --header "Authorization: Bearer YOUR_JWT" \
+  --header "X-OOD-API-Token: YOUR_TOKEN_HERE" \
+  https://ondemand.example.com/pun/sys/ood-api/mcp
+```
+
+A client that cannot set a custom header cannot use app tokens; such sites should rely on Apache-level auth alone.
+
+### Session lifetime
+
+When Apache is gating with a **session cookie**, that cookie is valid for the configured OIDC session lifetime — by default 8 hours inactivity / 8 hours max (see `OIDCSessionInactivityTimeout` and `OIDCSessionMaxDuration` in `ood_portal.yml`). Refresh it by logging in again when it expires. The app token itself does not expire; it is valid until revoked.
+
+For unattended CI or long-running jobs, prefer a JWT alone, which does not depend on a browser session.
+
+### Token Storage
+
+Tokens are stored in the user's home directory at `~/.config/ondemand/tokens.json` with `600` permissions (readable only by the owner). Each token includes:
+
+- Unique ID
+- User-defined name
+- Creation timestamp
+- Last used timestamp
+
+### Revoking Tokens
+
+Tokens can be revoked through the web interface at **Settings > API Tokens**. Revoked tokens are immediately invalidated.
 
 ## Security Considerations
 
-### Token Security
+Every request runs as the authenticated user inside their PUN, so the API grants
+no privilege the user does not already have. What it *does* constrain — the path
+allowlist, the denied paths inside `$HOME`, size limits, the environment
+allowlist, audit logging — and what it deliberately does not — no rate limiting,
+no read-only mode, no per-user enablement — is documented in the README's
+**[Security posture](../README.md#security-posture)**. Read that before
+deploying.
 
-- Tokens are stored with `600` permissions (owner read/write only)
-- Tokens are 64-character hex strings (256 bits of entropy)
-- Token comparison uses timing-safe algorithms to prevent timing attacks
-- Tokens can be revoked immediately through the web interface
+API-specific details not covered there:
 
-### Access Control
-
-- Each token inherits the permissions of the user who created it
-- API requests execute with the same authorization as the token owner
-- Jobs are submitted as the authenticated user
-
-### Best Practices
-
-1. **Rotate tokens regularly** - Create new tokens and revoke old ones periodically
-2. **Use descriptive names** - Name tokens by their purpose for easy auditing
-3. **Limit token exposure** - Store tokens securely, never commit to version control
-4. **Monitor usage** - Check "last used" timestamps in the token management UI
-5. **Revoke unused tokens** - Remove tokens that are no longer needed
-
-### Network Security
-
-- Always use HTTPS in production
-- The API respects OOD's existing authentication and authorization framework
-- Consider network-level restrictions (firewall, VPN) for API access
-
-## MCP Endpoint
-
-The MCP server is built into the app at `/mcp`. It uses the same handler layer as the REST API: cluster and job operations, files (including read `max_size` and write `append`), environment variables, and the `ood://context` resource behave consistently with the sections above.
-
-- **Client setup:** [README — MCP Endpoint](../README.md#3-mcp-endpoint)
-- **Authentication for MCP clients (site operators):** [MCP Authentication](mcp-oauth.md)
-- **Transport:** Stateless HTTP — safe when the PUN recycles idle Passenger workers; no in-memory MCP session is required.
-- **Audit trail:** Operations are logged as `ood_api_audit` lines on **stderr** (visible in PUN/Passenger logs) for both REST and MCP.
-
-## Future Enhancements
-
-The following features are planned for future releases:
-
-- **Token scopes** - Limit tokens to specific operations (read-only, jobs-only, etc.)
-- **Token expiration** - Automatic token expiration after a configured period
-- **Batch status checks** - Check multiple job statuses in a single request
-- **Rate limiting** - Per-token rate limits to prevent abuse
+- Application tokens are 64-character hex strings (256 bits of entropy), stored
+  at `~/.config/ondemand/tokens.json` with mode `600`, and compared in
+  constant time.
+- A token carries no scope: it authenticates the user, and the request then has
+  everything that user has. Revoke through **Settings > API Tokens**.
+- Use HTTPS. Bearer credentials in a URL query string are never accepted; they
+  belong in headers.

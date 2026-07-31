@@ -32,7 +32,7 @@ class ApiTest < Minitest::Test
 
   # CORS — the app must not emit cross-origin headers. It is served
   # same-origin under the OOD proxy; a wildcard would expose a logged-in
-  # user's session to any website. See docs/api.md and docs/mcp-oauth.md.
+  # user's session to any website. See docs/api.md and docs/mcp-auth.md.
 
   def test_no_cors_headers_on_responses
     get '/health'
@@ -79,16 +79,24 @@ class ApiTest < Minitest::Test
     assert_equal 401, last_response.status
   end
 
-  def test_app_token_mode_invalid_bearer_returns_401
-    get '/api/v1/clusters', {}, { 'HTTP_AUTHORIZATION' => 'Bearer invalid-token' }
+  def test_app_token_mode_invalid_token_returns_401
+    get '/api/v1/clusters', {}, { 'HTTP_X_OOD_API_TOKEN' => 'invalid-token' }
 
     assert_equal 401, last_response.status
     assert_equal 'unauthorized', json_response['error']
   end
 
-  def test_app_token_mode_non_bearer_auth_header_returns_401
+  # Apache owns Authorization — a token presented there is not an app token,
+  # even if its value is valid.
+  def test_app_token_mode_token_in_authorization_header_returns_401
     token = create_test_token
-    get '/api/v1/clusters', {}, { 'HTTP_AUTHORIZATION' => "Basic #{token.token}" }
+    get '/api/v1/clusters', {}, { 'HTTP_AUTHORIZATION' => "Bearer #{token.token}" }
+
+    assert_equal 401, last_response.status
+  end
+
+  def test_app_token_mode_empty_token_header_returns_401
+    get '/api/v1/clusters', {}, { 'HTTP_X_OOD_API_TOKEN' => '' }
 
     assert_equal 401, last_response.status
   end
@@ -301,6 +309,55 @@ options: { job_name: 'api-job' } }.to_json,
     assert_equal 400, last_response.status
   end
 
+  # Valid JSON of the wrong shape. Every one of these used to 500: the body is
+  # indexed like a Hash, so an Array raises TypeError and a scalar NoMethodError.
+  def test_post_jobs_returns_400_for_non_object_json_body
+    token = create_test_token
+
+    ['[1,2,3]', 'null', '42', '"hello"'].each do |body|
+      post '/api/v1/jobs', body, auth_header(token).merge('CONTENT_TYPE' => 'application/json')
+      assert_equal 400, last_response.status, "body #{body.inspect} should be a 400"
+    end
+  end
+
+  def test_post_jobs_returns_400_when_script_or_options_is_not_an_object
+    token = create_test_token
+
+    [{ cluster: 'cluster1', script: 'x' },
+     { cluster: 'cluster1', script: { content: '#!/bin/bash' }, options: 'x' }].each do |body|
+      post '/api/v1/jobs', body.to_json, auth_header(token).merge('CONTENT_TYPE' => 'application/json')
+      assert_equal 400, last_response.status, "body #{body.inspect} should be a 400"
+    end
+  end
+
+  # Rack turns ?p[]=x into an Array and ?p[k]=x into a Hash; the handler then
+  # calls start_with? on it and raises TypeError.
+  def test_env_prefix_rejects_non_scalar_values
+    token = create_test_token
+
+    get '/api/v1/env?prefix[]=OOD', {}, auth_header(token)
+    assert_equal 400, last_response.status
+
+    get '/api/v1/env?prefix[a]=OOD', {}, auth_header(token)
+    assert_equal 400, last_response.status
+  end
+
+  # A NUL reaches File.expand_path and raises ArgumentError — a malformed
+  # request, not a server fault.
+  def test_file_routes_reject_null_byte_in_path
+    token = create_test_token
+    path = "/tmp/evil\0.txt"
+
+    get "/api/v1/files?path=#{CGI.escape(path)}", {}, auth_header(token)
+    assert_equal 400, last_response.status
+
+    get "/api/v1/files/content?path=#{CGI.escape(path)}", {}, auth_header(token)
+    assert_equal 400, last_response.status
+
+    delete "/api/v1/files?path=#{CGI.escape(path)}", {}, auth_header(token)
+    assert_equal 400, last_response.status
+  end
+
   def test_post_jobs_returns_422_for_submission_failure
     token = create_test_token
 
@@ -323,6 +380,9 @@ options: { job_name: 'api-job' } }.to_json,
     token = create_test_token
 
     mock_adapter = mock('adapter')
+    # cancel confirms the job exists first; ood_core reports success for an
+    # unknown id, so the API would otherwise fabricate a 'cancelled' status.
+    mock_adapter.stubs(:info).with('12345').returns(mock_job_info(id: '12345', job_owner: 'drew'))
     mock_adapter.expects(:delete).with('12345')
 
     @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
@@ -346,6 +406,7 @@ options: { job_name: 'api-job' } }.to_json,
     token = create_test_token
 
     mock_adapter = mock('adapter')
+    mock_adapter.stubs(:info).with('12345').returns(mock_job_info(id: '12345', job_owner: 'drew'))
     mock_adapter.stubs(:delete).raises(OodCore::JobAdapterError, 'Permission denied')
 
     @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
@@ -382,5 +443,37 @@ options: { job_name: 'api-job' } }.to_json,
     assert last_response.ok?
     assert json_response.key?('data')
     assert json_response['data'].key?('content')
+  end
+
+  # The per-route rescue lists had drifted apart — PUT /files 500'd on
+  # NotFoundError, POST /files on StorageError, GET /files on ValidationError.
+  # These application-wide handlers are the backstop that keeps a route which
+  # omits a rescue from returning a blank 500.
+  def test_global_handler_maps_storage_error_from_a_route_without_a_rescue
+    token = create_test_token
+    Handlers::Files.stubs(:touch).raises(Handlers::StorageError, 'No space left on device')
+
+    post '/api/v1/files?path=/tmp/x.txt&touch=1', {}, auth_header(token)
+    assert_equal 507, last_response.status
+    assert_equal 'insufficient_storage', json_response['error']
+  end
+
+  def test_global_handler_maps_not_found_from_a_route_without_a_rescue
+    token = create_test_token
+    Handlers::Files.stubs(:write).raises(Handlers::NotFoundError, 'File not found')
+
+    put '/api/v1/files?path=/tmp/x.txt', 'body', auth_header(token)
+    assert_equal 404, last_response.status
+  end
+
+  # LoadError and NotImplementedError descend from ScriptError, so neither a
+  # bare rescue nor Sinatra's default handling catches them.
+  def test_script_error_is_reported_rather_than_returning_a_blank_500
+    token = create_test_token
+    Handlers::Clusters.stubs(:list).raises(NotImplementedError, 'adapter missing')
+
+    get '/api/v1/clusters', {}, auth_header(token)
+    assert_equal 500, last_response.status
+    assert_equal 'internal_error', json_response['error']
   end
 end

@@ -3,9 +3,14 @@
 This guide configures your OOD site so MCP clients (Claude Code, Claude
 Desktop, Cursor, etc.) can authenticate and use the API programmatically.
 
-Two methods are available. Both build on the same core setup — Method 1
-is a subset of Method 2, so you can start simple and add OAuth
-discovery later.
+Both methods below produce the same thing: a **JWT in an `Authorization: Bearer`
+header**, which is what ood-api authenticates with. They differ only in how the
+client obtains that JWT. This is separate from
+[application tokens](installation.md#optional-application-tokens), which some
+sites require *in addition* in an `X-OOD-API-Token` header.
+
+Both build on the same core setup — Method 1 is a subset of Method 2, so you can
+start simple and add OAuth discovery later.
 
 | | Method 1: Static Token | Method 2: OAuth Discovery |
 |---|---|---|
@@ -24,9 +29,11 @@ discovery later.
 
 ## Core setup
 
-Both methods require switching Apache from session-only auth to
-session-plus-bearer auth. This is a one-line change in
-`/etc/ood/config/ood_portal.yml`.
+Both methods require Apache to accept bearer tokens rather than session
+cookies alone — the `auth` override in `/etc/ood/config/ood_portal.yml`. That is
+[installation step 2](installation.md#2-configure-authentication); if you
+followed the install guide you have already done it, and the rest of this
+section is background on *why*.
 
 ### Why this is needed
 
@@ -43,37 +50,26 @@ Bearer tokens are validated against the same IdP signing keys (JWKS) —
 no weaker authentication path is introduced. The PUN still provides
 per-user isolation.
 
+### A revoked token keeps working until it expires
+
+Worth knowing before you deploy this, because it applies to every method
+below. JWT validation at Apache is stateless: `mod_auth_openidc` verifies
+the signature against the JWKS and checks expiry, but never asks the IdP
+whether the token is still good. Revoking a token at the IdP therefore has
+no effect until it expires on its own.
+
+If prompt revocation matters at your site, the options are short
+access-token lifetimes paired with refresh, or introspecting on every
+request — which adds a network dependency to every API call. Neither is
+implemented in ood-api today.
+
 ### Configuration
 
-Add to `/etc/ood/config/ood_portal.yml`:
-
-```yaml
-auth:
-  - "AuthType auth-openidc"
-  - "Require valid-user"
-oidc_settings:
-  OIDCOAuthVerifyJwksUri: "https://your-idp.example.edu/certs"
-  OIDCOAuthRemoteUserClaim: "sub"
-```
-
-The `auth` override applies to all OOD protected locations (`/pun`,
-`/nginx`, `/oidc`). This is how OOD's portal generator works — there
-is no per-app auth configuration.
-
-Replace the JWKS URI and claim with your identity provider's values:
-
-| Identity Provider | JWKS URI | Claim |
-|-------------------|----------|-------|
-| CILogon | `https://cilogon.org/oauth2/certs` | `sub` |
-| Keycloak | `https://keycloak.example.edu/realms/REALM/protocol/openid-connect/certs` | `preferred_username` or `email` |
-| Dex (OOD built-in) | `https://your-ood-host/dex/keys` | `email` |
-
-Regenerate the Apache config and restart:
-
-```bash
-sudo /opt/ood/ood-portal-generator/sbin/update_ood_portal
-sudo systemctl restart httpd
-```
+This is the same Apache change as
+[installation step 2](installation.md#2-configure-authentication) — **if you
+have already done it, skip to [Method 1](#method-1-static-bearer-token).** Do
+not re-copy the config from here; the claim value in particular is
+site-specific and getting it wrong is the most common failure.
 
 ### Verify
 
@@ -245,13 +241,38 @@ you can skip this file — clients will fetch it from the IdP directly.
   "authorization_endpoint": "https://cilogon.org/authorize",
   "token_endpoint": "https://cilogon.org/oauth2/token",
   "registration_endpoint": "https://cilogon.org/oauth2/register",
+  "device_authorization_endpoint": "https://cilogon.org/oauth2/device_authorization",
+  "revocation_endpoint": "https://cilogon.org/oauth2/revoke",
+  "introspection_endpoint": "https://cilogon.org/oauth2/introspect",
   "jwks_uri": "https://cilogon.org/oauth2/certs",
   "response_types_supported": ["code"],
-  "grant_types_supported": ["authorization_code"],
+  "grant_types_supported": [
+    "authorization_code",
+    "refresh_token",
+    "urn:ietf:params:oauth:grant-type:device_code"
+  ],
   "code_challenge_methods_supported": ["S256"],
   "token_endpoint_auth_methods_supported": ["none"]
 }
 ```
+
+> **Note:** this is a minimal example listing only what MCP clients need.
+> CILogon's live metadata at
+> `https://cilogon.org/.well-known/openid-configuration` advertises more,
+> including `client_credentials` and RFC 8693 token-exchange. It also
+> lists its registration endpoint as `/oauth2/oidc-cm`, which is the
+> RFC 7592 management endpoint and cannot create a client — client
+> registration is the manual web form at `/oauth2/register`. See Dynamic
+> Client Registration below. Prefer fetching the live document over
+> copying this file when your IdP publishes its own.
+
+> **Note on other CILogon grants.** Beyond the authorization code flow
+> used here, CILogon's published metadata also advertises
+> `refresh_token`, `device_code`, `client_credentials`, and RFC 8693
+> token-exchange, plus revocation and introspection endpoints. These are
+> **not tested against ood-api** and are not part of either method
+> documented here — see [Token lifecycle](#token-lifecycle-untested)
+> below before relying on them.
 
 **Keycloak example:**
 
@@ -376,9 +397,39 @@ automatically.
 
 | Identity Provider | DCR Support |
 |-------------------|-------------|
-| CILogon | Supported natively |
+| CILogon | **No** — pre-register the client, see below |
 | Keycloak | Can be configured per-realm |
 | Dex | Not supported — pre-register a client |
+
+DCR is a convenience for the operator, not a prerequisite. Without it,
+clients still discover endpoints from the documents above and run the
+OAuth flow without users pasting tokens — they just need a client ID you
+provisioned in advance.
+
+> **Register the client once, during endpoint setup.** MCP clients cannot
+> self-register with CILogon, but this is an operator setup step rather than
+> something in your users' path — do it in the same sitting as editing
+> `ood_portal.yml` and writing the discovery documents, then publish the
+> client ID to users.
+>
+> **ACCESS sites** register through the ACCESS registry at
+> [`registry.access-ci.org`](https://registry.access-ci.org/registry/oa4mp_client/oa4mp_client_co_oidc_clients/add/co:4),
+> which is self-service with immediate creation. Choose the **"ACCESS OIDC
+> client configuration v1"** named configuration: it returns the ACCESS ID
+> (`someone@access-ci.org`, the eduPersonPrincipalName) as the OIDC `sub`
+> claim — so ACCESS sites set `OIDCOAuthRemoteUserClaim: "sub"`, unlike the
+> `preferred_username` a plain Keycloak site uses.
+>
+> **Other sites** use CILogon's form at `https://cilogon.org/oauth2/register`,
+> which states that requests are manually evaluated with a one-business-day
+> turnaround. (The `/oauth2/oidc-cm` endpoint in CILogon's published metadata
+> is the RFC 7592 *management* endpoint — it updates an already-approved
+> client and cannot create one.)
+>
+> **Tick the refresh-token option when you create the client** if you want
+> refresh tokens available. It is a per-client setting fixed at registration,
+> not a scope clients can request later, and changing it afterwards means
+> editing or re-creating the client.
 
 If DCR is not available, pre-register an OAuth client in your IdP with:
 - Redirect URI: `http://localhost:PORT/callback` (for desktop clients)
@@ -387,16 +438,37 @@ If DCR is not available, pre-register an OAuth client in your IdP with:
 
 Give users the client ID to configure in their MCP client settings.
 
-## Application-level tokens
+## Token lifecycle (untested)
 
-Application-level tokens (the Dashboard plugin at `/settings/api_tokens`)
-are validated inside the app, below Apache. MCP clients cannot use them
-because Apache requires authentication before the request reaches the
-app, and MCP clients don't share browser cookies.
+Everything in this section is derived from CILogon's published metadata
+and from probing its endpoints. **None of it has been exercised
+end-to-end against ood-api.** The two methods above are tested; this is
+not. Treat it as a starting point for your own testing, not as
+procedure.
 
-Application-level tokens remain useful for REST API access from scripts
-that can be paired with a session cookie, or in development when
-running `bin/dev` (which bypasses Apache).
+CILogon's `.well-known/openid-configuration` advertises five grant
+types (`authorization_code`, `refresh_token`, `client_credentials`,
+`device_code`, and RFC 8693 token-exchange) plus revocation and
+introspection endpoints. Three are potentially relevant here.
+
+**Refresh tokens** would remove most of the manual token replacement
+Method 1 requires. The constraint is that refresh must be enabled
+per-client at registration — see the note under Dynamic Client
+Registration — so it is a decision made when the client is approved,
+not a scope requested at authorization time. Untested against ood-api.
+
+**Device code flow** suits a client with no browser, such as an agent
+running on a compute node. The node displays a short code the user
+approves from another device, avoiding a long-lived token pasted into
+the job environment. Untested against ood-api.
+
+## Application tokens
+
+If your site also enables per-client application tokens, an MCP client sends
+both headers — `Authorization: Bearer <jwt>` for Apache and `X-OOD-API-Token`
+for the app. A client that cannot set a custom header should rely on
+Apache-level auth alone. Full details in
+[the REST API guide](api.md#application-tokens).
 
 ## Troubleshooting
 
@@ -462,5 +534,5 @@ separate.
   the REST API and MCP tools
 - **[API reference](api.md)** — File read/write limits, historic jobs
   behavior, and error semantics
-- **[README](../README.md)** — Installation, configuration, and
-  application-level tokens for REST API access
+- **[Installation](installation.md)** — deploying and configuring ood-api
+- **[README](../README.md)** — what the app does and its security posture

@@ -1,11 +1,15 @@
 # frozen_string_literal: true
 
 require 'sinatra/base'
+# Rack autoloads this; require it explicitly so QueryParser::QueryLimitError is
+# defined by the time the error handler below references it.
+require 'rack/query_parser'
 require 'json'
 require 'etc'
 require 'fileutils'
 require 'ood_core'
 require_relative '../lib/api_token'
+require_relative '../lib/app_auth'
 require_relative 'handlers/audit'
 require_relative 'handlers/clusters'
 require_relative 'handlers/jobs'
@@ -33,14 +37,78 @@ module OodApi
     # bearer token server-to-server without a CORS preflight. The only
     # genuinely cross-origin surface — the /.well-known/oauth-* discovery
     # documents — is served by Apache, which sets its own
-    # Access-Control-Allow-Origin (see docs/mcp-oauth.md). A wildcard here
+    # Access-Control-Allow-Origin (see docs/mcp-auth.md). A wildcard here
     # would grant any website scripted access to a logged-in user's session
     # without protecting anything. If a site ever fronts this API with a
     # cross-origin SPA, add an explicit, origin-scoped allow-list then.
 
-    # Authentication
+    # Authentication runs first so an unauthenticated caller learns nothing —
+    # not even the configured size limits. `authenticate!` reads only
+    # request.env, never `params`, so it does not trigger the body parse the
+    # next filter exists to prevent.
     before '/api/v1/*' do
       authenticate!
+    end
+
+    # Reject oversized bodies before anything touches `params`.
+    #
+    # Sinatra resolves `params` lazily, and Rack parses the body when it does.
+    # A client that omits Content-Type gets the form-encoded default, so Rack
+    # tries to parse a multi-megabyte upload as a form and raises
+    # Rack::QueryParser::QueryLimitError from inside `params` — before any
+    # route code runs, and well below our own write limit. Checking
+    # content_length uses only headers, so it never triggers a parse.
+    before '/api/v1/*' do
+      max_write = Handlers::Files::MAX_FILE_WRITE
+      next if request.content_length.to_i <= max_write
+
+      # Generic wording: this filter guards every endpoint, and most of them
+      # (job submission, for one) involve no file at all.
+      halt_error(413, 'payload_too_large', "Request body too large (max #{max_write} bytes)")
+    end
+
+    # Belt and braces: if a body still reaches Rack's parser and blows its
+    # query limit, report it as 413 rather than an unexplained 500.
+    error Rack::QueryParser::QueryLimitError do
+      halt_error(413, 'payload_too_large', 'Request body too large to parse')
+    end
+
+    # An operation the site's scheduler adapter does not implement — e.g.
+    # `accounts` on an adapter with no accounting support. Distinct from
+    # AdapterError (503), which means the adapter is present but failed.
+    error Handlers::NotSupportedError do
+      halt_error(501, 'not_implemented', env['sinatra.error'].message)
+    end
+
+    # Default status for every handler error, so a route that omits a rescue
+    # degrades to the right code instead of an unexplained 500. Routes keep
+    # their own rescues where they need a different status than the default
+    # (PayloadTooLargeError is 400 on a read, since there the client asked for
+    # too much rather than sent too much), and a route-level rescue always
+    # wins over these.
+    #
+    # The rescue lists had drifted apart per route: PUT /files 500'd on
+    # NotFoundError, POST /files on StorageError, GET /files on
+    # ValidationError. Enumerating them centrally is what keeps that from
+    # silently recurring as routes are added.
+    {
+      Handlers::NotFoundError        => [404, 'not_found'],
+      Handlers::ValidationError      => [400, 'bad_request'],
+      Handlers::ForbiddenError       => [403, 'forbidden'],
+      Handlers::PayloadTooLargeError => [413, 'payload_too_large'],
+      Handlers::StorageError         => [507, 'insufficient_storage'],
+      Handlers::AdapterError         => [503, 'service_unavailable']
+    }.each do |klass, (code, type)|
+      error klass do
+        halt_error(code, type, env['sinatra.error'].message)
+      end
+    end
+
+    # Safety net. LoadError and NotImplementedError descend from ScriptError,
+    # not StandardError, so neither a bare `rescue` nor Sinatra's default
+    # handling catches them; without this they surface as an empty 500.
+    error ScriptError do
+      halt_error(500, 'internal_error', "Adapter error: #{env['sinatra.error'].message}")
     end
 
     # Health check (no auth required)
@@ -167,8 +235,13 @@ module OodApi
     end
 
     post '/api/v1/jobs' do
-      body = JSON.parse(request.body.read)
+      body = parse_json_object(request.body.read)
       halt_bad_request('Missing cluster in request body') if body['cluster'].to_s.strip.empty?
+      # `script` and `options` are indexed with dig below, which raises TypeError
+      # on a String and NoMethodError on a scalar. Valid JSON of the wrong shape
+      # is a client error, not a 500.
+      halt_bad_request('script must be an object') unless body['script'].nil? || body['script'].is_a?(Hash)
+      halt_bad_request('options must be an object') unless body['options'].nil? || body['options'].is_a?(Hash)
 
       job_info, cluster = Handlers::Audit.log(op: 'submit_job', user: current_user, source: 'rest',
                                               cluster: body['cluster']) do
@@ -252,10 +325,10 @@ module OodApi
 
     # List directory contents or get file metadata
     get '/api/v1/files' do
-      halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
+      path = path_param!
 
-      result = Handlers::Audit.log(op: 'list_files', user: current_user, source: 'rest', path: params[:path]) do
-        Handlers::Files.list(path: params[:path])
+      result = Handlers::Audit.log(op: 'list_files', user: current_user, source: 'rest', path: path) do
+        Handlers::Files.list(path: path)
       end
 
       if result.is_a?(Array)
@@ -271,13 +344,15 @@ module OodApi
 
     # Read file contents
     get '/api/v1/files/content' do
-      halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
+      path = path_param!
 
-      max_size = params[:max_size]&.to_i
+      # Validate before to_i: "abc".to_i is 0 (silently returning an empty
+      # body) and a negative reaches File.read, which raises ArgumentError.
+      max_size = parse_max_size(params[:max_size])
 
       content_type 'application/octet-stream'
-      Handlers::Audit.log(op: 'read_file', user: current_user, source: 'rest', path: params[:path]) do
-        Handlers::Files.read(path: params[:path], max_size: max_size)
+      Handlers::Audit.log(op: 'read_file', user: current_user, source: 'rest', path: path) do
+        Handlers::Files.read(path: path, max_size: max_size)
       end
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
@@ -291,16 +366,16 @@ module OodApi
 
     # Create file or directory
     post '/api/v1/files' do
-      halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
+      path = path_param!
 
       if params[:type] == 'directory'
-        result = Handlers::Audit.log(op: 'create_directory', user: current_user, source: 'rest', path: params[:path]) do
-          Handlers::Files.mkdir(path: params[:path])
+        result = Handlers::Audit.log(op: 'create_directory', user: current_user, source: 'rest', path: path) do
+          Handlers::Files.mkdir(path: path)
         end
       else
         halt_bad_request('Use PUT to write file contents') unless params[:touch]
-        result = Handlers::Audit.log(op: 'touch_file', user: current_user, source: 'rest', path: params[:path]) do
-          Handlers::Files.touch(path: params[:path])
+        result = Handlers::Audit.log(op: 'touch_file', user: current_user, source: 'rest', path: path) do
+          Handlers::Files.touch(path: path)
         end
       end
 
@@ -314,7 +389,7 @@ module OodApi
 
     # Write file contents
     put '/api/v1/files' do
-      halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
+      path = path_param!
 
       # Limit request body size to prevent memory exhaustion
       max_write = Handlers::Files::MAX_FILE_WRITE
@@ -325,8 +400,8 @@ module OodApi
       halt_error(413, 'payload_too_large', "File too large (max #{max_write} bytes)") if content.bytesize > max_write
 
       append = params[:append] == 'true'
-      result = Handlers::Audit.log(op: 'write_file', user: current_user, source: 'rest', path: params[:path]) do
-        Handlers::Files.write(path: params[:path], content: content, append: append)
+      result = Handlers::Audit.log(op: 'write_file', user: current_user, source: 'rest', path: path) do
+        Handlers::Files.write(path: path, content: content, append: append)
       end
       { data: file_json(result) }.to_json
     rescue Handlers::ValidationError => e
@@ -339,10 +414,10 @@ module OodApi
 
     # Delete file or directory
     delete '/api/v1/files' do
-      halt_bad_request('Missing path parameter') unless params[:path] && !params[:path].empty?
+      path = path_param!
 
-      result = Handlers::Audit.log(op: 'delete_file', user: current_user, source: 'rest', path: params[:path]) do
-        Handlers::Files.delete(path: params[:path], recursive: params[:recursive] == 'true')
+      result = Handlers::Audit.log(op: 'delete_file', user: current_user, source: 'rest', path: path) do
+        Handlers::Files.delete(path: path, recursive: params[:recursive] == 'true')
       end
       { data: result }.to_json
     rescue Handlers::NotFoundError => e
@@ -356,8 +431,9 @@ module OodApi
     # ============ Environment Variables ============
 
     get '/api/v1/env' do
+      prefix = scalar_param!(:prefix)
       vars = Handlers::Audit.log(op: 'list_env', user: current_user, source: 'rest') do
-        Handlers::Env.list(prefix: params[:prefix])
+        Handlers::Env.list(prefix: prefix)
       end
       { data: vars }.to_json
     end
@@ -386,25 +462,13 @@ module OodApi
 
     private
 
+    # See OodApi::AppAuth. The same rule guards the MCP transport, so both
+    # surfaces enforce app tokens identically.
     def authenticate!
-      # Default: trust the PUN context. OOD has already authenticated the
-      # user upstream (Apache + mod_ood_proxy), and the PUN runs as that
-      # user. Any Authorization header was for Apache's eyes (e.g. an OIDC
-      # JWT validated against a JWKS) and is opaque to us.
-      #
-      # Opt-in: setting OOD_API_APP_TOKENS=true enables application-level
-      # tokens stored under ~/.config/ondemand/tokens.json. In that mode a
-      # valid Bearer is required on every request.
-      return unless ENV['OOD_API_APP_TOKENS'] == 'true'
+      result = OodApi::AppAuth.authenticate(request.env)
+      halt_unauthorized if result == false
 
-      auth_header = request.env['HTTP_AUTHORIZATION']
-      halt_unauthorized unless auth_header&.start_with?('Bearer ')
-
-      token_value = auth_header.sub('Bearer ', '')
-      @current_token = OodApi::ApiToken.find_by_token(token_value)
-      halt_unauthorized unless @current_token
-
-      OodApi::ApiToken.touch(@current_token)
+      @current_token = result
     end
 
     def current_user
@@ -442,8 +506,54 @@ module OodApi
       }
     end
 
+    # Returns nil when absent (meaning "no caller-supplied limit"), otherwise a
+    # positive Integer. Halts 400 on anything else.
+    def parse_max_size(raw)
+      return nil if raw.nil? || raw.to_s.empty?
+
+      halt_bad_request('max_size must be a positive integer') unless /\A\d+\z/.match?(raw.to_s)
+
+      value = raw.to_i
+      halt_bad_request('max_size must be greater than zero') if value.zero?
+
+      value
+    end
+
     def halt_error(status_code, error_type, message)
       halt status_code, { error: error_type, message: message }.to_json
+    end
+
+    # JSON.parse happily returns an Array, String, Integer or nil for a
+    # well-formed document. Every caller here then indexes the result like a
+    # Hash, so `[1,2,3]` or `null` became a TypeError/NoMethodError 500 rather
+    # than a 400.
+    def parse_json_object(raw)
+      parsed = JSON.parse(raw)
+      halt_bad_request('Request body must be a JSON object') unless parsed.is_a?(Hash)
+      parsed
+    end
+
+    # Rack turns `?p[]=x` into an Array and `?p[k]=x` into a Hash, so a param
+    # the handlers treat as a String arrives as neither and raises a TypeError
+    # deep inside them. Returns nil when absent.
+    def scalar_param!(name)
+      value = params[name]
+      return nil if value.nil?
+
+      halt_bad_request("#{name} must be a single value") unless value.is_a?(String)
+
+      value
+    end
+
+    # Required path param: present, a plain string, and free of null bytes —
+    # a NUL reaches File.expand_path and raises ArgumentError, which is a
+    # malformed request rather than a server fault.
+    def path_param!
+      value = scalar_param!(:path)
+      halt_bad_request('Missing path parameter') if value.nil? || value.empty?
+      halt_bad_request('path contains a null byte') if value.include?("\0")
+
+      value
     end
 
     def halt_bad_request(message)

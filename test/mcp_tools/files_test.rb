@@ -171,4 +171,53 @@ class DeleteFileToolTest < Minitest::Test
     assert content[:isError]
     assert_includes content[:content].first[:text], 'not found'
   end
+
+  # The PUN starts with no LANG, so Encoding.default_external is US-ASCII and
+  # File.read tags contents US-ASCII. A single accented byte then makes the
+  # string invalid, to_json raises, and the transport turns that into a bare
+  # HTTP 500 with no JSON-RPC envelope — on a file write_file had just created.
+  def test_read_file_handles_non_ascii_content_tagged_us_ascii
+    content = (+"caf\xC3\xA9 25\xC2\xB0C").force_encoding('US-ASCII')
+    Handlers::Files.stubs(:read).returns(content)
+
+    result = ReadFileTool.call(server_context: nil, path: '/tmp/x.txt').to_h
+    refute result[:isError]
+    text = result[:content].first[:text]
+    assert_equal Encoding::UTF_8, text.encoding
+    assert text.valid_encoding?, 'response text must be serialisable to JSON'
+    assert_includes text, 'caf'
+    JSON.generate(result) # must not raise
+  end
+
+  def test_read_file_scrubs_undecodable_bytes
+    Handlers::Files.stubs(:read).returns((+"ok\xFFbytes").force_encoding('UTF-8'))
+
+    result = ReadFileTool.call(server_context: nil, path: '/tmp/x.bin').to_h
+    refute result[:isError]
+    assert result[:content].first[:text].valid_encoding?
+    JSON.generate(result) # must not raise
+  end
+
+  # A null byte reaches File.expand_path and raises ArgumentError, which
+  # escaped the tool and crashed the protocol with -32603 instead of returning
+  # a tool error. REST returns 400 for the same input.
+  def test_file_tools_return_a_tool_error_for_a_null_byte_in_path
+    path = "/tmp/x\0.txt"
+
+    [[ReadFileTool, {}], [ListFilesTool, {}], [DeleteFileTool, {}],
+     [CreateDirectoryTool, {}], [WriteFileTool, { content: 'x' }]].each do |tool, extra|
+      result = tool.call(server_context: nil, path: path, **extra).to_h
+      assert result[:isError], "#{tool} should return a tool error, not raise"
+      assert_match(/null byte|Invalid path/, result[:content].first[:text])
+    end
+  end
+
+  # Files.mkdir and .delete raise StorageError, but the tools did not rescue it.
+  def test_create_directory_reports_a_full_disk_as_a_tool_error
+    Handlers::Files.stubs(:mkdir).raises(Handlers::StorageError, 'No space left on device')
+
+    result = CreateDirectoryTool.call(server_context: nil, path: '/tmp/d').to_h
+    assert result[:isError]
+    assert_includes result[:content].first[:text], 'No space left'
+  end
 end

@@ -105,6 +105,90 @@ class FilesApiTest < Minitest::Test
     assert_equal 404, last_response.status
   end
 
+  # max_size was unvalidated: a negative reached File.read and raised an
+  # unrescued ArgumentError (500), and a non-numeric coerced to 0 via to_i,
+  # silently returning an empty body instead of an error.
+  def test_get_files_content_rejects_negative_max_size
+    token = create_test_token
+    file_path = File.join(@test_dir, 'neg.txt')
+    File.write(file_path, 'test content')
+
+    get '/api/v1/files/content', { path: file_path, max_size: '-5' }, auth_header(token)
+
+    assert_equal 400, last_response.status
+    assert_match(/max_size/, last_response.body)
+  end
+
+  def test_get_files_content_rejects_non_numeric_max_size
+    token = create_test_token
+    file_path = File.join(@test_dir, 'abc.txt')
+    File.write(file_path, 'test content')
+
+    get '/api/v1/files/content', { path: file_path, max_size: 'abc' }, auth_header(token)
+
+    assert_equal 400, last_response.status
+    assert_match(/max_size/, last_response.body)
+  end
+
+  def test_get_files_content_rejects_zero_max_size
+    token = create_test_token
+    file_path = File.join(@test_dir, 'zero.txt')
+    File.write(file_path, 'test content')
+
+    get '/api/v1/files/content', { path: file_path, max_size: '0' }, auth_header(token)
+
+    assert_equal 400, last_response.status
+  end
+
+  # An oversized body must be rejected on Content-Length alone, before Sinatra
+  # resolves `params`. Without Content-Type a client gets the form-encoded
+  # default, and Rack raises QueryLimitError while parsing — surfacing as an
+  # unexplained 500 instead of 413.
+  def test_put_files_rejects_oversized_body_without_content_type
+    token = create_test_token
+    oversized = Handlers::Files::MAX_FILE_WRITE + 1
+
+    put '/api/v1/files',
+        'x',
+        auth_header(token).merge(
+          'QUERY_STRING'   => "path=#{File.join(@test_dir, 'big.bin')}",
+          'CONTENT_LENGTH' => oversized.to_s
+        )
+
+    assert_equal 413, last_response.status
+    assert_match(/payload_too_large/, last_response.body)
+  end
+
+  def test_put_files_rejects_oversized_body_with_content_type
+    token = create_test_token
+    oversized = Handlers::Files::MAX_FILE_WRITE + 1
+
+    put '/api/v1/files',
+        'x',
+        auth_header(token).merge(
+          'QUERY_STRING'   => "path=#{File.join(@test_dir, 'big2.bin')}",
+          'CONTENT_TYPE'   => 'application/octet-stream',
+          'CONTENT_LENGTH' => oversized.to_s
+        )
+
+    assert_equal 413, last_response.status
+  end
+
+  # The size check must not run ahead of authentication: an unauthenticated
+  # caller should learn nothing, not even the configured write limit.
+  def test_oversized_body_without_valid_token_returns_401_not_413
+    oversized = Handlers::Files::MAX_FILE_WRITE + 1
+
+    put '/api/v1/files',
+        'x',
+        'HTTP_X_OOD_API_TOKEN' => 'bogus',
+        'QUERY_STRING'         => "path=#{File.join(@test_dir, 'nope.bin')}",
+        'CONTENT_LENGTH'       => oversized.to_s
+
+    assert_equal 401, last_response.status
+    refute_match(/max \d+ bytes/, last_response.body, 'leaked the write limit pre-auth')
+  end
+
   # Create directory
 
   def test_post_files_creates_directory

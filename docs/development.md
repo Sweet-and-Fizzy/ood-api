@@ -1,5 +1,20 @@
 # Development Environment
 
+Most work needs neither a container nor an OOD install:
+
+```bash
+bundle install
+bundle exec rake test
+bundle exec rubocop
+```
+
+To exercise routes by hand, [run the app standalone](#running-the-app-standalone)
+— Puma on `localhost:9292`, no Apache. See
+[CONTRIBUTING.md](../CONTRIBUTING.md) for conventions and what CI expects.
+
+The container setup below is for the cases that genuinely need OOD: the PUN,
+Apache auth, the Dashboard plugin, or `nginx_stage` behaviour.
+
 ## Prerequisites
 
 - Docker
@@ -104,6 +119,22 @@ or navigate to the init URL — the PUN restarts and loads ood-api.
 
 **Dev app URL pattern:** `/pun/dev/<app-name>/`, not `/pun/dev/<user>/<app-name>/`.
 The owner is implicit from the logged-in session.
+
+## Running the app standalone
+
+For quick iteration on handler or route code you can skip the container
+entirely and run Puma directly:
+
+```bash
+bundle exec ruby bin/dev
+```
+
+This serves both the REST API and the MCP endpoint at `http://localhost:9292`.
+
+> **There is no Apache in front of it, so nothing is authenticated** — including
+> `/mcp`. That is fine for local work and must never be exposed beyond
+> localhost. In a real deployment Apache authenticates every request before it
+> reaches the app.
 
 ## Common tasks
 

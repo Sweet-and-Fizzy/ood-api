@@ -16,6 +16,8 @@ en:
       name_placeholder: "e.g., My Script, CI Pipeline"
       name_help: "Give your token a descriptive name to help you identify it later."
       name_required: "Token name is required."
+      name_too_long: "Token name must be %{max} characters or fewer."
+      write_failed: "Could not save your tokens. Your home directory may be full or read-only."
       generate: "Generate Token"
       token_created: "Token Created Successfully"
       copy_warning: "Copy this token now and store it securely."
