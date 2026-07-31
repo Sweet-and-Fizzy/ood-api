@@ -72,9 +72,12 @@ a loop costs real money.
 That surface is reachable by an LLM through the MCP endpoint. It is constrained
 by an allowlist of path roots, a deny-list covering `~/.ssh`, shell init files,
 and the app's own token store, an environment-variable allowlist, and audit
-logging of every operation. There is **no rate limiting**, and no way to run the
-API read-only. If either matters to you, read
-[Security posture](#security-posture) before installing.
+logging of every operation. Two gaps have no fix inside the app: there is **no
+rate limiting**, so a looping agent can saturate a scheduler your other users
+share, and **no read-only mode**, so you cannot offer the read surface without
+also offering write, delete, and job submission.
+[Security posture](#security-posture) covers both, including what you can do
+about them at the Apache and scheduler layers.
 
 ## Architecture
 
