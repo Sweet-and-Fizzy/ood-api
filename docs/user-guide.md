@@ -180,19 +180,20 @@ and Cursor — including auto-refreshing tokens — is in
 
 Nineteen tools, grouped by area. Required parameters are in **bold**.
 
+Four of them depend on your scheduler: `list_accounts`, `list_queues`,
+`get_cluster_info`, and `list_historic_jobs` are fully supported on Slurm, and
+on other schedulers commonly return "not supported by the … adapter". That is
+your site's scheduler, not a broken install.
+
 **Clusters**
 
 | Tool | Parameters | Does |
 |---|---|---|
 | `list_clusters` | — | List clusters you can reach |
 | `get_cluster` | **cluster_id** | Cluster details |
-| `list_accounts` | **cluster_id** | Accounts you can charge jobs to † |
-| `list_queues` | **cluster_id** | Queues/partitions † |
-| `get_cluster_info` | **cluster_id** | Node/CPU/GPU utilization † |
-
-† Fully supported on Slurm. On other schedulers these — and
-`list_historic_jobs` below — commonly return "not supported by the … adapter".
-That is your site's scheduler, not a broken install.
+| `list_accounts` | **cluster_id** | Accounts you can charge jobs to |
+| `list_queues` | **cluster_id** | Queues/partitions |
+| `get_cluster_info` | **cluster_id** | Node/CPU/GPU utilization |
 
 **Jobs**
 
