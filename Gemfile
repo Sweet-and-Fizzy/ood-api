@@ -8,6 +8,11 @@ source 'https://rubygems.org'
 
 gem 'json'
 gem 'mcp'
+# Transitive dependency of mcp via json_schemer. Pinned only because 4.1.2 has
+# no prebuilt darwin binary, so it compiles locally and picks up the host
+# toolchain — which breaks a Rosetta (x86_64 Ruby on arm64 Mac) dev setup.
+# Nothing here depends on 4.1.2; lift the pin once a prebuilt one lands.
+gem 'bigdecimal', '4.1.1'
 gem 'ood_core', '~> 0.24'
 gem 'puma'
 gem 'rackup'
