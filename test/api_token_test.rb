@@ -113,4 +113,95 @@ class ApiTokenTest < Minitest::Test
 
     assert_equal [], OodApi::ApiToken.all
   end
+
+  # save_tokens used to open the real file with O_TRUNC and write in place, so
+  # a concurrent reader could observe an empty or partial file. load_tokens
+  # rescues JSON::ParserError to [], which would silently invalidate every
+  # token. Writes now go to a temp file and rename(2) into place.
+  def test_concurrent_reads_never_observe_a_partial_file
+    token, = OodApi::ApiToken.create(name: 'Concurrent')
+
+    writers = 4.times.map do
+      Thread.new { 40.times { OodApi::ApiToken.touch(token) } }
+    end
+    corrupt = 0
+    readers = 4.times.map do
+      Thread.new do
+        120.times { corrupt += 1 if OodApi::ApiToken.all.empty? }
+      end
+    end
+    (writers + readers).each(&:join)
+
+    assert_equal 0, corrupt, 'a reader observed an empty/torn token file'
+    refute_nil OodApi::ApiToken.find_by_token(token.token)
+  end
+
+  def test_save_leaves_no_temp_files_behind
+    token, = OodApi::ApiToken.create(name: 'Temp')
+    OodApi::ApiToken.touch(token)
+
+    # The lock file is intentionally persistent, so exclude it here.
+    leftovers = Dir.glob(File.join(@test_token_dir, '.tokens.json.*')) -
+                [OodApi::ApiToken::LOCK_FILE]
+    assert_empty leftovers, "temp files not cleaned up: #{leftovers.inspect}"
+  end
+
+  # touch is bookkeeping on an already-authenticated request; an unwritable
+  # store must not turn that request into a 500.
+  def test_touch_does_not_raise_when_store_is_unwritable
+    token, = OodApi::ApiToken.create(name: 'ReadOnly')
+    File.chmod(0o500, @test_token_dir)
+
+    begin
+      OodApi::ApiToken.touch(token) # must not raise
+    ensure
+      File.chmod(0o700, @test_token_dir)
+    end
+  end
+
+  # The Dashboard plugin writes this same file from a separate process, so
+  # these two tests fork rather than thread: in-process threads would never
+  # exercise flock(2), which is what actually provides the exclusion.
+
+  # A revoke racing the per-request touch used to be a lost update — both
+  # sides load the whole array and write their own copy back, so the revoked
+  # token came back and kept authenticating while the UI reported success.
+  def test_revoked_token_stays_revoked_under_concurrent_touch
+    victim, plain = OodApi::ApiToken.create(name: 'victim')
+    others = 5.times.map { |i| OodApi::ApiToken.create(name: "other#{i}").first }
+
+    pids = 3.times.map do
+      fork do
+        40.times { OodApi::ApiToken.touch(others.sample) }
+        exit!(0)
+      end
+    end
+    OodApi::ApiToken.destroy(victim.id)
+    pids.each { |pid| Process.waitpid(pid) }
+
+    assert_nil OodApi::ApiToken.find_by_token(plain),
+               'revoked token was resurrected by a concurrent touch and still authenticates'
+  end
+
+  # A torn read does not raise, it parses as [] — which reads as "no tokens",
+  # 401s the user, and then gets written back, destroying the store.
+  def test_concurrent_touch_never_yields_a_torn_read
+    tokens = 20.times.map { |i| OodApi::ApiToken.create(name: "tok#{i}") }
+    all = tokens.map(&:first)
+    plain = tokens.first.last
+
+    writers = 2.times.map do
+      fork do
+        150.times { OodApi::ApiToken.touch(all.sample) }
+        exit!(0)
+      end
+    end
+
+    misses = 0
+    300.times { misses += 1 if OodApi::ApiToken.find_by_token(plain).nil? }
+    writers.each { |pid| Process.waitpid(pid) }
+
+    assert_equal 0, misses, 'a valid token failed to resolve, indicating a torn read'
+    assert_equal 20, OodApi::ApiToken.all.size, 'tokens were lost'
+  end
 end
