@@ -63,6 +63,27 @@ class HandlersAuditTest < Minitest::Test
     assert_includes stderr_output, 'error="Permission denied for path"'
   end
 
+  # A newline in a caller-supplied value must not split the record — otherwise
+  # a caller can forge additional ood_api_audit lines a log parser will trust.
+  def test_log_escapes_newlines_to_prevent_forged_records
+    evil = "/home/drew/x\nood_api_audit op=FORGED user=root source=rest status=ok"
+
+    Handlers::Audit.log(op: 'read_file', user: 'drew', source: 'rest', path: evil) { :ok }
+
+    out = stderr_output
+    assert_equal(1, out.lines.count { |l| l.include?('ood_api_audit') })
+    refute_match(/^ood_api_audit op=FORGED/, out)
+    assert_includes out, '\\nood_api_audit op=FORGED'
+  end
+
+  def test_log_escapes_carriage_returns_and_tabs
+    Handlers::Audit.log(op: 'read_file', user: 'drew', source: 'rest', path: "a\rb\tc") { :ok }
+
+    out = stderr_output
+    assert_equal(1, out.lines.count { |l| l.include?('ood_api_audit') })
+    assert_includes out, 'path="a\\rb\\tc"'
+  end
+
   def test_log_measures_duration
     Handlers::Audit.log(op: 'slow_op', user: 'drew', source: 'rest') { true }
 
@@ -87,5 +108,68 @@ class HandlersAuditTest < Minitest::Test
     assert_includes stderr_output, 'ood_api_audit'
     assert_includes stderr_output, 'op=mcp_initialize'
     assert_includes stderr_output, 'client=claude-code'
+  end
+
+  # Logging must never break the operation it observes. A caller-controlled
+  # value that is not valid UTF-8 made `gsub` raise ArgumentError from inside
+  # the logger, which replaced a clean 404 with a 500, discarded the audit
+  # record, and masked the real exception. Linux filenames are arbitrary byte
+  # strings, so this is ordinary input rather than an attack.
+  def test_invalid_utf8_value_does_not_raise
+    bad = (+'/home/jesse/x').force_encoding('UTF-8') << 255.chr('BINARY').force_encoding('UTF-8')
+
+    Handlers::Audit.emit_event(op: 'probe', user: 'drew', source: 'rest', path: bad)
+    assert_includes stderr_output, 'ood_api_audit'
+    assert_includes stderr_output, 'op=probe'
+  end
+
+  # The block's exception must reach the caller UNCHANGED so the route's error
+  # handler still maps it; the audit failure must not substitute its own.
+  def test_block_error_is_reraised_unchanged_when_a_value_is_invalid_utf8
+    bad = (+'bad').force_encoding('UTF-8') << 255.chr('BINARY').force_encoding('UTF-8')
+
+    err = assert_raises(Handlers::NotFoundError) do
+      Handlers::Audit.log(op: 'probe', user: 'drew', source: 'rest', path: bad) do
+        raise Handlers::NotFoundError, 'Path not found'
+      end
+    end
+    assert_equal 'Path not found', err.message
+    assert_includes stderr_output, 'status=error'
+  end
+
+  def test_success_path_returns_block_value_when_a_value_is_invalid_utf8
+    bad = (+'ok').force_encoding('UTF-8') << 255.chr('BINARY').force_encoding('UTF-8')
+
+    result = Handlers::Audit.log(op: 'probe', user: 'drew', source: 'rest', path: bad) { :the_result }
+    assert_equal :the_result, result
+  end
+
+  # A value whose #to_s raises, or returns a non-String, must not fail the call.
+  def test_value_with_broken_to_s_does_not_raise
+    broken = Class.new { def to_s = raise('boom') }.new
+    nonstring = Class.new { def to_s = 5 }.new
+
+    Handlers::Audit.emit_event(op: 'probe', user: 'drew', source: 'rest', path: broken, cluster: nonstring)
+    assert_includes stderr_output, '<unprintable>'
+  end
+
+  # NotImplementedError and LoadError are ScriptError descendants, and api.rb
+  # turns them into real HTTP responses — so they must be audited too.
+  def test_script_error_is_audited_and_reraised
+    assert_raises(NotImplementedError) do
+      Handlers::Audit.log(op: 'probe', user: 'drew', source: 'rest') { raise NotImplementedError, 'nope' }
+    end
+    assert_includes stderr_output, 'op=probe'
+    assert_includes stderr_output, 'status=error'
+  end
+
+  # U+2028 does not forge a record for byte-oriented readers, but a JS-based
+  # log viewer treats it as a line terminator. \x would render it ambiguously
+  # as "\x2028", so it must use the \u form.
+  def test_unicode_line_separators_are_escaped_unambiguously
+    Handlers::Audit.emit_event(op: 'probe', user: 'drew', source: 'rest', path: "a\u2028b")
+
+    assert_includes stderr_output, '\\u2028'
+    assert_equal 1, stderr_output.strip.split("\n").size
   end
 end
