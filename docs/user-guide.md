@@ -22,12 +22,43 @@ This guide is written generically. Wherever you see a placeholder like
 >   [MCP authentication](mcp-auth.md) for configuring the auth methods
 >   described below.
 
-> **New here?** If you're connecting an AI assistant (Claude Desktop, Claude
-> Code, Cursor) and your site has OAuth discovery set up, you can skip ahead
-> to [§3.1](#31-connecting-a-client) and let the client handle login in a
-> browser. Writing a script, automating a pipeline, or your site doesn't have
-> OAuth discovery? Start with
-> [§1.1](#11-bearer-jwt-from-your-identity-provider) below.
+---
+
+## Connect an AI assistant
+
+If you want to manage your HPC work by chatting with an AI assistant (Claude
+Desktop, Claude Code, Cursor, etc.) instead of using a terminal, this is all
+you need.
+
+**1. Get two things from your site administrator:** your OOD host address
+(something like `ondemand.example.edu`), and whether your site has "OAuth
+discovery" set up (your admin will know, it changes the command below).
+
+**2. Connect your client.** If your site has OAuth discovery, point your
+client at the address and it'll open a browser for you to log in:
+
+```bash
+claude mcp add ood-hpc --transport http https://<your-ood-host>/pun/sys/ood-api/mcp
+```
+
+If not, your admin will give you a token to include instead:
+
+```bash
+claude mcp add ood-hpc --transport http \
+  --header "Authorization: Bearer <your-jwt>" \
+  https://<your-ood-host>/pun/sys/ood-api/mcp
+```
+
+**3. Start chatting.** Once connected, just ask in plain language:
+
+> "What clusters can I use?"
+>
+> "Submit my run.sh script to cluster1 in the batch queue."
+>
+> "Is my job running yet?"
+
+That's it, the assistant handles the rest. Writing a script instead, or want
+the full detail on authentication? Keep reading below.
 
 ---
 
