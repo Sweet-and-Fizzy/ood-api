@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-08-01
+## [0.3.0] - 2026-07-31
 
 A CSRF fix, and three cases where the API now behaves the way its
 documentation already described. Found by an Appverse review of v0.2.0.
