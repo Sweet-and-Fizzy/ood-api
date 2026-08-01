@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-01
+
+A CSRF fix, and three cases where the API now behaves the way its
+documentation already described. Found by an Appverse review of v0.2.0.
+
+Three breaking changes, all in what job and cluster endpoints return. Clients
+that branch on `status`, or that treat an empty `accounts`/`queues` list as
+meaningful, need updating. Sites upgrading without custom clients are
+unaffected.
+
 ### Changed
 
 - **BREAKING:** job reads return the portable `ood_core` `status` vocabulary
@@ -177,6 +187,7 @@ running as a Passenger app under the PUN as the authenticated user.
 - API token file is created with mode `0600` atomically, with no window where
   it is readable at the umask default.
 
-[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Sweet-and-Fizzy/ood-api/releases/tag/v0.1.0
