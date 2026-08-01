@@ -376,4 +376,34 @@ class FilesApiTest < Minitest::Test
     # Directories should come first, then files, both sorted by name
     assert_equal ['adir', 'zdir', 'afile.txt', 'zfile.txt'], names
   end
+
+  # docs/api.md tells clients to send Content-Type: application/json on a write.
+  # It previously documented application/octet-stream, which the CSRF filter
+  # rejects — so a client following the page got a 415 on every write. Assert
+  # the documented header works and the old one does not.
+  def test_put_files_accepts_the_documented_content_type
+    token = create_test_token
+    path = File.join(@test_dir, 'documented_ct.txt')
+
+    put '/api/v1/files', 'hello',
+        auth_header(token).merge('QUERY_STRING' => "path=#{path}",
+                                 'CONTENT_TYPE' => 'application/json')
+
+    assert_equal 200, last_response.status
+    assert_equal 'hello', File.read(path)
+  end
+
+  # Without an app token — the default deployment — the CSRF filter is what
+  # decides, and octet-stream is refused. docs/api.md used to tell clients to
+  # send exactly this header, so every write failed for anyone following it.
+  def test_put_files_rejects_octet_stream_with_415_when_app_tokens_are_off
+    ENV.delete('OOD_API_APP_TOKENS')
+    path = File.join(@test_dir, 'octet.txt')
+
+    put '/api/v1/files', 'hello',
+        { 'QUERY_STRING' => "path=#{path}", 'CONTENT_TYPE' => 'application/octet-stream' }
+
+    assert_equal 415, last_response.status
+    refute File.exist?(path)
+  end
 end

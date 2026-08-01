@@ -161,13 +161,10 @@ module Handlers
     end
 
     # These two return the ood_core Status vocabulary (see docs/api.md) rather
-    # than adapter-specific words like 'held'/'released'.
-    #
-    # Note this is NOT true of the job *read* endpoints: job_json prefers the
-    # native scheduler state, so a subsequent GET on a held job may report
-    # 'pending' (a raw Slurm word) rather than 'queued_held'. Reconciling the
-    # two is a deliberate open question, not an oversight here — do not assume
-    # a client can branch on one vocabulary across both.
+    # than adapter-specific words like 'held'/'released', which is now also
+    # what the read endpoints return — job_json reports the portable status and
+    # carries the scheduler's own word separately as native_state. A client can
+    # therefore branch on one vocabulary across reads and writes alike.
     def self.hold(clusters:, cluster_id:, job_id:)
       assert_job_exists!(clusters: clusters, cluster_id: cluster_id, job_id: job_id)
       cluster = Clusters.get(clusters: clusters, id: cluster_id)

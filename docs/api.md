@@ -704,8 +704,12 @@ Write content to a file. Creates the file if it doesn't exist. By default, overw
 
 ```
 PUT /api/v1/files?path=:path[&append=true]
-Content-Type: application/octet-stream
+Content-Type: application/json
 ```
+
+The body is written verbatim — it is not parsed as JSON. The header is a CSRF
+control, not a parsing instruction; see
+[Content-Type on writes](#content-type-on-writes).
 
 **Parameters:**
 - `path` (query, required) - Path to the file
@@ -729,6 +733,7 @@ Content-Type: application/octet-stream
 **Errors:**
 - 400 - Cannot write to directory
 - 403 - Permission denied or path not in allowed directories
+- 415 - `Content-Type` is not `application/json`
 - 413 - File too large (exceeds configured max, default 50 MB)
 - 507 - No space left on device
 
@@ -1141,6 +1146,7 @@ The API uses standard HTTP status codes:
 | 403 | Forbidden (permission denied, path not allowed) |
 | 404 | Not Found (resource doesn't exist) |
 | 413 | Payload Too Large (**write** body exceeds the size limit) |
+| 415 | Unsupported Media Type (a bodied write did not send `Content-Type: application/json`) |
 | 422 | Unprocessable Entity (job submission/cancellation failed) |
 | 500 | Internal Server Error |
 | 501 | Not Implemented (the site's scheduler adapter does not support the operation) |
@@ -1170,6 +1176,7 @@ The API uses standard HTTP status codes:
 | `forbidden` | 403 | Permission denied or path not in allowed directories |
 | `not_found` | 404 | Resource not found |
 | `payload_too_large` | 413 | Write body exceeds the maximum size limit (writes only; an oversized read returns `bad_request`) |
+| `unsupported_media_type` | 415 | A `POST`/`PUT`/`PATCH`/`DELETE` carrying a body did not send `Content-Type: application/json` |
 | `unprocessable_entity` | 422 | Request understood but could not be processed |
 | `not_implemented` | 501 | The site's scheduler adapter does not support this operation |
 | `service_unavailable` | 503 | Scheduler communication error |
