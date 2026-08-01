@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Upgraded Sinatra 3.2.0 → 4.2.1, Rack 2.2.21 → 3.2.6, Puma 7.2.0 → 8.0.2,
+  plus `rackup` and `json`. This clears **17 of 18 known dependency
+  advisories**, including all five rated High. The one remaining is `excon`,
+  which needs Ruby 3.1 from 1.2.6 onward and arrives transitively via
+  `ood_core` — taking it would drop OOD 3.x sites, so it waits for the Ruby
+  floor to move.
+
+  The `sinatra ~> 3.0` pin had no recorded reason and was not required by the
+  Ruby 3.0 floor: Sinatra 4 needs only Ruby 2.7.8. Eleven Rack advisories and
+  two Sinatra ones were sitting behind it. Every other pin in the Gemfile
+  names the Ruby version that forces it; this one did not, which is why it
+  went unexamined.
+
+### Fixed
+
+- Sinatra 4 enables host authorization by default, permitting only localhost,
+  which would have rejected every request on a real site with "Host not
+  permitted". Disabled for the same reason as the MCP transport's equivalent
+  setting: Apache validates `Host` against the portal's `ServerName` and
+  authenticates before anything reaches the PUN.
+
 ## [0.3.1] - 2026-07-31
 
 Fixes a regression that has left the MCP endpoint non-functional on every real

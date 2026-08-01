@@ -20,7 +20,7 @@ gem 'multi_json', '1.19.1'
 gem 'ood_core', '~> 0.24'
 gem 'puma'
 gem 'rackup'
-gem 'sinatra', '~> 3.0'
+gem 'sinatra', '~> 4.2'
 
 # excon 1.2.6+ requires Ruby 3.1 (transitive via ood_core).
 gem 'excon', '< 1.2.6'
