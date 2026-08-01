@@ -47,3 +47,16 @@ These are documented rather than fixed, and are listed in the README's
 
 Reports about these are welcome if you have a concrete exploit or a mitigation
 we have missed, but they are known.
+
+## Known unpatched advisory
+
+`excon` carries [GHSA-48rx-c7pg-q66r](https://github.com/advisories/GHSA-48rx-c7pg-q66r)
+(medium) — it does not redact some sensitive headers when following redirects.
+The fix lands in 1.5.0, which requires Ruby 3.1, and this app supports Ruby 3.0
+so that OOD 3.x sites can run it. So the advisory stays open until that floor
+moves, and Dependabot will keep offering the upgrade.
+
+It is not reachable here. `excon` arrives transitively through `fog-core`, which
+`ood_core` pulls in for its Coder cloud-VM adapter. Nothing in this app loads
+that adapter or makes outbound HTTP, so there is no redirect for the flaw to
+apply to. A site using the Coder adapter should weigh it differently.
