@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-08-01
+
+Dependency currency. No API contract changes and nothing to do on upgrade.
+
+`bundler-audit` reported 18 known advisories against v0.3.1, five rated High;
+this leaves one. The app now runs the same Sinatra and Rack versions as the
+OOD Dashboard itself.
+
 ### Changed
 
 - Upgraded Sinatra 3.2.0 → 4.2.1, Rack 2.2.21 → 3.2.6, Puma 7.2.0 → 8.0.2,
@@ -241,7 +249,8 @@ running as a Passenger app under the PUN as the authenticated user.
 - API token file is created with mode `0600` atomically, with no window where
   it is readable at the umask default.
 
-[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.1.0...v0.2.0
