@@ -25,9 +25,9 @@ updates:
         patterns:
           - "*"
     # These are held to keep the app installable on Ruby 3.0, which OOD 3.x
-    # ships. Their next releases all require 3.1 or later, so Dependabot would
-    # reopen the same PR every week. The Gemfile records why each is pinned;
-    # remove the entry here when the floor moves.
+    # ships. Their next releases require a later Ruby than that floor allows,
+    # so Dependabot would reopen the same PR every week. The Gemfile records
+    # why each is pinned; remove the entry here when the floor moves.
     ignore:
       - dependency-name: excon
         versions: [">= 1.2.6"]
@@ -39,6 +39,8 @@ updates:
         versions: [">= 7.0"]
       - dependency-name: parallel
         versions: [">= 2.0"]
+      - dependency-name: simplecov
+        versions: [">= 1.0"]
 
   - package-ecosystem: github-actions
     directory: "/"
