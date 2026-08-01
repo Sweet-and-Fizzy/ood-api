@@ -1,4 +1,4 @@
-<!-- Site maintainers: this guide is based on ood-api's docs/user-guide.md template (v0.1.0). Note any local customizations here so future template updates don't overwrite them. -->
+<!-- Site maintainers: this guide is based on ood-api's docs/user-guide.md template (v0.2.0). Note any local customizations here so future template updates don't overwrite them. -->
 
 # OOD API — User Guide
 

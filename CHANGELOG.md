@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-31
+
 ### Changed
 
 - **BREAKING:** application-level tokens are now sent in a dedicated
@@ -259,5 +261,6 @@ running as a Passenger app under the PUN as the authenticated user.
 - API token file is created with mode `0600` atomically, with no window where
   it is readable at the umask default.
 
-[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Sweet-and-Fizzy/ood-api/releases/tag/v0.1.0
