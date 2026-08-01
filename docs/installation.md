@@ -17,7 +17,7 @@ sudo git clone https://github.com/Sweet-and-Fizzy/ood-api.git
 cd ood-api
 
 # Pin to a release (recommended)
-# sudo git checkout v0.3.0
+# sudo git checkout v0.3.1
 
 sudo bundle config set --local path vendor/bundle
 sudo bundle config set --local without 'development test'
