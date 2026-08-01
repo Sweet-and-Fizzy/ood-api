@@ -37,6 +37,8 @@ updates:
         versions: [">= 1.20.0"]
       - dependency-name: public_suffix
         versions: [">= 7.0"]
+      - dependency-name: parallel
+        versions: [">= 2.0"]
 
   - package-ecosystem: github-actions
     directory: "/"

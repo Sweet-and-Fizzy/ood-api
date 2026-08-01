@@ -28,6 +28,8 @@ group :development, :test do
 end
 
 group :test do
+  # parallel 2.0+ requires Ruby 3.3 (transitive via rubocop).
+  gem 'parallel', '< 2.0'
   # minitest 5.26.2+ requires Ruby 3.1.
   gem 'minitest', '< 5.26.2'
   gem 'mocha'
