@@ -141,10 +141,10 @@ class FilesApiTest < Minitest::Test
   end
 
   # An oversized body must be rejected on Content-Length alone, before Sinatra
-  # resolves `params`. Without Content-Type a client gets the form-encoded
-  # default, and Rack raises QueryLimitError while parsing — surfacing as an
-  # unexplained 500 instead of 413.
-  def test_put_files_rejects_oversized_body_without_content_type
+  # resolves `params` — Rack raises QueryLimitError while parsing an oversized
+  # body, which would surface as an unexplained 500 instead of 413. The size
+  # check must therefore run ahead of anything that touches `params`.
+  def test_put_files_rejects_oversized_body_on_content_length
     token = create_test_token
     oversized = Handlers::Files::MAX_FILE_WRITE + 1
 
@@ -152,6 +152,7 @@ class FilesApiTest < Minitest::Test
         'x',
         auth_header(token).merge(
           'QUERY_STRING'   => "path=#{File.join(@test_dir, 'big.bin')}",
+          'CONTENT_TYPE'   => 'application/json',
           'CONTENT_LENGTH' => oversized.to_s
         )
 
@@ -159,7 +160,10 @@ class FilesApiTest < Minitest::Test
     assert_match(/payload_too_large/, last_response.body)
   end
 
-  def test_put_files_rejects_oversized_body_with_content_type
+  # The 413 must also win over the CSRF filter's 415 — a client that sends a
+  # form content type and an oversized body should learn the body is too large,
+  # and neither check may let the write through.
+  def test_put_files_rejects_oversized_body_with_a_form_content_type
     token = create_test_token
     oversized = Handlers::Files::MAX_FILE_WRITE + 1
 
@@ -167,11 +171,12 @@ class FilesApiTest < Minitest::Test
         'x',
         auth_header(token).merge(
           'QUERY_STRING'   => "path=#{File.join(@test_dir, 'big2.bin')}",
-          'CONTENT_TYPE'   => 'application/octet-stream',
+          'CONTENT_TYPE'   => 'application/x-www-form-urlencoded',
           'CONTENT_LENGTH' => oversized.to_s
         )
 
-    assert_equal 413, last_response.status
+    assert_includes [413, 415], last_response.status
+    refute File.exist?(File.join(@test_dir, 'big2.bin'))
   end
 
   # The size check must not run ahead of authentication: an unauthenticated
@@ -195,7 +200,8 @@ class FilesApiTest < Minitest::Test
     token = create_test_token
     new_dir = File.join(@test_dir, 'new_subdir')
 
-    post '/api/v1/files', { path: new_dir, type: 'directory' }, auth_header(token)
+    post "/api/v1/files?path=#{CGI.escape(new_dir)}&type=directory", '',
+         auth_header(token).merge('CONTENT_TYPE' => 'application/json')
 
     assert_equal 201, last_response.status
     assert File.directory?(new_dir)
@@ -205,7 +211,8 @@ class FilesApiTest < Minitest::Test
   def test_post_files_returns_400_for_existing_directory
     token = create_test_token
 
-    post '/api/v1/files', { path: @test_dir, type: 'directory' }, auth_header(token)
+    post "/api/v1/files?path=#{CGI.escape(@test_dir)}&type=directory", '',
+         auth_header(token).merge('CONTENT_TYPE' => 'application/json')
 
     assert_equal 400, last_response.status
   end
@@ -216,7 +223,8 @@ class FilesApiTest < Minitest::Test
     token = create_test_token
     new_file = File.join(@test_dir, 'touched.txt')
 
-    post '/api/v1/files', { path: new_file, touch: 'true' }, auth_header(token)
+    post "/api/v1/files?path=#{CGI.escape(new_file)}&touch=true", '',
+         auth_header(token).merge('CONTENT_TYPE' => 'application/json')
 
     assert_equal 201, last_response.status
     assert File.exist?(new_file)
@@ -252,7 +260,8 @@ class FilesApiTest < Minitest::Test
     token = create_test_token
     file_path = File.join(@test_dir, 'subdir', 'deep', 'file.txt')
 
-    put "/api/v1/files?path=#{CGI.escape(file_path)}", 'content', auth_header(token)
+    put "/api/v1/files?path=#{CGI.escape(file_path)}", 'content',
+        auth_header(token).merge('CONTENT_TYPE' => 'application/json')
 
     assert last_response.ok?
     assert File.exist?(file_path)
@@ -344,7 +353,8 @@ class FilesApiTest < Minitest::Test
   def test_put_outside_allowed_roots_blocked
     token = create_test_token
 
-    put '/api/v1/files?path=/etc/test-file.txt', 'malicious content', auth_header(token)
+    put '/api/v1/files?path=/etc/test-file.txt', 'malicious content',
+        auth_header(token).merge('CONTENT_TYPE' => 'application/json')
 
     assert_equal 403, last_response.status
     assert_equal 'forbidden', json_response['error']
@@ -404,6 +414,24 @@ class FilesApiTest < Minitest::Test
 
     put '/api/v1/files', 'hello',
         { 'QUERY_STRING' => "path=#{path}", 'CONTENT_TYPE' => 'application/octet-stream' }
+
+    assert_equal 415, last_response.status
+    refute File.exist?(path)
+  end
+
+  # An unissued X-OOD-API-Token must not satisfy the CSRF filter. A form cannot
+  # set that header, which makes its presence look like proof the request is
+  # not a form post — but with app tokens off nothing validates the value, so
+  # exempting on presence would let any string through on the one configuration
+  # the filter exists to protect.
+  def test_bogus_app_token_does_not_bypass_the_content_type_requirement
+    ENV.delete('OOD_API_APP_TOKENS')
+    path = File.join(@test_dir, 'bogus_token.txt')
+
+    put '/api/v1/files', 'hello',
+        { 'QUERY_STRING'         => "path=#{path}",
+          'CONTENT_TYPE'         => 'text/plain',
+          'HTTP_X_OOD_API_TOKEN' => 'bogus-never-issued' }
 
     assert_equal 415, last_response.status
     refute File.exist?(path)

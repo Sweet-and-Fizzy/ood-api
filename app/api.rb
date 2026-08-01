@@ -19,10 +19,15 @@ require_relative 'handlers/context'
 
 module OodApi
   class App < Sinatra::Base
-    # Sinatra 4 enables host authorization by default, permitting only
-    # localhost. Every OOD site serves the portal under its own FQDN, so the
-    # default rejects every real request with "Host not permitted" — the same
-    # failure mode the MCP transport had in v0.2.0.
+    # Sinatra 4 added host authorization. Its restrictive allowlist —
+    # localhost only — applies in the development environment; production and
+    # test already default to permit-all, so this setting changes nothing for
+    # a `sys` or `usr` app, which nginx_stage runs in production.
+    #
+    # It is kept for the /pun/dev/ case, which does run in development and
+    # would otherwise reject every request with "Host not permitted", and so
+    # that a future Sinatra tightening the production default cannot take the
+    # app offline the way the MCP transport's equivalent did in v0.2.0.
     #
     # Disabling it is safe because the protection has already happened
     # upstream, not merely because the app is behind a proxy. OOD's generated
@@ -83,16 +88,14 @@ module OodApi
     # therefore a complete defense against form-based CSRF and costs a
     # legitimate client nothing — every documented example already sends it.
     #
-    # `X-OOD-API-Token` is likewise unforgeable cross-origin, so sites with
-    # app tokens enabled were already covered; this extends that to the
-    # default configuration.
+    # Deliberately not exempted: the presence of an `X-OOD-API-Token` header.
+    # A form cannot set it, so it looks like proof the request is not a form
+    # post — but presence is not validity. `AppAuth.extract_token` only reads
+    # the header; in the default configuration (`OOD_API_APP_TOKENS` unset)
+    # nothing downstream validates it either, so any non-empty value would
+    # disable this check on exactly the configuration it exists to protect.
     before '/api/v1/*' do
       next unless ['POST', 'PUT', 'PATCH', 'DELETE'].include?(request.request_method)
-      # DELETE and a bodyless POST carry no body to mislabel, but still must
-      # not be drivable from a form — a custom header is what a form cannot
-      # set, so accept either that or a JSON content type.
-      next if OodApi::AppAuth.extract_token(request.env)
-
       next if request.media_type.to_s.downcase == 'application/json'
       # DELETE only. Clients send no body and no Content-Type on a delete, and
       # both curl and Rack fill in a default one regardless, so it cannot be
