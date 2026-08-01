@@ -124,6 +124,7 @@ DEPENDENCIES
   mocha
   multi_json (= 1.19.1)
   ood_core (~> 0.24)
+  parallel (< 2.0)
   public_suffix (< 7)
   puma
   rack-test
