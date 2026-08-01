@@ -97,6 +97,24 @@ class DocsTest < Minitest::Test
     end
   end
 
+  # The dashboard's token page renders a curl example directly beneath a newly
+  # created token, so a wrong header there is the one instruction a user sees at
+  # the moment of issuance. It named `Authorization: Bearer`, which Apache owns
+  # for the IdP's JWT — the app token would never reach the app, and would land
+  # in a header it was not meant for. The markdown check above cannot catch this
+  # (it skips any file that never mentions the right header at all).
+  def test_dashboard_token_page_documents_the_app_token_header
+    auth = File.read(File.join(ROOT, 'lib/app_auth.rb'))
+    header = auth[/TOKEN_HEADER\s*=\s*'HTTP_(\w+)'/, 1].tr('_', '-')
+    view = File.join(ROOT, 'dashboard-plugin/views/api_tokens/index.html.erb')
+    body = File.read(view)
+
+    assert_match(/#{Regexp.escape(header)}/i, body,
+                 "the token page must show #{header}, the header app_auth.rb reads")
+    refute_match(/curl[^\n]*Authorization:\s*Bearer/i, body,
+                 'the token page must not tell users to send an app token in Authorization')
+  end
+
   # Every relative markdown link must resolve. Renaming a doc is the easiest way
   # to leave a dangling pointer behind.
   def test_relative_markdown_links_resolve

@@ -91,7 +91,10 @@
       </div>
       <div class="card-body">
         <p><%= t('dashboard.api_tokens.usage_description') %></p>
-        <pre class="bg-light p-2 rounded"><code>curl -H "Authorization: Bearer YOUR_TOKEN" \
+        <%# Application tokens go in X-OOD-API-Token. Authorization is owned by
+            Apache for the IdP's JWT, so a token sent there never reaches the
+            app and lands in a header it was not meant for. %>
+        <pre class="bg-light p-2 rounded"><code>curl -H "X-OOD-API-Token: YOUR_TOKEN" \
   <%= request.base_url %>/pun/sys/ood-api/api/v1/clusters</code></pre>
       </div>
     </div>
