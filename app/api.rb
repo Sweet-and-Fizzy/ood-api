@@ -24,10 +24,18 @@ module OodApi
     # default rejects every real request with "Host not permitted" — the same
     # failure mode the MCP transport had in v0.2.0.
     #
-    # Apache terminates the connection, validates Host against the portal's
-    # ServerName, and authenticates before anything reaches the PUN. Nothing
-    # can address this app except through that proxy, so the check is
-    # redundant here rather than merely inconvenient.
+    # Disabling it is safe because the protection has already happened
+    # upstream, not merely because the app is behind a proxy. OOD's generated
+    # portal config sets a single ServerName with no ServerAlias, so Apache
+    # canonicalises any other Host to it — a request carrying an
+    # attacker-chosen hostname is 301'd to the portal's own name before it
+    # ever reaches the PUN. Sinatra would be re-checking a value that can only
+    # be the ServerName by the time it arrives.
+    #
+    # The alternative — reading the site's FQDN from config and passing it as
+    # permitted_hosts — was rejected: it adds a setting every site must get
+    # right, to re-verify something Apache has already normalised, and gets it
+    # wrong by silently 403ing if the two ever disagree.
     set :host_authorization, { permitted_hosts: [] }
 
     # Configuration via environment variables
