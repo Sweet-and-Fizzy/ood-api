@@ -1,0 +1,48 @@
+version: 2
+
+updates:
+  - package-ecosystem: bundler
+    directory: "/"
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    # Grouped, because ungrouped Bundler updates open a PR per gem and the
+    # noise gets ignored — which defeats the point. Security fixes come
+    # through on their own so they are never buried in a routine batch.
+    groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - "*"
+      dev-dependencies:
+        applies-to: version-updates
+        dependency-type: development
+        patterns:
+          - "*"
+      runtime-dependencies:
+        applies-to: version-updates
+        dependency-type: production
+        patterns:
+          - "*"
+    # These are held to keep the app installable on Ruby 3.0, which OOD 3.x
+    # ships. Their next releases all require 3.1 or later, so Dependabot would
+    # reopen the same PR every week. The Gemfile records why each is pinned;
+    # remove the entry here when the floor moves.
+    ignore:
+      - dependency-name: excon
+        versions: [">= 1.2.6"]
+      - dependency-name: minitest
+        versions: [">= 5.26.2"]
+      - dependency-name: multi_json
+        versions: [">= 1.20.0"]
+      - dependency-name: public_suffix
+        versions: [">= 7.0"]
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    groups:
+      actions:
+        patterns:
+          - "*"
