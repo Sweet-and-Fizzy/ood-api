@@ -37,7 +37,11 @@ puts "  Health:   http://localhost:#{port}/health"
 puts ''
 
 conf = Puma::Configuration.new do |c|
-  c.bind "tcp://0.0.0.0:#{port}"
+  # Loopback only. /mcp is unauthenticated here (see the note above), so
+  # binding every interface would offer an unauthenticated file and job API
+  # to anyone on the same network. Set OOD_API_DEV_BIND to override when a
+  # container or VM needs to reach it from outside.
+  c.bind "tcp://#{ENV.fetch('OOD_API_DEV_BIND', '127.0.0.1')}:#{port}"
   c.app app
   c.workers 0
   c.log_requests

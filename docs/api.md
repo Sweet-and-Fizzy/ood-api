@@ -63,10 +63,17 @@ session-cookie authentication, a browser attaches your session to a
 cross-origin form post automatically, so an attacker's page could otherwise
 drive writes, deletes, and job submissions as you. An HTML form can only send
 three content types, none of them JSON, and anything else triggers a preflight
-that this API does not answer. Requests carrying an `X-OOD-API-Token` are
-exempt, since that header is equally unforgeable from a form.
+that this API does not answer.
 
-Bodyless requests — a `DELETE`, or a `POST ?touch=1` — need no `Content-Type`.
+An `X-OOD-API-Token` header does not exempt a request. The filter cannot tell
+a valid token from an invented one without running authentication, and where
+application tokens are disabled there is no authentication to run — so
+accepting the header's presence would let any value through.
+
+`DELETE` is the one exemption, and it is scoped to the method rather than to
+the body: no HTML form can issue a `DELETE`. Every other write needs
+`Content-Type: application/json`, including a bodyless one such as
+`POST ?touch=1`.
 
 
 ## API Reference
@@ -461,6 +468,7 @@ POST /api/v1/jobs/:id/hold?cluster=:cluster_id
 ```bash
 curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
   "https://ondemand.example.com/pun/sys/ood-api/api/v1/jobs/12345/hold?cluster=cluster1"
 ```
 
@@ -497,6 +505,7 @@ POST /api/v1/jobs/:id/release?cluster=:cluster_id
 ```bash
 curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
   "https://ondemand.example.com/pun/sys/ood-api/api/v1/jobs/12345/release?cluster=cluster1"
 ```
 
@@ -781,6 +790,7 @@ updates its mtime and leaves the contents alone.
 ```bash
 curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
   "https://ondemand.example.com/pun/sys/ood-api/api/v1/files?path=~/new_folder&type=directory"
 ```
 
@@ -1176,7 +1186,7 @@ The API uses standard HTTP status codes:
 | `forbidden` | 403 | Permission denied or path not in allowed directories |
 | `not_found` | 404 | Resource not found |
 | `payload_too_large` | 413 | Write body exceeds the maximum size limit (writes only; an oversized read returns `bad_request`) |
-| `unsupported_media_type` | 415 | A `POST`/`PUT`/`PATCH`/`DELETE` carrying a body did not send `Content-Type: application/json` |
+| `unsupported_media_type` | 415 | A `POST`/`PUT`/`PATCH` did not send `Content-Type: application/json` (`DELETE` is exempt) |
 | `unprocessable_entity` | 422 | Request understood but could not be processed |
 | `not_implemented` | 501 | The site's scheduler adapter does not support this operation |
 | `service_unavailable` | 503 | Scheduler communication error |

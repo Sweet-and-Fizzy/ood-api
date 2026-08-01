@@ -136,6 +136,10 @@ This serves both the REST API and the MCP endpoint at `http://localhost:9292`.
 > localhost. In a real deployment Apache authenticates every request before it
 > reaches the app.
 
+It binds `127.0.0.1` for that reason. If you need to reach it from a container
+or VM, set `OOD_API_DEV_BIND=0.0.0.0` — only on a network you trust, since it
+serves an unauthenticated file and job API as your user.
+
 ## Common tasks
 
 | Task | Command |
