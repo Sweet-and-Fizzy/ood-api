@@ -75,10 +75,14 @@ module OodApi
       next if OodApi::AppAuth.extract_token(request.env)
 
       next if request.media_type.to_s.downcase == 'application/json'
-      # A bodyless request carries nothing a form could have supplied, and
-      # DELETE is the normal case: clients send no body and no Content-Type,
-      # and both curl and Rack fill in a default one regardless.
-      next if request.content_length.to_i.zero?
+      # DELETE only. Clients send no body and no Content-Type on a delete, and
+      # both curl and Rack fill in a default one regardless, so it cannot be
+      # judged on media type — but no HTML form can issue a DELETE either.
+      #
+      # Keying this on body length instead would reopen the hole: a form with
+      # no fields posts an EMPTY body with a form content type, which let
+      # cross-origin touch, mkdir, hold and release through.
+      next if request.request_method == 'DELETE'
 
       halt_error(415, 'unsupported_media_type',
                  'State-changing requests require Content-Type: application/json')

@@ -575,4 +575,24 @@ options: { job_name: 'api-job' } }.to_json,
     assert_equal 'running', json_response['data']['status']
     assert_nil json_response['data']['native_state']
   end
+
+  # The first CSRF fix exempted any bodyless request, reasoning that DELETE
+  # sends no body. But a form with no fields posts an EMPTY body with a form
+  # content type, so cross-origin touch, mkdir, hold and release still worked.
+  # The exemption is now scoped to the DELETE method, which no form can issue.
+  def test_empty_form_body_cannot_drive_state_changing_posts
+    ENV.delete('OOD_API_APP_TOKENS')
+    path = File.join(Dir.tmpdir, "empty_form_#{SecureRandom.hex(4)}.txt")
+
+    post "/api/v1/files?path=#{CGI.escape(path)}&touch=1", '',
+         { 'CONTENT_TYPE' => 'application/x-www-form-urlencoded' }
+    assert_equal 415, last_response.status
+    refute File.exist?(path), 'an empty form post must not create a file'
+
+    post '/api/v1/jobs/1/hold?cluster=cluster1', '',
+         { 'CONTENT_TYPE' => 'application/x-www-form-urlencoded' }
+    assert_equal 415, last_response.status
+  ensure
+    FileUtils.rm_f(path) if path
+  end
 end

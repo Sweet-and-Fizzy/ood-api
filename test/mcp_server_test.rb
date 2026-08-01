@@ -252,4 +252,26 @@ class McpServerTest < Minitest::Test
     assert_equal 200, status
     assert JSON.parse(resp.join)['result'], 'initialize should succeed'
   end
+
+  # mcp 1.0.0 added DNS-rebinding protection defaulting to an allowlist of
+  # loopback only, so every request whose Host is a real hostname 403s. That
+  # is every OOD site. It shipped broken in v0.2.0 because every check — unit
+  # and live — used localhost, which is inside the gem's default allowlist.
+  #
+  # Assert a hostname that is NOT loopback. A test using localhost passes
+  # whether or not the protection is enabled, which is how this was missed.
+  def test_mcp_accepts_a_real_site_hostname
+    app = OodApi.mcp_rack_app
+    body = JSON.generate(jsonrpc: '2.0', id: 1, method: 'ping')
+
+    ['ondemand.example.edu', 'ood.university.edu:443'].each do |host|
+      env = Rack::MockRequest.env_for('/', method: 'POST', input: body)
+      env['CONTENT_TYPE'] = 'application/json'
+      env['HTTP_ACCEPT'] = 'application/json, text/event-stream'
+      env['HTTP_HOST'] = host
+
+      status, = app.call(env)
+      assert_equal 200, status, "Host: #{host} must be served — Apache validates Host upstream"
+    end
+  end
 end

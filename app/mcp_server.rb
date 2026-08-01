@@ -93,7 +93,22 @@ module OodApi
     # it carries. Without it a file just under the limit could still be
     # refused.
     max_bytes = (Handlers::Files::MAX_FILE_WRITE * 1.5).to_i
-    MCP::Server::Transports::StreamableHTTPTransport.new(server, stateless: true, max_request_bytes: max_bytes)
+
+    # DNS-rebinding protection off, deliberately. mcp 1.0.0 added it defaulting
+    # to on with an allowlist of loopback only, which 403s every request whose
+    # Host is a real hostname — that is every OOD site. It is also redundant
+    # here: Apache terminates the request, validates Host against the portal's
+    # ServerName, and authenticates before anything reaches the PUN. Nothing
+    # can address this app except through that proxy.
+    #
+    # This shipped broken in v0.2.0 and went unnoticed because every check ran
+    # against localhost, which is inside the gem's default allowlist.
+    MCP::Server::Transports::StreamableHTTPTransport.new(
+      server,
+      stateless:                true,
+      max_request_bytes:        max_bytes,
+      dns_rebinding_protection: false
+    )
   end
 
   JSONRPC_INTERNAL_ERROR = -32_603

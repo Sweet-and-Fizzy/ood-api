@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The MCP endpoint returned 403 for every request on a real site.** `mcp`
+  1.0.0, adopted in v0.2.0, added DNS-rebinding protection defaulting to an
+  allowlist of loopback only — so any request whose `Host` is an actual
+  hostname was refused. Apache already validates `Host` against the portal's
+  `ServerName` and authenticates before anything reaches the PUN, so the
+  protection is redundant here and is now disabled. **Sites running v0.2.0 or
+  v0.3.0 have a non-functional `/mcp`; REST is unaffected.**
+- The CSRF guard exempted any request with an empty body, on the reasoning
+  that `DELETE` sends none. But an HTML form with no fields posts an empty
+  body with a form content type, so cross-origin `touch`, `mkdir`, `hold`, and
+  `release` were still reachable. The exemption is now scoped to the `DELETE`
+  method, which no form can issue.
+- `docs/api.md` told clients to send `Content-Type: application/octet-stream`
+  when writing a file — the value the CSRF filter rejects, so anyone following
+  the page got a 415 on every write. It now documents `application/json`, and
+  415 appears in both error-reference tables.
+
 ## [0.3.0] - 2026-07-31
 
 A CSRF fix, and three cases where the API now behaves the way its
