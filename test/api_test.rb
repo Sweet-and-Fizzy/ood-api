@@ -476,4 +476,103 @@ options: { job_name: 'api-job' } }.to_json,
     assert_equal 500, last_response.status
     assert_equal 'internal_error', json_response['error']
   end
+
+  # With OOD's default cookie-based Apache auth, a browser attaches the
+  # session cookie to a cross-origin form post automatically — so an attacker
+  # page could write, delete, or submit jobs as a logged-in user. An HTML form
+  # can only send these three content types; anything else preflights, which
+  # our absent CORS headers then fail.
+  def test_state_changing_requests_reject_form_content_types
+    ENV.delete('OOD_API_APP_TOKENS')
+    path = File.join(Dir.tmpdir, "csrf_probe_#{SecureRandom.hex(4)}.txt")
+    FileUtils.rm_f(path)
+
+    ['text/plain', 'application/x-www-form-urlencoded', 'multipart/form-data'].each do |ct|
+      put "/api/v1/files?path=#{CGI.escape(path)}", 'pwned', { 'CONTENT_TYPE' => ct }
+      assert_equal 415, last_response.status, "#{ct} must not be accepted on a write"
+    end
+
+    refute File.exist?(path), 'a form-content-type write must not land'
+  ensure
+    FileUtils.rm_f(path) if path
+  end
+
+  def test_state_changing_requests_accept_json
+    ENV.delete('OOD_API_APP_TOKENS')
+    path = File.join(Dir.tmpdir, "csrf_ok_#{SecureRandom.hex(4)}.txt")
+
+    put "/api/v1/files?path=#{CGI.escape(path)}", 'hello', { 'CONTENT_TYPE' => 'application/json' }
+    assert_equal 200, last_response.status
+  ensure
+    FileUtils.rm_f(path) if path
+  end
+
+  # DELETE sends no body and no Content-Type; curl and Rack both fill in a
+  # default one, so the guard keys on body length rather than media type.
+  def test_bodyless_state_changing_requests_are_allowed
+    ENV.delete('OOD_API_APP_TOKENS')
+    path = File.join(Dir.tmpdir, "csrf_del_#{SecureRandom.hex(4)}.txt")
+    File.write(path, 'x')
+
+    delete "/api/v1/files?path=#{CGI.escape(path)}", {}, {}
+    assert_equal 200, last_response.status
+    refute File.exist?(path)
+  end
+
+  # An app token is a custom header, which a cross-origin form cannot set, so
+  # it is already CSRF-safe and exempt from the content-type requirement.
+  def test_app_token_exempts_the_content_type_requirement
+    token = create_test_token
+    path = File.join(Dir.tmpdir, "csrf_tok_#{SecureRandom.hex(4)}.txt")
+
+    put "/api/v1/files?path=#{CGI.escape(path)}", 'hello',
+        auth_header(token).merge('CONTENT_TYPE' => 'text/plain')
+    assert_equal 200, last_response.status
+  ensure
+    FileUtils.rm_f(path) if path
+  end
+
+  def test_reads_are_unaffected_by_the_content_type_requirement
+    ENV.delete('OOD_API_APP_TOKENS')
+    get '/api/v1/clusters', {}, { 'CONTENT_TYPE' => 'text/plain' }
+    assert last_response.ok?
+  end
+
+  # `status` used to carry the raw native state, so a queued Slurm job reported
+  # `pending` where the docs promised `queued` — and the polling example in
+  # docs/api.md could never match. The native word is still available, because
+  # ood_core flattens cancelled/timeout/failed all into `completed`.
+  def test_job_status_uses_the_portable_vocabulary_and_exposes_native_state
+    token = create_test_token
+    mock_adapter = mock('adapter')
+    mock_adapter.stubs(:info).with('12345').returns(
+      OodCore::Job::Info.new(
+        id: '12345', job_owner: 'alice',
+        status: OodCore::Job::Status.new(state: :queued),
+        native: { state: 'PENDING' }
+      )
+    )
+    @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
+
+    get '/api/v1/jobs/12345', { cluster: 'cluster1' }, auth_header(token)
+
+    assert last_response.ok?
+    assert_equal 'queued', json_response['data']['status']
+    assert_equal 'pending', json_response['data']['native_state']
+  end
+
+  def test_native_state_is_null_when_the_adapter_exposes_none
+    token = create_test_token
+    mock_adapter = mock('adapter')
+    mock_adapter.stubs(:info).with('12345').returns(
+      OodCore::Job::Info.new(id: '12345', job_owner: 'alice',
+                             status: OodCore::Job::Status.new(state: :running))
+    )
+    @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
+
+    get '/api/v1/jobs/12345', { cluster: 'cluster1' }, auth_header(token)
+
+    assert_equal 'running', json_response['data']['status']
+    assert_nil json_response['data']['native_state']
+  end
 end

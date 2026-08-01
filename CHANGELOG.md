@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** job reads return the portable `ood_core` `status` vocabulary
+  (`queued`, `queued_held`, `running`, `suspended`, `completed`) rather than
+  the raw scheduler word. A queued Slurm job previously reported `pending`,
+  so a client branching on the documented `queued` never matched — including
+  the polling example in our own API guide. The scheduler's own word is still
+  available as a new `native_state` field, which is what distinguishes
+  `cancelled`, `timeout`, and `failed`, since `ood_core` flattens all three
+  into `completed`.
+- `accounts` and `queues` return **501** on adapters that cannot answer them.
+  `ood_core`'s base adapter returns an empty list for these two where it
+  raises for the others, so a PBS, LSF, or SGE site got `200 []` — impossible
+  to tell from "you genuinely have no accounts". An empty list now means only
+  the latter.
+- A scheduler that cannot be reached returns **503** from job submit, cancel,
+  hold, and release, matching what the read endpoints already did. All four
+  previously reported an outage as 422, so the same `slurmctld` failure gave
+  503 on a read and 422 on a write.
+
+### Fixed
+
+- **CSRF on state-changing requests.** With OOD's default session-cookie
+  authentication a browser attaches the session to a cross-origin form post,
+  so an attacker's page could drive writes, deletes, and job submissions as a
+  logged-in user. `POST`, `PUT`, `PATCH`, and `DELETE` requests carrying a
+  body now require `Content-Type: application/json`, which no HTML form can
+  send. Requests carrying an `X-OOD-API-Token` are exempt, that header being
+  equally unforgeable cross-origin.
+- The environment endpoint no longer reports a false reason. A variable
+  refused by the credential-name deny pass was reported as "not in allowlist"
+  even when the site had explicitly allowlisted it.
+
 ## [0.2.0] - 2026-07-31
 
 Security and correctness fixes across the REST and MCP surfaces, found by

@@ -52,6 +52,22 @@ Sites may additionally require a per-client **application token** in an
 **API Tokens** page, yours is one of them — see
 [Application tokens](#application-tokens) at the end of this document.
 
+### Content-Type on writes
+
+`POST`, `PUT`, `PATCH`, and `DELETE` requests that carry a body must send
+`Content-Type: application/json`, or the API returns **415**. Every example
+below already does.
+
+This is a CSRF defense rather than a parsing requirement. With OOD's default
+session-cookie authentication, a browser attaches your session to a
+cross-origin form post automatically, so an attacker's page could otherwise
+drive writes, deletes, and job submissions as you. An HTML form can only send
+three content types, none of them JSON, and anything else triggers a preflight
+that this API does not answer. Requests carrying an `X-OOD-API-Token` are
+exempt, since that header is equally unforgeable from a form.
+
+Bodyless requests — a `DELETE`, or a `POST ?touch=1` — need no `Content-Type`.
+
 
 ## API Reference
 
@@ -189,6 +205,7 @@ GET /api/v1/jobs?cluster=:cluster_id
       "job_name": "my-simulation",
       "job_owner": "alice",
       "status": "running",
+      "native_state": "running",
       "queue_name": "batch",
       "accounting_id": "PAS1234",
       "submitted_at": "2024-01-15T10:30:00Z",
@@ -200,12 +217,23 @@ GET /api/v1/jobs?cluster=:cluster_id
 }
 ```
 
-**Job Status Values:**
+**Job Status Values.** `status` is always one of these five, on every
+scheduler, so a client can branch on it portably:
+
 - `queued` - Job is waiting in queue
 - `queued_held` - Job is held in queue
 - `running` - Job is executing
 - `suspended` - Job execution is suspended
 - `completed` - Job has finished
+
+Responses also carry **`native_state`**, your scheduler's own word for the
+same job — `pending`, `cancelled`, `timeout`, `node_fail` and so on for Slurm.
+It is `null` when the adapter exposes no native state.
+
+Use `native_state` when you need an outcome `status` cannot express:
+`cancelled`, `timeout`, and `failed` all arrive as `completed`, because
+`ood_core` has no separate value for them. Treat it as scheduler-specific —
+its values are not portable and are not enumerated here.
 
 **Example:**
 ```bash
@@ -248,6 +276,7 @@ GET /api/v1/jobs/:id?cluster=:cluster_id
     "job_name": "my-simulation",
     "job_owner": "alice",
     "status": "running",
+    "native_state": "running",
     "queue_name": "batch",
     "accounting_id": "PAS1234",
     "submitted_at": "2024-01-15T10:30:00Z",
@@ -332,6 +361,7 @@ Content-Type: application/json
     "cluster": "cluster1",
     "job_name": "my-job",
     "status": "queued",
+    "native_state": "pending",
     ...
   }
 }
@@ -357,12 +387,17 @@ curl -X POST \
 ```
 
 **Errors:**
-- 400 - Missing `cluster`, or `script.content` is absent or not a string
+- 400 - Missing `cluster`, `script.content` absent or not a string, `script`
+  or `options` not an object, or a non-integer `options.wall_time`
+- 403 - `script.workdir`, `options.output_path`, or `options.error_path` is
+  outside the allowed roots or on the sensitive-path deny-list. The scheduler
+  writes those paths as you, so they are validated like any other write
 - 404 - Cluster not found
-- 422 - The scheduler rejected the job (bad queue, account, or resource request);
-  the message carries the scheduler's own text
+- 415 - `Content-Type` is not `application/json`
+- 422 - The scheduler rejected the job (bad queue, account, or resource
+  request); the message carries the scheduler's own text
+- 503 - Scheduler unreachable
 - 501 - Not supported by this cluster's scheduler adapter
-- 503 - Scheduler communication error
 
 #### Cancel Job
 
@@ -397,8 +432,8 @@ curl -X DELETE \
 - 400 - Missing `cluster` parameter
 - 404 - Cluster or job not found
 - 422 - The scheduler refused the cancellation
+- 503 - Scheduler unreachable
 - 501 - Not supported by this cluster's scheduler adapter
-- 503 - Scheduler communication error
 
 #### Hold Job
 
@@ -433,8 +468,8 @@ curl -X POST \
 - 400 - Missing `cluster` parameter
 - 404 - Cluster or job not found
 - 422 - The scheduler refused the hold (a running job cannot be held)
+- 503 - Scheduler unreachable
 - 501 - Not supported by this cluster's scheduler adapter
-- 503 - Scheduler communication error
 
 #### Release Job
 
@@ -469,8 +504,8 @@ curl -X POST \
 - 400 - Missing `cluster` parameter
 - 404 - Cluster or job not found
 - 422 - The scheduler refused the release
+- 503 - Scheduler unreachable
 - 501 - Not supported by this cluster's scheduler adapter
-- 503 - Scheduler communication error
 
 ### Historic Jobs
 
@@ -505,6 +540,7 @@ GET /api/v1/jobs/historic?cluster=:cluster_id
       "job_name": "old-simulation",
       "job_owner": "alice",
       "status": "completed",
+      "native_state": "completed",
       "queue_name": "batch",
       "accounting_id": "PAS1234",
       "submitted_at": "2024-01-10T08:00:00Z",
@@ -624,6 +660,11 @@ curl -H "Authorization: Bearer $TOKEN" \
   "https://ondemand.example.com/pun/sys/ood-api/api/v1/files?path=/home/alice/script.sh"
 ```
 
+**Errors:**
+- 400 - Missing `path`, a non-scalar `path`, or a `path` containing a null byte
+- 403 - Path outside the allowed roots, or on the sensitive-path deny-list
+- 404 - Path not found
+
 #### Read File
 
 Read the contents of a file.
@@ -634,7 +675,13 @@ GET /api/v1/files/content?path=:path[&max_size=:bytes]
 
 **Parameters:**
 - `path` (query, required) - Path to the file
-- `max_size` (query, optional) - Maximum number of bytes to read. Must not exceed the server-configured limit (default 10 MB). Useful for reading only the beginning of large files.
+- `max_size` (query, optional) - Maximum number of bytes to read. A value above the server-configured limit (default 10 MB) is silently clamped to it rather than rejected. Useful for reading only the beginning of large files.
+
+Note that `max_size` changes how an oversized file is handled: **without** it, a
+file larger than the server limit returns `400`; **with** it, you get `200` and
+a truncated body. The response carries no indication that truncation occurred,
+so compare the byte count you received against the `max_size` you asked for if
+that distinction matters.
 
 **Response:**
 - Content-Type: `application/octet-stream`
@@ -689,6 +736,7 @@ Content-Type: application/octet-stream
 ```bash
 curl -X PUT \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
   --data-binary @local_file.txt \
   "https://ondemand.example.com/pun/sys/ood-api/api/v1/files?path=~/remote_file.txt"
 ```
@@ -730,6 +778,13 @@ curl -X POST \
   -H "Authorization: Bearer $TOKEN" \
   "https://ondemand.example.com/pun/sys/ood-api/api/v1/files?path=~/new_folder&type=directory"
 ```
+
+**Errors:**
+- 400 - Missing `path`, a null byte in `path`, a path already in use, or
+  neither `type=directory` nor `touch` given (use `PUT` to write contents)
+- 403 - Path outside the allowed roots, or on the sensitive-path deny-list
+- 415 - `Content-Type` is not `application/json` (see [Authentication](#authentication))
+- 507 - The filesystem is full or the user is over quota
 
 #### Delete File or Directory
 
@@ -862,10 +917,23 @@ Rules:
 - A bare `*` entry is ignored (would match everything)
 - All other entries are exact matches
 - Matching is case-sensitive
-- Setting this **replaces** the defaults entirely
+- Setting this **replaces** the default allowlist entirely
 - Setting to empty (`OOD_API_ENV_ALLOWLIST=`) exposes nothing
 - Whitespace around entries is stripped; duplicates are ignored
 - Variable names containing commas are not supported
+
+**A credential-name deny pass runs first and cannot be overridden.** Names
+matching `SECRET`, `TOKEN`, `PASSW`, `CREDENTIAL`, `_JWT`, `JWT_`, `_KEY`,
+`APIKEY`, `API_KEY`, or `PRIVATE` (case-insensitive) are never disclosed, even
+if you list them explicitly. This exists because the scheduler prefixes the
+default allowlist grants are exactly where credentials appear — `SLURM_JWT`
+holds a bearer token for `slurmrestd` and begins with the allowed `SLURM_`
+prefix, and these values reach an LLM.
+
+A listed-but-denied variable is absent from `GET /api/v1/env` and returns 403
+from `GET /api/v1/env/:name`, with a message saying the name looks like a
+credential. If your site genuinely needs to expose such a value, rename the
+variable — there is no override.
 
 **Production sites should review the default allowlist** and set `OOD_API_ENV_ALLOWLIST` explicitly if any `OOD_*` variables contain sensitive values.
 
@@ -874,8 +942,9 @@ Rules:
 > **Slurm-mostly.** This is one of four capability areas — accounts, queues,
 > cluster info, and job history — that depend on adapter features `ood_core`
 > implements fully only for Slurm. On PBS Pro, LSF, Torque, or SGE these
-> commonly return **501 `not_implemented`**. Handle that code; it means your
-> site's scheduler, not a broken request.
+> return **501 `not_implemented`**. Handle that code; it means your site's
+> scheduler, not a broken request. An empty list means you genuinely have
+> none, which is why the two are distinguishable.
 
 The Accounts API lists the scheduler accounts available to the authenticated user on a given cluster. This is useful for AI agents and scripts that need to discover valid `accounting_id` values before submitting jobs.
 
@@ -920,8 +989,9 @@ curl -H "Authorization: Bearer $TOKEN" \
 > **Slurm-mostly.** This is one of four capability areas — accounts, queues,
 > cluster info, and job history — that depend on adapter features `ood_core`
 > implements fully only for Slurm. On PBS Pro, LSF, Torque, or SGE these
-> commonly return **501 `not_implemented`**. Handle that code; it means your
-> site's scheduler, not a broken request.
+> return **501 `not_implemented`**. Handle that code; it means your site's
+> scheduler, not a broken request. An empty list means you genuinely have
+> none, which is why the two are distinguishable.
 
 The Queues API lists the queues (partitions) available on a given cluster. This is useful for AI agents and scripts that need to discover valid `queue_name` values before submitting jobs.
 
@@ -1017,7 +1087,18 @@ The Context API provides site-specific agent context from markdown files in the 
 
 #### Get Context
 
-Returns the concatenated contents of all `*.md` files in the context directory (`/etc/ood/config/agents.d/` by default).
+Returns the contents of all `*.md` files in the context directory
+(`/etc/ood/config/agents.d/` by default), sorted by filename and joined with
+blank lines.
+
+The contents are not returned verbatim. Each fragment is preceded by an
+`<!-- Source: <filename> -->` marker so a reader can tell which file said
+what, and any such marker appearing *inside* a fragment is defanged, so one
+file cannot impersonate another. Leading and trailing whitespace is stripped
+from each fragment. A file larger than `OOD_API_MAX_CONTEXT_BYTES` (256 KB by
+default) is replaced with a short note rather than served, and a file that
+cannot be read — wrong permissions, a broken symlink — is skipped rather than
+failing the whole request.
 
 ```
 GET /api/v1/context
@@ -1039,6 +1120,7 @@ If the context directory does not exist or contains no markdown files, the respo
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OOD_API_CONTEXT_PATH` | `/etc/ood/config/agents.d` | Path to directory containing site-specific agent context files (*.md) |
+| `OOD_API_MAX_CONTEXT_BYTES` | `262144` (256 KB) | Per-file cap. A larger fragment is replaced with a note rather than served. |
 
 **Example:**
 ```bash

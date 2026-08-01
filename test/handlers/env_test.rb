@@ -134,4 +134,24 @@ class HandlersEnvTest < Minitest::Test
   ensure
     ENV.delete('SLURM_JWT')
   end
+
+  # A site that explicitly allowlists MY_API_KEY and is told it is "not in
+  # allowlist" has been handed a false statement and will debug the wrong
+  # thing. The deny pass and a genuine allowlist miss are different refusals.
+  def test_denied_credential_name_is_reported_distinctly_from_an_allowlist_miss
+    ENV['OOD_API_ENV_ALLOWLIST'] = 'MY_API_KEY,SITE_NOTE'
+    ENV['MY_API_KEY'] = 'v1'
+    ENV['SITE_NOTE'] = 'v3'
+
+    denied = assert_raises(Handlers::ForbiddenError) { Handlers::Env.get(name: 'MY_API_KEY') }
+    assert_match(/credential/i, denied.message,
+                 'an explicitly allowlisted name refused by the deny pass must say why')
+
+    missing = assert_raises(Handlers::ForbiddenError) { Handlers::Env.get(name: 'NOT_LISTED') }
+    assert_match(/not in allowlist/i, missing.message)
+
+    assert_equal 'v3', Handlers::Env.get(name: 'SITE_NOTE')[:value]
+  ensure
+    ['MY_API_KEY', 'SITE_NOTE'].each { |k| ENV.delete(k) }
+  end
 end

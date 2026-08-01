@@ -50,6 +50,40 @@ module OodApi
       authenticate!
     end
 
+    # CSRF defense for state-changing requests.
+    #
+    # With OOD's default `AuthType openid-connect`, Apache authenticates via
+    # the `mod_auth_openidc_session` cookie — which a browser attaches to a
+    # cross-origin form post automatically. An attacker page could therefore
+    # POST or PUT here as a logged-in user. The absence of CORS headers stops
+    # them reading the response, but not the write landing.
+    #
+    # An HTML form can only send `application/x-www-form-urlencoded`,
+    # `multipart/form-data`, or `text/plain`; anything else triggers a
+    # preflight, which our missing CORS headers then fail. Requiring JSON is
+    # therefore a complete defense against form-based CSRF and costs a
+    # legitimate client nothing — every documented example already sends it.
+    #
+    # `X-OOD-API-Token` is likewise unforgeable cross-origin, so sites with
+    # app tokens enabled were already covered; this extends that to the
+    # default configuration.
+    before '/api/v1/*' do
+      next unless ['POST', 'PUT', 'PATCH', 'DELETE'].include?(request.request_method)
+      # DELETE and a bodyless POST carry no body to mislabel, but still must
+      # not be drivable from a form — a custom header is what a form cannot
+      # set, so accept either that or a JSON content type.
+      next if OodApi::AppAuth.extract_token(request.env)
+
+      next if request.media_type.to_s.downcase == 'application/json'
+      # A bodyless request carries nothing a form could have supplied, and
+      # DELETE is the normal case: clients send no body and no Content-Type,
+      # and both curl and Rack fill in a default one regardless.
+      next if request.content_length.to_i.zero?
+
+      halt_error(415, 'unsupported_media_type',
+                 'State-changing requests require Content-Type: application/json')
+    end
+
     # Reject oversized bodies before anything touches `params`.
     #
     # Sinatra resolves `params` lazily, and Rack parses the body when it does.
@@ -92,12 +126,15 @@ module OodApi
     # ValidationError. Enumerating them centrally is what keeps that from
     # silently recurring as routes are added.
     {
-      Handlers::NotFoundError        => [404, 'not_found'],
-      Handlers::ValidationError      => [400, 'bad_request'],
-      Handlers::ForbiddenError       => [403, 'forbidden'],
-      Handlers::PayloadTooLargeError => [413, 'payload_too_large'],
-      Handlers::StorageError         => [507, 'insufficient_storage'],
-      Handlers::AdapterError         => [503, 'service_unavailable']
+      Handlers::NotFoundError             => [404, 'not_found'],
+      Handlers::ValidationError           => [400, 'bad_request'],
+      Handlers::ForbiddenError            => [403, 'forbidden'],
+      Handlers::PayloadTooLargeError      => [413, 'payload_too_large'],
+      Handlers::StorageError              => [507, 'insufficient_storage'],
+      Handlers::AdapterError              => [503, 'service_unavailable'],
+      # Same status as its parent, listed so the mapping survives any future
+      # change to AdapterError's default.
+      Handlers::SchedulerUnavailableError => [503, 'service_unavailable']
     }.each do |klass, (code, type)|
       error klass do
         halt_error(code, type, env['sinatra.error'].message)
@@ -271,6 +308,8 @@ module OodApi
       halt_bad_request(e.message)
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
+    rescue Handlers::SchedulerUnavailableError => e
+      halt_service_unavailable(e.message)
     rescue Handlers::AdapterError => e
       halt_unprocessable(e.message)
     end
@@ -289,6 +328,8 @@ module OodApi
       { data: result }.to_json
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
+    rescue Handlers::SchedulerUnavailableError => e
+      halt_service_unavailable(e.message)
     rescue Handlers::AdapterError => e
       halt_unprocessable(e.message)
     end
@@ -303,6 +344,8 @@ module OodApi
       { data: result }.to_json
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
+    rescue Handlers::SchedulerUnavailableError => e
+      halt_service_unavailable(e.message)
     rescue Handlers::AdapterError => e
       halt_unprocessable(e.message)
     end
@@ -317,6 +360,8 @@ module OodApi
       { data: result }.to_json
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
+    rescue Handlers::SchedulerUnavailableError => e
+      halt_service_unavailable(e.message)
     rescue Handlers::AdapterError => e
       halt_unprocessable(e.message)
     end
@@ -486,7 +531,14 @@ module OodApi
     end
 
     def job_json(info, cluster)
-      # Use native scheduler state if available for accurate status
+      # `status` is the portable ood_core vocabulary, so a client can branch on
+      # it across schedulers. It previously carried the raw native state, which
+      # meant a queued Slurm job reported `pending` where the docs promised
+      # `queued` — and the polling example in docs/api.md could never match.
+      #
+      # The native string is still exposed, as `native_state`, because it
+      # distinguishes outcomes ood_core flattens: `cancelled`, `timeout`, and
+      # `failed` all map to `completed`.
       native = info.native
       native_state = native&.dig(:state)
       native_state = native_state.to_s.downcase if native_state
@@ -496,7 +548,8 @@ module OodApi
         cluster:         cluster.id.to_s,
         job_name:        info.job_name,
         job_owner:       info.job_owner,
-        status:          native_state || info.status.to_s,
+        status:          info.status.to_s,
+        native_state:    native_state,
         queue_name:      info.queue_name,
         accounting_id:   info.accounting_id,
         submitted_at:    info.submission_time&.iso8601,

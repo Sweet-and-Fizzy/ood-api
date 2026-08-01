@@ -190,6 +190,7 @@ page** titled "App has not been initialized" means step 3 has not been done.
 | `OOD_API_MAX_FILE_WRITE` | No | `52428800` (50 MB) | Maximum file write body size in bytes (REST `PUT` and MCP `write_file`) |
 | `OOD_API_ENV_ALLOWLIST` | No | See [docs/api.md](api.md#environment-variable-allowlist) | Comma-separated allowlist for env vars endpoint. Entries ending in `*` are prefix matches. |
 | `OOD_API_CONTEXT_PATH` | No | `/etc/ood/config/agents.d` | Path to directory containing site-specific agent context files (*.md) |
+| `OOD_API_MAX_CONTEXT_BYTES` | No | `262144` (256 KB) | Per-file cap on agent context fragments. A larger file is replaced with a note rather than served. |
 
 ## Troubleshooting
 

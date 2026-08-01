@@ -31,6 +31,13 @@ module Handlers
     end
 
     def self.get(name:)
+      # Distinguish the two refusals. A site that explicitly allowlists
+      # MY_API_KEY and is told it is "not in allowlist" has been handed a
+      # false statement, and will go looking in the wrong place.
+      if DENIED_PATTERN.match?(name)
+        raise ForbiddenError,
+              'Access denied: the name looks like a credential and is refused regardless of the allowlist'
+      end
       raise ForbiddenError, 'Access denied: variable not in allowlist' unless allowed?(name)
       raise NotFoundError, 'Environment variable not found' unless ENV.key?(name)
 
