@@ -270,4 +270,25 @@ class HandlersJobsTest < Minitest::Test
       Handlers::Jobs.release(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
     end
   end
+
+  # An outage and a rejected request are different problems: one is not the
+  # caller's to fix. They used to be the same AdapterError, so the same
+  # slurmctld outage gave 503 on a read and 422 on a write.
+  def test_unreachable_scheduler_raises_scheduler_unavailable
+    @adapter.stubs(:submit).raises(
+      OodCore::JobAdapterError, 'slurm_load_jobs error: Unable to contact slurm controller (connect failure)'
+    )
+    assert_raises(Handlers::SchedulerUnavailableError) do
+      Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: '#!/bin/bash')
+    end
+  end
+
+  # A rejection must stay an ordinary AdapterError, not be promoted to 503.
+  def test_rejected_request_stays_an_adapter_error
+    @adapter.stubs(:submit).raises(OodCore::JobAdapterError, 'sbatch: error: invalid partition specified: nope')
+    err = assert_raises(Handlers::AdapterError) do
+      Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: '#!/bin/bash')
+    end
+    refute_kind_of Handlers::SchedulerUnavailableError, err
+  end
 end

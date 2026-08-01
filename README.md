@@ -141,15 +141,15 @@ short job. If not, expect to spend your time there rather than on the app.
 
 ## What it exposes
 
-Everything below is available on both surfaces — as a REST endpoint and as an
-MCP tool.
+Available on both surfaces — as a REST endpoint and as an MCP tool — except
+where noted.
 
 - **Clusters** — list configured clusters and their details, plus queues,
   accounts, and current utilization.
 - **Jobs** — submit (optionally with dependencies), list, get, cancel, hold,
   release, and query history.
-- **Files** — list, read, write, append, make directories, touch, and delete,
-  confined to allowed roots.
+- **Files** — list, read, write, append, make directories, and delete,
+  confined to allowed roots. `touch` is REST-only; there is no MCP tool for it.
 - **Environment** — list and read allowlisted variables.
 - **Site context** — operator-authored markdown from `agents.d/`, so an agent
   can read local policy before acting. Exposed as an MCP *resource* rather than
@@ -272,16 +272,23 @@ the code, see [Contributing](CONTRIBUTING.md) and
 
 ood-api uses [`ood_core`](https://github.com/OSC/ood_core) (`~> 0.24`, same constraint as the OOD Dashboard) for all scheduler operations. We call only the public adapter interface.
 
-| Adapter method | Used by | Supported adapters (ood_core 0.30) |
+| Adapter method | Used by | Supported adapters (ood_core 0.31) |
 |---|---|---|
 | `submit`, `delete`, `info`, `info_where_owner` | Jobs | All |
 | `hold`, `release` | Hold/release | Most (Slurm, PBS, LSF, Torque, SGE, etc.) |
-| `accounts` | Account discovery | Slurm, HTCondor |
+| `accounts` | Account discovery | Slurm, HTCondor, PSI/J |
 | `queues` | Queue discovery | Slurm |
-| `cluster_info` | Cluster utilization | Slurm, HTCondor |
+| `cluster_info` | Cluster utilization | Slurm, PBS Pro, HTCondor, PSI/J |
 | `info_historic` | Job history | Slurm |
 
-Operations on unsupported adapters return empty results or a clear error. When `ood_core` releases a new version, we review the changelog, run the test suite against it, and update the table above.
+Operations an adapter cannot perform return **501 `not_implemented`**
+uniformly. `ood_core`'s base adapter returns an empty list for `accounts` and
+`queues` where it raises for the others, so the API detects that case and
+reports it as 501 too — an empty list therefore means you genuinely have none,
+never "your scheduler cannot answer".
+
+When `ood_core` releases a new version, we review the changelog, run the test
+suite against it, and update the table above.
 
 ## Contributing
 

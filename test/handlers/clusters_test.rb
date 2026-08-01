@@ -132,4 +132,39 @@ class HandlersClustersTest < Minitest::Test
       Handlers::Clusters.queues(clusters: @clusters, id: 'cluster1')
     end
   end
+
+  # ood_core's base adapter returns [] for accounts and queues rather than
+  # raising, so a PBS/LSF/SGE site got 200 [] where the docs promised 501 —
+  # and no client could tell "no accounts" from "cannot answer".
+  def test_accounts_reports_unsupported_when_the_adapter_inherits_the_base_no_op
+    cluster = mock_cluster(id: 'pbs-like')
+    cluster.stubs(:job_adapter).returns(OodCore::Job::Adapter.new)
+
+    assert_raises(Handlers::NotSupportedError) do
+      Handlers::Clusters.accounts(clusters: [cluster], id: 'pbs-like')
+    end
+  end
+
+  def test_queues_reports_unsupported_when_the_adapter_inherits_the_base_no_op
+    cluster = mock_cluster(id: 'pbs-like')
+    cluster.stubs(:job_adapter).returns(OodCore::Job::Adapter.new)
+
+    assert_raises(Handlers::NotSupportedError) do
+      Handlers::Clusters.queues(clusters: [cluster], id: 'pbs-like')
+    end
+  end
+
+  # An adapter that really implements these must still answer, including when
+  # the honest answer is an empty list.
+  def test_an_implementing_adapter_still_returns_its_empty_list
+    adapter = Class.new(OodCore::Job::Adapter) do
+      def accounts = []
+      def queues = []
+    end.new
+    cluster = mock_cluster(id: 'slurm-like')
+    cluster.stubs(:job_adapter).returns(adapter)
+
+    assert_empty Handlers::Clusters.accounts(clusters: [cluster], id: 'slurm-like')
+    assert_empty Handlers::Clusters.queues(clusters: [cluster], id: 'slurm-like')
+  end
 end

@@ -21,3 +21,4 @@ docker/
 docs/proposals/
 docs/superpowers/
 review-*.md
+ISSUE-DRAFT-*.md
