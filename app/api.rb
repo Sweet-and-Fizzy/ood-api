@@ -19,6 +19,25 @@ require_relative 'handlers/context'
 
 module OodApi
   class App < Sinatra::Base
+    # Sinatra 4 enables host authorization by default, permitting only
+    # localhost. Every OOD site serves the portal under its own FQDN, so the
+    # default rejects every real request with "Host not permitted" — the same
+    # failure mode the MCP transport had in v0.2.0.
+    #
+    # Disabling it is safe because the protection has already happened
+    # upstream, not merely because the app is behind a proxy. OOD's generated
+    # portal config sets a single ServerName with no ServerAlias, so Apache
+    # canonicalises any other Host to it — a request carrying an
+    # attacker-chosen hostname is 301'd to the portal's own name before it
+    # ever reaches the PUN. Sinatra would be re-checking a value that can only
+    # be the ServerName by the time it arrives.
+    #
+    # The alternative — reading the site's FQDN from config and passing it as
+    # permitted_hosts — was rejected: it adds a setting every site must get
+    # right, to re-verify something Apache has already normalised, and gets it
+    # wrong by silently 403ing if the two ever disagree.
+    set :host_authorization, { permitted_hosts: [] }
+
     # Configuration via environment variables
     CLUSTERS_PATH = ENV.fetch('OOD_CLUSTERS', '/etc/ood/config/clusters.d')
 

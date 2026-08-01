@@ -229,7 +229,8 @@ class FilesApiTest < Minitest::Test
     token = create_test_token
     file_path = File.join(@test_dir, 'written.txt')
 
-    put "/api/v1/files?path=#{CGI.escape(file_path)}", 'new content', auth_header(token)
+    put "/api/v1/files?path=#{CGI.escape(file_path)}", 'new content',
+        auth_header(token).merge('CONTENT_TYPE' => 'application/json')
 
     assert last_response.ok?, "Expected OK but got #{last_response.status}: #{last_response.body}"
     assert_equal 'new content', File.read(file_path)
@@ -240,7 +241,8 @@ class FilesApiTest < Minitest::Test
     file_path = File.join(@test_dir, 'overwrite.txt')
     File.write(file_path, 'old content')
 
-    put "/api/v1/files?path=#{CGI.escape(file_path)}", 'updated', auth_header(token)
+    put "/api/v1/files?path=#{CGI.escape(file_path)}", 'updated',
+        auth_header(token).merge('CONTENT_TYPE' => 'application/json')
 
     assert last_response.ok?
     assert_equal 'updated', File.read(file_path)
