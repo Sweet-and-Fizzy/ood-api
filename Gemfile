@@ -35,5 +35,5 @@ group :test do
   gem 'mocha'
   gem 'rack-test'
   # simplecov 1.0 requires Ruby 3.2+; 0.22 supports Ruby >= 2.5.
-  gem 'simplecov', '~> 0.22', require: false
+  gem 'simplecov', '~> 1.0', require: false
 end
