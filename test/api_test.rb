@@ -453,7 +453,7 @@ options: { job_name: 'api-job' } }.to_json,
     token = create_test_token
     Handlers::Files.stubs(:touch).raises(Handlers::StorageError, 'No space left on device')
 
-    post '/api/v1/files?path=/tmp/x.txt&touch=1', {}, auth_header(token)
+    post '/api/v1/files?path=/tmp/x.txt&touch=1', {}, auth_header(token).merge('CONTENT_TYPE' => 'application/json')
     assert_equal 507, last_response.status
     assert_equal 'insufficient_storage', json_response['error']
   end
@@ -462,7 +462,7 @@ options: { job_name: 'api-job' } }.to_json,
     token = create_test_token
     Handlers::Files.stubs(:write).raises(Handlers::NotFoundError, 'File not found')
 
-    put '/api/v1/files?path=/tmp/x.txt', 'body', auth_header(token)
+    put '/api/v1/files?path=/tmp/x.txt', 'body', auth_header(token).merge('CONTENT_TYPE' => 'application/json')
     assert_equal 404, last_response.status
   end
 
@@ -519,14 +519,22 @@ options: { job_name: 'api-job' } }.to_json,
     refute File.exist?(path)
   end
 
-  # An app token is a custom header, which a cross-origin form cannot set, so
-  # it is already CSRF-safe and exempt from the content-type requirement.
-  def test_app_token_exempts_the_content_type_requirement
+  # An app token does not exempt a write from the content-type requirement,
+  # even a valid one. The filter cannot tell a valid token from an invented
+  # string without running authentication, and with app tokens off there is no
+  # authentication to run — so exempting on the header at all would let any
+  # value through. Requiring JSON costs a token-bearing client nothing.
+  def test_app_token_does_not_exempt_the_content_type_requirement
     token = create_test_token
     path = File.join(Dir.tmpdir, "csrf_tok_#{SecureRandom.hex(4)}.txt")
 
     put "/api/v1/files?path=#{CGI.escape(path)}", 'hello',
         auth_header(token).merge('CONTENT_TYPE' => 'text/plain')
+    assert_equal 415, last_response.status
+    refute File.exist?(path)
+
+    put "/api/v1/files?path=#{CGI.escape(path)}", 'hello',
+        auth_header(token).merge('CONTENT_TYPE' => 'application/json')
     assert_equal 200, last_response.status
   ensure
     FileUtils.rm_f(path) if path

@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- The CSRF filter no longer treats the presence of an `X-OOD-API-Token` header
+  as grounds to skip the JSON content-type requirement on writes. The header
+  was only read, never validated, and in the default configuration
+  (`OOD_API_APP_TOKENS` unset) nothing downstream validated it either — so any
+  non-empty value disabled the check on exactly the configuration it exists to
+  protect. A `POST` with `Content-Type: text/plain` and an invented token
+  created the file; it is now refused with 415.
+
+  This was not a working browser exploit: `X-OOD-API-Token` is not
+  CORS-safelisted, so a cross-origin `fetch` preflights and the app sends no
+  CORS headers, and an HTML form cannot set the header at all. It removed a
+  defense-in-depth layer rather than the last one.
+
+  Clients already sending `Content-Type: application/json`, as every
+  documented example does, are unaffected. `DELETE` remains exempt: it carries
+  no body to mislabel and no HTML form can issue one.
+
+- Widened the environment-variable deny-list. Its suffixes were `\b`-anchored,
+  which matches `SLURM_KEY` but not `MY_KEYS` or `SLURM_KEY2`, so
+  `SLURM_KEYRING` and `OOD_PASSPHRASE` were disclosed with their values under
+  an allowlist granting those prefixes. Added `PASSPHRASE`, `KEYRING`,
+  `KEYFILE`, `KEYSTORE`, `_PEM` and `_CERT`.
+
+  The deny pass is a supplement to the allowlist, not the primary control
+  (CWE-184). A hit on a name the allowlist permitted means the allowlist is
+  wrong (CWE-183), and the list path previously dropped such names silently.
+  It now logs the name — never the value — so the allowlist can be corrected.
+
+### Fixed
+
+- The dashboard's token page showed `curl -H "Authorization: Bearer ..."`
+  directly beneath a newly created application token. `Authorization` is owned
+  by Apache for the IdP's JWT, and the app reads only `X-OOD-API-Token`, so
+  following the one instruction shown at the moment of issuance sent the token
+  into a header it was never meant for and never authenticated.
+
 ## [0.3.2] - 2026-08-01
 
 Dependency currency. No API contract changes and nothing to do on upgrade.
