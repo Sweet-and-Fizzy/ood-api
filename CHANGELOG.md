@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the Ruby version that forces it; this one did not, which is why it
   went unexamined.
 
+  Also brings `parser`, `regexp_parser`, and `bigdecimal` up to date, leaving
+  only `excon` and `minitest` behind the OOD Dashboard's own lockfile — both
+  pinned because they require Ruby 3.1 from their next release, which the
+  Dashboard can take and we cannot while OOD 3.x sites are supported.
+
 ### Fixed
 
 - Sinatra 4 enables host authorization by default, permitting only localhost,
