@@ -124,6 +124,68 @@ class HandlersEnvTest < Minitest::Test
     ['SLURM_JWT', 'OOD_API_SECRET_KEY', 'MODULES_AWS_KEY'].each { |k| ENV.delete(k) }
   end
 
+  # Credential names are routinely pluralised, numbered, or spelled with a
+  # word other than "key" or "token". A `\b`-anchored suffix matches SLURM_KEY
+  # but not MY_KEYS or SLURM_KEY2, so these were disclosed with their values.
+  def test_denies_credential_names_with_suffixes_and_synonyms
+    names = ['SLURM_KEYRING', 'OOD_PASSPHRASE', 'MY_KEYS', 'LMOD_KEYFILE', 'SLURM_PEM', 'SLURM_CERT',
+             'SLURM_CERTIFICATE', 'OOD_KEYSTORE', 'SLURM_KEY2']
+    names.each { |n| ENV[n] = 'shh' }
+    ENV['OOD_API_ENV_ALLOWLIST'] = names.join(',')
+
+    result = Handlers::Env.list
+    names.each do |n|
+      refute result.key?(n), "#{n} is credential-shaped and must not be disclosed"
+      assert_raises(Handlers::ForbiddenError) { Handlers::Env.get(name: n) }
+    end
+  ensure
+    names.each { |n| ENV.delete(n) }
+  end
+
+  # Widening the deny pattern must not start refusing ordinary variables. A
+  # false positive is not a safe default here: it breaks a working site and
+  # says "looks like a credential", which points the operator at the wrong
+  # cause. The first four below are the trap — they contain KEY, SALT or
+  # SIGNING as ordinary words, and an unanchored pattern refuses all of them.
+  def test_ordinary_variables_are_not_denied
+    allowed = ['SLURM_KEYWORD', 'LMOD_KEYMAP', 'MODULE_SALT_FLATS', 'OOD_SIGNING_OFF',
+               'SLURM_JOB_ID', 'SLURM_NTASKS', 'SLURM_NODELIST', 'SLURM_SUBMIT_DIR', 'SLURM_JOB_PARTITION',
+               'PBS_JOBID', 'PBS_O_WORKDIR', 'SGE_TASK_ID', 'SGE_ROOT', 'LSB_JOBID', 'LMOD_CMD',
+               'LMOD_PKG', 'MODULEPATH', 'MODULESHOME', 'OOD_PORT', 'SLURM_CPU_BIND']
+    allowed.each do |n|
+      refute Handlers::Env::DENIED_PATTERN.match?(n), "#{n} is an ordinary variable, not a credential"
+    end
+  end
+
+  # CWE-184: a deny-list is for detecting what a correct allowlist should have
+  # excluded. If it fires, the allowlist is wrong, and nobody finds out unless
+  # it says so — the list path silently drops the variable.
+  def test_a_deny_pass_hit_on_an_allowlisted_name_is_reported
+    ENV['OOD_API_ENV_ALLOWLIST'] = 'SLURM_*'
+    ENV['SLURM_JWT'] = 'a-real-token'
+
+    _, err = capture_io { Handlers::Env.list }
+
+    assert_match(/SLURM_JWT/, err, 'the operator must learn which name the allowlist wrongly permitted')
+    assert_match(/allowlist/i, err, 'the message must point at the allowlist, not just report a refusal')
+    refute_match(/a-real-token/, err, 'the value must never be logged')
+  ensure
+    ENV.delete('SLURM_JWT')
+  end
+
+  # A name the allowlist never granted is denied anyway, so reporting it would
+  # be noise on every call — the default environment is full of such names.
+  def test_no_warning_for_a_credential_the_allowlist_already_excludes
+    ENV['OOD_API_ENV_ALLOWLIST'] = 'SLURM_*'
+    ENV['AWS_SECRET_ACCESS_KEY'] = 'shh'
+
+    _, err = capture_io { Handlers::Env.list }
+
+    assert_empty err.strip, 'only an allowlist mistake is worth reporting'
+  ensure
+    ENV.delete('AWS_SECRET_ACCESS_KEY')
+  end
+
   # The deny pass is a backstop, not something a site can opt out of.
   def test_deny_pass_overrides_an_explicit_allowlist_entry
     ENV['OOD_API_ENV_ALLOWLIST'] = 'SLURM_JWT'
