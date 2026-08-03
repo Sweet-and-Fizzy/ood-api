@@ -34,6 +34,34 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
+  # getopt_long treats `-o/path` as identical to `-o /path`, so validating only
+  # the separated form left the bundled one through — the same destination the
+  # separated form refuses.
+  def test_native_bundled_short_flags_are_validated
+    with_fake_home do |home|
+      denied = File.join(home, '.ssh', 'authorized_keys')
+      [["-o#{denied}"], ["-e#{denied}"], ["-D#{File.dirname(denied)}"],
+       ["-oo#{denied}"], ['-N', '2', "-o#{denied}"]].each do |native|
+        assert_raises(Handlers::ForbiddenError, "native #{native.inspect} must be refused") do
+          Handlers::Jobs.validate_native_paths!(native)
+        end
+      end
+    end
+  end
+
+  # A bundle that merely starts with a path flag's letters is a different
+  # option — `-N2` is not `-N` with the path "2", and long flags are excluded
+  # entirely so `--outputfoo` is left alone.
+  def test_native_unrelated_bundles_are_left_alone
+    with_fake_home do |home|
+      ok = File.join(home, 'legit.out')
+      [["-o#{ok}"], ["-oo#{ok}"], ["-o=#{ok}"], ['-N2'], ['--nodes=4'],
+       ['--exclusive']].each do |native|
+        Handlers::Jobs.validate_native_paths!(native)
+      end
+    end
+  end
+
   # Only path-bearing flags are inspected; everything else in native is a
   # legitimate scheduler option and must pass through untouched.
   def test_native_non_path_flags_are_left_alone

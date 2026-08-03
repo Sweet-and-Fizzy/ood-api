@@ -78,6 +78,13 @@ module Handlers
       '-oo', '-eo', '-cwd', '-wd', '-w'
     ].freeze
 
+    # Short flags may be written bundled with their value: getopt_long treats
+    # `-o/path` as identical to `-o /path`, so checking only the separated form
+    # leaves the bundled one unvalidated. Longest-first so `-oo` is tried
+    # before `-o` and its value is not mistaken for `o/path`.
+    NATIVE_SHORT_PATH_FLAGS = NATIVE_PATH_FLAGS.reject { |f| f.start_with?('--') }
+                                               .sort_by { |f| -f.length }.freeze
+
     # `native` is raw scheduler argv, and adapters append it AFTER the options
     # this handler validated — ood_core's Slurm adapter builds `-o
     # script.output_path` at slurm.rb:644 and concatenates native at :671.
@@ -107,10 +114,28 @@ module Handlers
           # `--output=PATH` carries its value; `-o PATH` takes the next element.
           job_path!(inline || args[index + 1])
           index += inline ? 1 : 2
+        elsif (bundled = bundled_path(arg))
+          job_path!(bundled)
+          index += 1
         else
           index += 1
         end
       end
+    end
+
+    # `-o/path` with no separator. Long flags are excluded: `--outputfoo` is a
+    # different option, not `--output` with a value, and matching it would
+    # refuse flags this app knows nothing about.
+    def self.bundled_path(arg)
+      flag = NATIVE_SHORT_PATH_FLAGS.find { |f| arg.start_with?(f) && arg.length > f.length }
+      return nil unless flag
+
+      value = arg[flag.length..]
+      # `-o=path` is handled by the split above; anything starting with `-` is
+      # another flag rather than a path.
+      return nil if value.start_with?('=', '-')
+
+      value
     end
 
     # wall_time reaches the scheduler unmodified; a non-numeric value silently

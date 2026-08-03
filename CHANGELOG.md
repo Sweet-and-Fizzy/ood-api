@@ -24,7 +24,8 @@ variable names it previously returned.
 
 ### Security
 
-- **`options.native` bypassed the job path deny-list.** `output_path`,
+- **`options.native` bypassed the job path deny-list, including when the path
+  was bundled with its flag.** `output_path`,
   `error_path` and `workdir` are validated against the allowed roots and the
   sensitive-path deny-list, because the scheduler writes them as the user.
   `native` is raw scheduler argv and was not validated — and `ood_core` appends
@@ -36,9 +37,11 @@ variable names it previously returned.
   privilege control: the point is that an agent acting on injected input cannot
   reach `~/.ssh/authorized_keys`, and through `native` it could. Path-bearing
   flags in `native` (`-o`, `--output`, `-e`, `--error`, `-D`, `--chdir` and the
-  PBS/LSF/SGE equivalents, in both `--flag=value` and `--flag value` forms) are
-  now validated like any other job path. Everything else in `native` passes
-  through untouched.
+  PBS/LSF/SGE equivalents) are now validated like any other job path, in all
+  three spellings — `--output=PATH`, `-o PATH`, and `-oPATH`. `getopt_long`
+  treats the bundled form as identical to the separated one, so checking only
+  the latter left the same destination reachable. Everything else in `native`
+  passes through untouched, including unrelated bundles such as `-N2`.
 
 - **Twelve more credential-shaped environment names were disclosed.** `PASSW`
   requires the W, so `SLURM_PASS` and `SLURM_PWD` — the two commonest
