@@ -182,28 +182,21 @@ everything it can do, the user could already do from a shell. What changes is
 *who can drive it*: submit and cancel jobs, and read, write, and recursively
 delete files, all reachable by an LLM through the MCP endpoint.
 
-**Constraints.**
-
-- **Allowed roots.** File access is confined to `$HOME`, `/tmp`, and
-  `Dir.tmpdir`.
-- **Denied paths within those roots.** `~/.ssh`, `~/.config/ondemand` (the
-  token store), `~/.config/systemd/user`, `~/.local/bin`, `~/.config/git`,
-  `~/.config/autostart`, shell init files, `~/.gitconfig`, `~/.netrc`,
-  `~/.forward`, and `~/.pam_environment` are refused on both read and write —
-  including reached via symlink or hardlink. Recursive delete refuses outright
-  when one lies in the tree.
-- **Regular files only.** Reading a FIFO or device node is refused rather than
-  blocking the worker.
-- **Allowlisted environment variables**, with credential-shaped names
-  (`*_TOKEN`, `*_JWT`, `*SECRET*`) denied regardless of the allowlist.
-- **Size caps** on reads and writes, via `OOD_API_MAX_FILE_READ` and
-  `OOD_API_MAX_FILE_WRITE`.
-- **Audit logging** of every operation to the PUN log, with control characters
-  escaped so a caller-supplied path cannot forge a record.
+**Constraints.** File access is confined to `$HOME`, `/tmp` and `Dir.tmpdir`,
+with a deny-list refusing shell init files, `~/.ssh`, `~/.local/bin`, the token
+store and other paths an agent could use to leave itself a way back in —
+enforced through symlinks, hardlinks and case variants alike. Environment
+variables are allowlisted with credential-shaped names refused. Scheduler job
+paths are validated like any other write. Every operation is audit-logged.
 
 The deny-list is not about stopping the user: they can still edit any of those
 files from a shell. It is about ensuring an agent acting on injected input
 cannot establish access that outlives the session.
+
+**[SECURITY.md](SECURITY.md) is the full picture** — the threat model each
+control follows from, how to verify the controls hold, what is deliberately not
+defended, and which protections come from your deployment rather than from this
+app. Read it before you deploy.
 
 **What is not constrained** — worth knowing before you deploy:
 
