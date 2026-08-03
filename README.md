@@ -227,13 +227,14 @@ cannot establish access that outlives the session.
   /api/v1/files?path=…&recursive=true` and the `delete_file` MCP tool will remove
   a directory tree. The deny-list protects the paths listed above and nothing
   else.
-- **Job submission passes scheduler arguments through.** `options.native` is
-  raw argv for the submit command, and job scripts reach the scheduler
-  unchanged, so `#SBATCH` directives are honoured. Neither is a shell, so
-  nothing is executed by the API — but a caller can select any flag the
-  scheduler accepts, including ones overriding `queue_name` or
-  `accounting_id`. This grants no privilege the user lacks; it means site
-  policy expressed only through those fields is not enforced here.
+- **`options.native` is off unless you enable it.** It is raw argv for the
+  submit command, so a caller can select any flag the scheduler accepts —
+  including ones that override the paths this API validates. Every other part
+  of Open OnDemand takes `native` from a site admin's config rather than from a
+  request, and the usual reasoning ("the user has a shell anyway") does not
+  hold for an agent whose only access is this API. Set
+  `OOD_API_ALLOW_NATIVE=true` if your site needs it, and note that job paths
+  are then only as constrained as your scheduler makes them.
 - **App tokens do not expire.** They are valid until revoked in the Dashboard.
 - **Revoking a JWT at your IdP has no effect until it expires.** Apache
   validates the signature and expiry statelessly; it never asks the IdP whether

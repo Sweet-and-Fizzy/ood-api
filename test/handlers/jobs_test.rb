@@ -34,6 +34,60 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
+  # native is raw scheduler argv. Every other OOD system takes it from a
+  # trusted source — Batch Connect from the site admin's submit.yml.erb,
+  # filtered through Rails strong params; Job Composer from a file the user
+  # wrote. The ecosystem tolerates it because OOD ships a Shell app, so a user
+  # who can set native already has a terminal. An agent driving this API has
+  # no shell, which is why it is off unless a site opts in.
+  def test_native_is_refused_unless_the_site_opts_in
+    ENV.delete('OOD_API_ALLOW_NATIVE')
+
+    assert_raises(Handlers::ValidationError) { Handlers::Jobs.reject_native!(['-N', '2']) }
+    # Absent or empty is not an opt-in question.
+    Handlers::Jobs.reject_native!(nil)
+    Handlers::Jobs.reject_native!([])
+  end
+
+  # Strict `== 'true'`, matching AppAuth.enabled?. A site that means to enable
+  # this should have to spell it exactly.
+  def test_native_opt_in_requires_the_exact_string
+    ['TRUE', 'True', '1', 'yes', 'on'].each do |value|
+      ENV['OOD_API_ALLOW_NATIVE'] = value
+      assert_raises(Handlers::ValidationError, "#{value} must not enable native") do
+        Handlers::Jobs.reject_native!(['-N', '2'])
+      end
+    end
+  ensure
+    ENV.delete('OOD_API_ALLOW_NATIVE')
+  end
+
+  # sbatch lets command-line options beat #SBATCH directives, and ood_core
+  # emits `-o` only when output_path is set — so with none, a directive in the
+  # script body took effect and reached a path the same request would be
+  # refused for as output_path. Always supplying one closes that, and the
+  # default is where Slurm would have written anyway.
+  def test_output_path_is_always_supplied_so_script_directives_cannot_win
+    with_fake_home do |home|
+      # Through submit, not the helper: a test that only checks
+      # default_output_path still passes if the merge is dropped, which is
+      # exactly the wiring that closes this.
+      captured = nil
+      @adapter.expects(:submit).with do |script|
+        captured = script.output_path
+        true
+      end.returns('789')
+      @adapter.expects(:info).with('789').returns(mock_job_info(id: '789'))
+
+      Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1',
+                            script_content: "#!/bin/bash\n#SBATCH --output=/tmp/evil\n",
+                            workdir: home)
+
+      refute_nil captured, 'submit must supply an output_path even when the caller omits one'
+      assert captured.to_s.start_with?(home), 'the default must sit inside the validated workdir'
+    end
+  end
+
   # getopt_long treats `-o/path` as identical to `-o /path`, so validating only
   # the separated form left the bundled one through — the same destination the
   # separated form refuses.
@@ -208,11 +262,24 @@ class HandlersJobsTest < Minitest::Test
     with_fake_home do |home|
       denied = File.join(home, '.ssh', 'authorized_keys')
 
+      # Default: native is disabled outright, so the request is refused before
+      # the path is even considered.
+      ENV.delete('OOD_API_ALLOW_NATIVE')
+      assert_raises(Handlers::ValidationError, 'native must be refused when not enabled') do
+        Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1',
+                              script_content: 'echo hi', workdir: home,
+                              native: ["--output=#{denied}"])
+      end
+
+      # Opted in: the path check still runs as defence in depth.
+      ENV['OOD_API_ALLOW_NATIVE'] = 'true'
       assert_raises(Handlers::ForbiddenError, 'submit must validate native paths') do
         Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1',
                               script_content: 'echo hi', workdir: home,
                               native: ["--output=#{denied}"])
       end
+    ensure
+      ENV.delete('OOD_API_ALLOW_NATIVE')
     end
   end
 
