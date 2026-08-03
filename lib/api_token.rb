@@ -114,7 +114,9 @@ module OodApi
       def load_tokens
         return [] unless File.exist?(TOKENS_FILE)
 
-        JSON.parse(File.read(TOKENS_FILE), symbolize_names: true)
+        # Explicit encoding: the PUN's locale may be US-ASCII, and a token
+        # name is free text a user typed into the Dashboard.
+        JSON.parse(File.read(TOKENS_FILE, encoding: 'UTF-8'), symbolize_names: true)
       rescue JSON::ParserError => e
         # Failing open to [] means "you have no tokens", which 401s the user
         # rather than erroring. Without this line there is no trace at all when

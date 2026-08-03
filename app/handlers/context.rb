@@ -88,7 +88,15 @@ module Handlers
       return "(omitted: #{safe_name(path)} is #{size} bytes, over the #{MAX_FILE_BYTES}-byte limit)" if
         size > MAX_FILE_BYTES
 
-      path.read.strip
+      # Read as UTF-8 explicitly. Without an encoding, Ruby uses the locale's,
+      # and the PUN's environment is whatever nginx_stage sets — with LANG
+      # unset that is US-ASCII, and an em-dash in an operator's policy note
+      # then raises Encoding::CompatibilityError from the join below. Site
+      # policy is prose; it will contain punctuation.
+      #
+      # scrub because these files are operator-authored and a stray byte
+      # should degrade one fragment, not the whole endpoint.
+      path.read(encoding: 'UTF-8').scrub('?').strip
     rescue SystemCallError, IOError
       nil
     end
