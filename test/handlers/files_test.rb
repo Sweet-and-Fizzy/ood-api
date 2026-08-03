@@ -454,6 +454,38 @@ class HandlersFilesTest < Minitest::Test
     end
   end
 
+  # The deny-list's stated purpose is stopping an agent on injected input from
+  # establishing access that outlives the session. These all do exactly that
+  # and were reachable: .bash_aliases is sourced by the stock Debian/Ubuntu
+  # .bashrc, so denying .bashrc and allowing this protects the door and leaves
+  # the window open; ~/.local/bin precedes the system paths in PATH by default
+  # on current Fedora and Ubuntu, so a file there shadows a real command.
+  def test_denies_other_session_outliving_write_targets
+    with_fake_home do |home|
+      ['.bash_aliases', '.gitconfig', '.netrc', '.forward', '.pam_environment',
+       File.join('.local', 'bin', 'ls'),
+       File.join('.config', 'git', 'config'),
+       File.join('.config', 'autostart', 'x.desktop')].each do |rel|
+        assert_raises(Handlers::ForbiddenError, "~/#{rel} must not be writable through this API") do
+          Handlers::Files.validate_path!(Handlers::Files.normalize_path(File.join(home, rel)))
+        end
+      end
+    end
+  end
+
+  # Widening the list must not catch neighbours. .vimrc and .inputrc are
+  # deliberately absent: a user may reasonably manage them, and neither is a
+  # direct code-execution path the way a git pager or a PATH shadow is.
+  def test_deny_list_widening_does_not_catch_neighbours
+    with_fake_home do |home|
+      ['.vimrc', '.inputrc', '.bashrc_backup', '.gitconfig_backup', '.localrc',
+       File.join('.local', 'share', 'x'),
+       File.join('.config', 'other', 'app.json')].each do |rel|
+        Handlers::Files.validate_path!(Handlers::Files.normalize_path(File.join(home, rel)))
+      end
+    end
+  end
+
   # APFS is normalization-insensitive: a name written in NFD reaches the same
   # file as its NFC spelling. The deny-list compares byte-exactly after
   # case-folding, so a non-ASCII entry would be bypassable the same way the

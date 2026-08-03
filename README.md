@@ -187,9 +187,11 @@ delete files, all reachable by an LLM through the MCP endpoint.
 - **Allowed roots.** File access is confined to `$HOME`, `/tmp`, and
   `Dir.tmpdir`.
 - **Denied paths within those roots.** `~/.ssh`, `~/.config/ondemand` (the
-  token store), `~/.config/systemd/user`, and shell init files are refused on
-  both read and write — including reached via symlink or hardlink. Recursive
-  delete refuses outright when one lies in the tree.
+  token store), `~/.config/systemd/user`, `~/.local/bin`, `~/.config/git`,
+  `~/.config/autostart`, shell init files, `~/.gitconfig`, `~/.netrc`,
+  `~/.forward`, and `~/.pam_environment` are refused on both read and write —
+  including reached via symlink or hardlink. Recursive delete refuses outright
+  when one lies in the tree.
 - **Regular files only.** Reading a FIFO or device node is refused rather than
   blocking the worker.
 - **Allowlisted environment variables**, with credential-shaped names
