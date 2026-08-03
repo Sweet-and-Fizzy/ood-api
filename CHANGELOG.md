@@ -24,6 +24,32 @@ variable names it previously returned.
 
 ### Security
 
+- **An unauthenticated caller could trigger a 500 and see a Rack internal
+  class name.** Sinatra merges `@request.params` before it runs `before`
+  filters, so a malformed body is parsed upstream of authentication — the
+  ordering the app documents as ensuring an unauthenticated caller learns
+  nothing did not hold for a body Rack cannot parse. A multipart body with too
+  many parts escaped as a bare 500; an unparseable one returned Rack's own HTML
+  error quoting `Rack::Multipart::EmptyContentError`. Both now return
+  `400 {"error":"bad_request"}` as JSON. `/mcp` was never affected — it
+  authenticates before touching the body.
+
+- **The site-context endpoint could wedge a worker and had no aggregate
+  bound.** A FIFO in `agents.d` reports size 0, so the per-file cap never fired
+  and the read blocked until a writer appeared, hanging the PUN worker; a
+  device node would never end. Non-regular files are now skipped, matching the
+  guard the file handler already applied. Separately, the per-file cap bounded
+  nothing on its own — 500 files each under it produced a 125 MiB string before
+  JSON encoding — so a total cap now applies, with the truncation marked in the
+  output. Both need write access to `/etc/ood/config/agents.d`, so this is
+  operator-to-agent rather than caller-to-agent.
+
+- **A fragment filename could forge a trust-boundary marker.** `<!-- Source: -->`
+  markers were defanged in file bodies but the filename was interpolated raw,
+  so one crafted name emitted two genuine-looking markers and could impersonate
+  another fragment to a reading agent. Filenames are now reduced to a
+  conservative character set.
+
 - **Widened the sensitive-path deny-list.** Confinement worked, but the list of
   what to confine had gaps that defeat its stated purpose — stopping an agent
   acting on injected input from establishing access that outlives the session.
