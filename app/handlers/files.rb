@@ -346,11 +346,23 @@ module Handlers
         rel = relative_to_home(candidate, home)
         next unless rel
 
-        if DENIED_DIRS.any? { |d| rel == d || rel.start_with?("#{d}/") }
+        # Case-folded, because macOS and Windows filesystems are usually
+        # case-insensitive: ~/.SSH/authorized_keys IS ~/.ssh/authorized_keys
+        # there, so an exact-case comparison refuses one spelling and permits
+        # the other. realpath canonicalises the case once the file exists,
+        # which is why this only mattered for a path not yet created — the
+        # same window the symlink bypasses used.
+        #
+        # Folding on a case-sensitive filesystem costs only that a genuinely
+        # distinct ~/.SSH is refused too, which is the safe direction.
+        folded = rel.downcase
+        if DENIED_DIRS.any? { |d| folded == d.downcase || folded.start_with?("#{d.downcase}/") }
           raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
         end
 
-        raise ForbiddenError, "Access denied: #{rel} is not accessible through this API" if DENIED_EXACT.include?(rel)
+        if DENIED_EXACT.any? { |name| folded == name.downcase }
+          raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
+        end
       end
     end
 

@@ -422,6 +422,38 @@ class HandlersFilesTest < Minitest::Test
     end
   end
 
+  # macOS and Windows filesystems are usually case-insensitive, so
+  # ~/.SSH/authorized_keys IS ~/.ssh/authorized_keys there. The deny-list
+  # compared exact case, so the uppercase spelling was permitted and the write
+  # landed on the canonical denied file. realpath canonicalises the case once
+  # the path exists, so this only bit when the target did not yet exist — the
+  # same window the two symlink bypasses used.
+  def test_denies_denied_paths_spelled_in_a_different_case
+    with_fake_home do |home|
+      ['.BASHRC', '.Bashrc', File.join('.SSH', 'authorized_keys'),
+       File.join('.Ssh', 'AUTHORIZED_KEYS'),
+       File.join('.CONFIG', 'systemd', 'user', 'x.service')].each do |rel|
+        target = File.join(home, rel)
+        FileUtils.rm_rf(File.dirname(target)) unless File.dirname(target) == home
+
+        assert_raises(Handlers::ForbiddenError, "#{rel} must be refused whatever its case") do
+          Handlers::Files.validate_path!(Handlers::Files.normalize_path(target))
+        end
+      end
+    end
+  end
+
+  # Case-folding must not widen the match: a name that merely starts with a
+  # denied one is still ordinary.
+  def test_case_folding_does_not_refuse_ordinary_paths
+    with_fake_home do |home|
+      ['.bashrc_backup', '.BASHRC_BACKUP', 'notes.txt', 'Documents/README',
+       'sshkeys/mine.pub', '.configuration'].each do |rel|
+        Handlers::Files.validate_path!(Handlers::Files.normalize_path(File.join(home, rel)))
+      end
+    end
+  end
+
   # A hardlink is a second name for the same inode. realpath resolves it to
   # itself, so name-based checks cannot see the denied original — the deny-list
   # has to compare device+inode.

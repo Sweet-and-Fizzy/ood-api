@@ -24,6 +24,14 @@ variable names it previously returned.
 
 ### Security
 
+- **The deny-list compared names case-sensitively.** macOS and Windows
+  filesystems are usually case-insensitive, so `~/.SSH/authorized_keys` is
+  `~/.ssh/authorized_keys` there — but only the lowercase spelling was refused,
+  and a write to the uppercase one landed on the canonical denied file. Names
+  are now compared case-folded. As with the two symlink bypasses below, this
+  only applied to a path that did not exist yet: once it does, `realpath`
+  canonicalises the case and the deny-list already caught it.
+
 - **A symlink anywhere above a target bypassed the sensitive-path deny-list.**
   Path validation resolved only as far as the nearest *existing* ancestor. With
   a link such as `~/proj/up -> ~`, a request for `~/proj/up/.ssh/authorized_keys`
