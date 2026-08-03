@@ -5,6 +5,8 @@ require_relative '../../app/mcp_tools/files'
 require 'tmpdir'
 
 class ListFilesToolTest < Minitest::Test
+  include OodApi::Tools
+
   def setup
     @tmpdir = Dir.mktmpdir('mcp_files_test')
     FileUtils.touch(File.join(@tmpdir, 'a.txt'))
@@ -35,6 +37,8 @@ class ListFilesToolTest < Minitest::Test
 end
 
 class ReadFileToolTest < Minitest::Test
+  include OodApi::Tools
+
   def setup
     @tmpdir = Dir.mktmpdir('mcp_files_test')
     @file = File.join(@tmpdir, 'hello.txt')
@@ -61,6 +65,8 @@ class ReadFileToolTest < Minitest::Test
 end
 
 class WriteFileToolTest < Minitest::Test
+  include OodApi::Tools
+
   def setup
     @tmpdir = Dir.mktmpdir('mcp_files_test')
   end
@@ -86,6 +92,8 @@ class WriteFileToolTest < Minitest::Test
 end
 
 class ReadFileToolMaxSizeTest < Minitest::Test
+  include OodApi::Tools
+
   def setup
     @test_dir = Dir.mktmpdir('mcp_files_test')
   end
@@ -103,6 +111,8 @@ class ReadFileToolMaxSizeTest < Minitest::Test
 end
 
 class WriteFileToolAppendTest < Minitest::Test
+  include OodApi::Tools
+
   def setup
     @test_dir = Dir.mktmpdir('mcp_files_test')
   end
@@ -121,6 +131,8 @@ class WriteFileToolAppendTest < Minitest::Test
 end
 
 class CreateDirectoryToolTest < Minitest::Test
+  include OodApi::Tools
+
   def setup
     @tmpdir = Dir.mktmpdir('mcp_files_test')
   end
@@ -147,6 +159,8 @@ class CreateDirectoryToolTest < Minitest::Test
 end
 
 class DeleteFileToolTest < Minitest::Test
+  include OodApi::Tools
+
   def setup
     @tmpdir = Dir.mktmpdir('mcp_files_test')
   end

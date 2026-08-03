@@ -4,6 +4,8 @@ require_relative '../test_helper'
 require_relative '../../app/mcp_tools/context'
 
 class McpContextResourceTest < Minitest::Test
+  include OodApi::Tools
+
   def test_context_resource_has_correct_uri
     assert_equal 'ood://context', CONTEXT_RESOURCE.uri
   end

@@ -4,6 +4,7 @@ require_relative '../test_helper'
 require_relative '../../app/mcp_tools/jobs'
 
 class ListJobsToolTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def setup
@@ -49,6 +50,7 @@ class ListJobsToolTest < Minitest::Test
 end
 
 class GetJobToolTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def setup
@@ -86,6 +88,7 @@ class GetJobToolTest < Minitest::Test
 end
 
 class ListHistoricJobsToolTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def setup
@@ -121,6 +124,7 @@ class ListHistoricJobsToolTest < Minitest::Test
 end
 
 class SubmitJobToolTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def setup
@@ -161,6 +165,7 @@ class SubmitJobToolTest < Minitest::Test
 end
 
 class CancelJobToolTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def setup
@@ -193,6 +198,7 @@ class CancelJobToolTest < Minitest::Test
 end
 
 class HoldJobToolTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def setup
@@ -225,6 +231,7 @@ class HoldJobToolTest < Minitest::Test
 end
 
 class ReleaseJobToolTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def setup

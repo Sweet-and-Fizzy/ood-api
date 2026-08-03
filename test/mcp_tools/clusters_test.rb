@@ -4,6 +4,7 @@ require_relative '../test_helper'
 require_relative '../../app/mcp_tools/clusters'
 
 class ListClustersToolTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def setup
@@ -30,6 +31,7 @@ class ListClustersToolTest < Minitest::Test
 end
 
 class ListClustersToolErrorTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def test_returns_error_on_adapter_error
@@ -44,6 +46,7 @@ class ListClustersToolErrorTest < Minitest::Test
 end
 
 class ListAccountsToolTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def setup
@@ -70,6 +73,7 @@ class ListAccountsToolTest < Minitest::Test
 end
 
 class ListQueuesToolTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def setup
@@ -96,6 +100,7 @@ class ListQueuesToolTest < Minitest::Test
 end
 
 class GetClusterInfoToolTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def setup
@@ -136,6 +141,7 @@ class GetClusterInfoToolTest < Minitest::Test
 end
 
 class GetClusterToolTest < Minitest::Test
+  include OodApi::Tools
   include TestHelpers
 
   def setup

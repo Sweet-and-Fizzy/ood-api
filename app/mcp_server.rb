@@ -52,12 +52,15 @@ module OodApi
       name:         'ood-api',
       instructions: 'Open OnDemand HPC cluster management tools. Use these tools to list clusters, discover accounts and queues, check cluster utilization, submit/cancel/hold/release jobs with optional dependencies, view job history, manage files (read, write, append, create directories, delete), and query environment variables. Read the ood://context resource for site-specific policies before acting.',
       tools:        [
-        ListClustersTool, GetClusterTool, ListAccountsTool, ListQueuesTool, GetClusterInfoTool,
-        ListJobsTool, GetJobTool, ListHistoricJobsTool, SubmitJobTool, CancelJobTool, HoldJobTool, ReleaseJobTool,
-        ListFilesTool, ReadFileTool, WriteFileTool, CreateDirectoryTool, DeleteFileTool,
-        ListEnvTool, GetEnvTool
+        Tools::ListClustersTool, Tools::GetClusterTool, Tools::ListAccountsTool, Tools::ListQueuesTool,
+        Tools::GetClusterInfoTool,
+        Tools::ListJobsTool, Tools::GetJobTool, Tools::ListHistoricJobsTool, Tools::SubmitJobTool,
+        Tools::CancelJobTool, Tools::HoldJobTool, Tools::ReleaseJobTool,
+        Tools::ListFilesTool, Tools::ReadFileTool, Tools::WriteFileTool, Tools::CreateDirectoryTool,
+        Tools::DeleteFileTool,
+        Tools::ListEnvTool, Tools::GetEnvTool
       ],
-      resources:    [CONTEXT_RESOURCE]
+      resources:    [Tools::CONTEXT_RESOURCE]
     )
 
     server.resources_read_handler do |params|

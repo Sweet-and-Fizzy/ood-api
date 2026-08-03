@@ -4,6 +4,8 @@ require_relative '../test_helper'
 require_relative '../../app/mcp_tools/env'
 
 class ListEnvToolTest < Minitest::Test
+  include OodApi::Tools
+
   def setup
     @saved_allowlist = ENV.fetch('OOD_API_ENV_ALLOWLIST', nil)
     ENV.delete('OOD_API_ENV_ALLOWLIST')
@@ -35,6 +37,8 @@ class ListEnvToolTest < Minitest::Test
 end
 
 class GetEnvToolTest < Minitest::Test
+  include OodApi::Tools
+
   def setup
     @saved_allowlist = ENV.fetch('OOD_API_ENV_ALLOWLIST', nil)
     ENV.delete('OOD_API_ENV_ALLOWLIST')
