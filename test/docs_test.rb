@@ -115,6 +115,34 @@ class DocsTest < Minitest::Test
                  'the token page must not tell users to send an app token in Authorization')
   end
 
+  # Every documented write example must send the content type the CSRF filter
+  # requires. Three curl examples — mkdir, hold, release — omitted it and
+  # returned 415 as written, because they are bodyless and the filter exempts
+  # only the DELETE *method*. The prose describing that rule drifted at the
+  # same time, so the docs were self-consistently wrong.
+  def test_documented_write_examples_send_the_required_content_type
+    broken = []
+    all_docs.each do |path|
+      lines = File.read(path).lines
+      lines.each_with_index do |line, i|
+        next unless line.match?(/curl\b/)
+
+        # A curl invocation continues while lines end in a backslash.
+        block = [line]
+        j = i
+        block << lines[j += 1] while lines[j]&.rstrip&.end_with?('\\') && lines[j + 1]
+        text = block.join
+        next unless text.match?(/-X\s+(POST|PUT|PATCH)\b/)
+        next if text.match?(%r{application/json}i)
+
+        broken << "#{File.basename(path)}:#{i + 1}"
+      end
+    end
+
+    assert_empty broken,
+                 "write examples missing Content-Type: application/json (they return 415): #{broken.join(', ')}"
+  end
+
   # Every relative markdown link must resolve. Renaming a doc is the easiest way
   # to leave a dangling pointer behind.
   def test_relative_markdown_links_resolve
