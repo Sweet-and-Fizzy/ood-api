@@ -219,6 +219,40 @@ class ApiTest < Minitest::Test
     end
   end
 
+  # A wrong-typed field is a client mistake and must never be a 5xx. This is
+  # the general form of a bug that shipped: `options.native` as a String hit
+  # an unguarded `join` and returned 500. Enumerating every caller-supplied
+  # field catches the next one without waiting for a review to find it.
+  def test_no_caller_supplied_field_can_cause_a_5xx
+    token = create_test_token
+    hdrs = auth_header(token).merge('CONTENT_TYPE' => 'application/json')
+    wrong = ['a string', { 'a' => 1 }, [1, 2], 42, true]
+    # A well-formed request reaches the adapter; this test is about the
+    # validation layer, so make that call a no-op rather than a mock failure.
+    adapter = mock('adapter')
+    adapter.stubs(:submit).returns('1')
+    adapter.stubs(:info).returns(mock_job_info(id: '1'))
+    @mock_clusters.first.stubs(:job_adapter).returns(adapter)
+
+    ['job_name', 'queue_name', 'accounting_id', 'wall_time', 'output_path', 'error_path', 'native', 'after', 'afterok',
+     'afternotok', 'afterany'].each do |field|
+      wrong.each do |value|
+        body = { cluster: 'cluster1', script: { content: 'x' }, options: { field => value } }
+        post '/api/v1/jobs', body.to_json, hdrs
+
+        refute_operator last_response.status, :>=, 500,
+                        "options.#{field} as #{value.class} returned #{last_response.status}"
+      end
+    end
+
+    [['content', 42], ['content', { 'a' => 1 }], ['workdir', []], ['workdir', 7]].each do |field, value|
+      post '/api/v1/jobs', { cluster: 'cluster1', script: { field => value } }.to_json, hdrs
+
+      refute_operator last_response.status, :>=, 500,
+                      "script.#{field} as #{value.class} returned #{last_response.status}"
+    end
+  end
+
   # Jobs API - Get
 
   # Scheduler strings are not guaranteed to be valid UTF-8 — a job name comes
