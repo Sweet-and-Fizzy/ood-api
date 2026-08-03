@@ -1458,7 +1458,7 @@ no privilege the user does not already have. What it *does* constrain — the pa
 allowlist, the denied paths inside `$HOME`, size limits, the environment
 allowlist, audit logging — and what it deliberately does not — no rate limiting,
 no read-only mode, no per-user enablement — is documented in the README's
-**[Security posture](../README.md#security-posture)**. Read that before
+**[SECURITY.md](../SECURITY.md)**. Read that before
 deploying.
 
 API-specific details not covered there:

@@ -131,7 +131,7 @@ This app runs as the authenticated user inside OOD's PUN and exposes file and
 job operations to LLM clients, so the areas most worth scrutiny are path
 handling in `app/handlers/files.rb`, authentication in `lib/app_auth.rb`, and
 anything that reaches a scheduler. See the README's
-[Security posture](README.md#security-posture) for the current model and its
+[SECURITY.md](SECURITY.md) for the current model and its
 known gaps.
 
 ## Community

@@ -151,7 +151,7 @@ allowlist, the sensitive-path deny-list, and the environment-variable allowlist.
 MCP is not a way around them. The difference is only in how a refusal is
 reported: MCP tools return a protocol error, REST returns an HTTP status. See
 [Configuration](#configuration) for the settings and
-[Security posture](../README.md#security-posture) for what they do.
+[SECURITY.md](../SECURITY.md) for what they do.
 
 ### 5. Verify
 
