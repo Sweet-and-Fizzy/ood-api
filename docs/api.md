@@ -586,8 +586,15 @@ and write, and return `403 forbidden`:
 |---|---|
 | `~/.ssh` | SSH keys — write access would let a caller establish persistent login |
 | `.bashrc`, `.zshrc`, `.profile`, and other shell init files | Executed on every login |
+| `.bash_aliases` | Sourced by the stock Debian and Ubuntu `.bashrc` |
 | `~/.config/ondemand` | This API's own token store |
 | `~/.config/systemd/user` | User services survive the session |
+| `~/.local/bin` | Precedes the system paths in `PATH` on current Fedora and Ubuntu, so a file here shadows a real command |
+| `~/.gitconfig`, `~/.config/git` | `core.pager` and `core.sshCommand` run on the next git invocation |
+| `~/.netrc` | Plaintext credentials, read by curl, ftp and git |
+| `~/.config/autostart` | Launched on graphical login |
+| `~/.forward` | `\|command` is executed by MTAs that honour it |
+| `~/.pam_environment` | Read by PAM at session start where enabled |
 
 Symlinks and hardlinks into these paths are refused too, and a recursive delete
 of a parent directory is refused if a denied path lies beneath it. The user can

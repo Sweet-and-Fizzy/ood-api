@@ -203,6 +203,13 @@ module Handlers
         raise ForbiddenError, 'Access denied: path not in allowed directories'
       end
 
+      # Order matters and is load-bearing. resolved_destination resolves
+      # symlinked ANCESTORS but not a symlinked leaf; resolve_link_chain,
+      # inside deny_dangling_symlink!, resolves a leaf chain but not its
+      # ancestors. Neither is complete alone, and they disagree for a leaf
+      # link whose own path runs through a symlinked directory. The accurate
+      # one for that shape must vote first, so do not move the checks above
+      # below this line.
       deny_sensitive!(path, destination)
       deny_dangling_symlink!(path)
       deny_by_inode!(path)
@@ -338,15 +345,35 @@ module Handlers
     # symlink into a denied directory does not slip through.
     DENIED_EXACT = [
       '.bashrc', '.bash_profile', '.bash_login', '.bash_logout',
+      # Sourced by the stock Debian and Ubuntu .bashrc, so allowing it while
+      # denying .bashrc protects the door and leaves the window open.
+      '.bash_aliases',
       '.profile', '.login',
       '.zshrc', '.zshenv', '.zprofile', '.zlogin',
-      '.cshrc', '.tcshrc', '.kshrc'
+      '.cshrc', '.tcshrc', '.kshrc',
+      # Read by every git invocation. core.pager and core.sshCommand are
+      # arbitrary commands, so a write here is code execution the next time
+      # the user runs git.
+      '.gitconfig',
+      # Credentials in plaintext, read by curl, ftp and git.
+      '.netrc',
+      # Run at login by MTAs that honour it; "|command" is code execution.
+      '.forward',
+      # Read by PAM at session start on distributions that enable it.
+      '.pam_environment'
     ].freeze
 
     DENIED_DIRS = [
       '.ssh',
       '.config/ondemand',
-      '.config/systemd/user'
+      '.config/systemd/user',
+      # Ahead of the system paths in PATH by default on current Fedora and
+      # Ubuntu, so a file written here shadows the real command.
+      '.local/bin',
+      # Same reasoning as .gitconfig — this is git's XDG location.
+      '.config/git',
+      # Launched on graphical login under the XDG autostart spec.
+      '.config/autostart'
     ].freeze
 
     def self.deny_sensitive!(requested, resolved)

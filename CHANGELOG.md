@@ -24,6 +24,20 @@ variable names it previously returned.
 
 ### Security
 
+- **Widened the sensitive-path deny-list.** Confinement worked, but the list of
+  what to confine had gaps that defeat its stated purpose — stopping an agent
+  acting on injected input from establishing access that outlives the session.
+  Now refused: `.bash_aliases` (sourced by the stock Debian and Ubuntu
+  `.bashrc`, so denying `.bashrc` and allowing this protected the door and left
+  the window open), `~/.local/bin` (ahead of the system paths in `PATH` by
+  default on current Fedora and Ubuntu, so a file there shadows a real
+  command), `~/.gitconfig` and `~/.config/git` (`core.pager` and
+  `core.sshCommand` run on the next git invocation), `~/.netrc` (plaintext
+  credentials), `~/.config/autostart`, `~/.forward`, and `~/.pam_environment`.
+
+  `.vimrc` and `.inputrc` are deliberately still permitted: a user may
+  reasonably manage them, and neither is a direct code-execution path.
+
 - **A symlink chain of two or more hops escaped path confinement entirely.**
   The guard resolved a single `readlink`, so with `a -> b -> ~/.ssh/authorized_keys`
   it inspected `b` — an innocuous name — and never saw the real destination.
