@@ -45,6 +45,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   following the one instruction shown at the moment of issuance sent the token
   into a header it was never meant for and never authenticated.
 
+- `bin/dev` now binds `127.0.0.1` rather than every interface. Its own header
+  notes that `/mcp` is unauthenticated without a reverse proxy, so binding
+  `0.0.0.0` offered an unauthenticated file and job API, running as the
+  developer's own user, to anyone on the same network. Set
+  `OOD_API_DEV_BIND=0.0.0.0` if a container or VM needs to reach it. This
+  affects local development only — under Passenger the bind is OOD's.
+
+- `docs/api.md` described a CSRF exemption for the `X-OOD-API-Token` header
+  that no longer exists, and claimed a bodyless `POST ?touch=1` needs no
+  `Content-Type` — the filter exempts the `DELETE` method, not bodyless
+  requests. Three curl examples returned 415 as written. A docs test now
+  scans every documented write example for the required content type.
+
+- The dashboard token page raised `ArgumentError` and returned 500 when a
+  token's `created_at` or `last_used_at` could not be parsed. The install
+  guide documents writing `tokens.json` by hand with `date -Iseconds`, which
+  BSD `date` on macOS does not support, so a malformed timestamp was
+  reachable by following the documentation. Unparseable values now render as
+  their raw string, which is what whoever has to correct the file needs to
+  see.
+
 ## [0.3.2] - 2026-08-01
 
 Dependency currency. No API contract changes and nothing to do on upgrade.
