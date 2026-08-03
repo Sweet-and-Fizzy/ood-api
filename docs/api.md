@@ -352,11 +352,25 @@ Content-Type: application/json
 | `options.wall_time` | integer | No | Wall time limit in seconds |
 | `options.output_path` | string | No | Path for stdout |
 | `options.error_path` | string | No | Path for stderr |
-| `options.native` | array | No | Native scheduler arguments |
+| `options.native` | array | No | Passed to the scheduler as command-line arguments, verbatim — see the note below |
 | `options.after` | array | No | Job IDs that must start before this job is eligible |
 | `options.afterok` | array | No | Job IDs that must complete successfully |
 | `options.afternotok` | array | No | Job IDs that must fail |
 | `options.afterany` | array | No | Job IDs that must complete (any exit status) |
+
+**`options.native` is raw scheduler argv.** Each element becomes a separate
+command-line argument to the submit command — `["-N", "2"]` becomes `sbatch -N 2`.
+Values are not interpreted by a shell, so a value containing `;` or `$(…)` is
+passed through as one literal argument rather than executed. But any flag the
+scheduler accepts is available through it, including ones that override the
+other options in this request: a `native` of `["--partition=other"]` wins over
+`options.queue_name`. It grants no privilege the user does not have — they could
+run the submit command directly — but a site that expresses policy through
+`queue_name` or `accounting_id` should not assume this endpoint enforces it.
+
+Job scripts are likewise passed to the scheduler unchanged, so in-script
+directives such as `#SBATCH` are honoured the same way they would be from a
+login shell.
 
 **Note:** Job dependency options (`after`, `afterok`, `afternotok`, `afterany`) are scheduler-dependent. Not all schedulers support all dependency types. Unsupported dependency types may be silently ignored or cause an error depending on the scheduler adapter.
 

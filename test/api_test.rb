@@ -540,6 +540,26 @@ options: { job_name: 'api-job' } }.to_json,
     FileUtils.rm_f(path) if path
   end
 
+  # Sinatra merges @request.params before it runs `before` filters, so the body
+  # parse happens upstream of authenticate!. A malformed multipart body escaped
+  # as Rack's own HTML error naming an internal class, and one with too many
+  # parts as a bare 500 — both to a caller who had not authenticated, which is
+  # exactly what the filter ordering is documented to prevent.
+  def test_malformed_multipart_body_returns_json_without_disclosing_internals
+    parts = Array.new(10_000) { |i| "--x\r\nContent-Disposition: form-data; name=\"f#{i}\"\r\n\r\nv\r\n" }
+    oversized = "#{parts.join}--x--\r\n"
+    [['garbage', 'unparseable'], [oversized, 'too many parts']].each do |body, label|
+      post '/api/v1/files?path=/tmp/x', body,
+           { 'CONTENT_TYPE' => 'multipart/form-data; boundary=x' }
+
+      assert_equal 400, last_response.status, "#{label} must be a 400"
+      assert_includes last_response.headers['content-type'].to_s, 'json',
+                      "#{label} must not answer in HTML"
+      refute_match(/Rack::|<h1>/, last_response.body,
+                   "#{label} must not name an internal class")
+    end
+  end
+
   def test_reads_are_unaffected_by_the_content_type_requirement
     ENV.delete('OOD_API_APP_TOKENS')
     get '/api/v1/clusters', {}, { 'CONTENT_TYPE' => 'text/plain' }

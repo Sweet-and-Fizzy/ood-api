@@ -1,9 +1,11 @@
 # frozen_string_literal: true
 
 require 'sinatra/base'
-# Rack autoloads this; require it explicitly so QueryParser::QueryLimitError is
-# defined by the time the error handler below references it.
+# Rack autoloads these; require them explicitly so QueryParser::QueryLimitError
+# and the multipart error classes are defined by the time the error handlers
+# below reference them.
 require 'rack/query_parser'
+require 'rack/multipart'
 require 'json'
 require 'etc'
 require 'fileutils'
@@ -131,6 +133,52 @@ module OodApi
     # query limit, report it as 413 rather than an unexplained 500.
     error Rack::QueryParser::QueryLimitError do
       halt_error(413, 'payload_too_large', 'Request body too large to parse')
+    end
+
+    # Malformed bodies Rack rejects while parsing.
+    #
+    # Sinatra's dispatch! merges @request.params before it runs `before`
+    # filters, so the body parse happens upstream of authenticate! — the
+    # comment above about an unauthenticated caller learning nothing does not
+    # hold for a body Rack cannot parse. A multipart body with too many parts
+    # escaped as a bare 500 to a caller who had not authenticated.
+    #
+    # Rack::BadRequest is the marker these share, but it is a module mixed
+    # into classes with unrelated superclasses (EmptyContentError < EOFError)
+    # and Sinatra's `error` matches on classes, so name them. Built by
+    # filtering so a Rack version missing one of these still loads.
+    MULTIPART_ERRORS = [
+      :EmptyContentError, :MultipartPartLimitError, :MultipartTotalPartLimitError, :Error
+    ].filter_map { |n| Rack::Multipart.const_get(n) if Rack::Multipart.const_defined?(n) }.freeze
+
+    MULTIPART_ERRORS.each do |klass|
+      error klass do
+        halt_error(400, 'bad_request', 'Malformed request body')
+      end
+    end
+
+    # Last line of defence for the body Sinatra rejects before any handler of
+    # ours can see it. A malformed multipart body is caught inside Sinatra's
+    # own dispatch, which emits an HTML 400 quoting the Rack exception —
+    # "Invalid multipart/form-data: Rack::Multipart::EmptyContentError" — to a
+    # caller who has not authenticated. No `error` block can intercept that,
+    # because it never becomes an exception this app handles.
+    #
+    # Rewriting it here keeps two promises the rest of the app makes: every
+    # response is JSON, and an unauthenticated caller learns nothing about the
+    # internals. Only non-JSON error bodies are touched, so a route's own
+    # response is never rewritten.
+    after do
+      next if response.status < 400
+      next if response.content_type.to_s.include?('json')
+
+      content_type :json
+      payload = if response.status >= 500
+                  { error: 'internal_error', message: 'An unexpected error occurred' }
+                else
+                  { error: 'bad_request', message: 'Malformed request' }
+                end
+      body(payload.to_json)
     end
 
     # An operation the site's scheduler adapter does not implement — e.g.
