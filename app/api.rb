@@ -477,10 +477,17 @@ module OodApi
       # body) and a negative reaches File.read, which raises ArgumentError.
       max_size = parse_max_size(params[:max_size])
 
-      content_type 'application/octet-stream'
-      Handlers::Audit.log(op: 'read_file', user: current_user, source: 'rest', path: path) do
+      body = Handlers::Audit.log(op: 'read_file', user: current_user, source: 'rest', path: path) do
         Handlers::Files.read(path: path, max_size: max_size)
       end
+      # Set only on success. Setting it before the read left every error on
+      # this route carrying an octet-stream content type, which the `after`
+      # filter then treats as a non-JSON error body and overwrites with a
+      # generic one — so a 404 reported {"error":"bad_request"}. This is the
+      # only route that overrides the content type, and the sibling
+      # GET /api/v1/files returns the correct body for the same conditions.
+      content_type 'application/octet-stream'
+      body
     rescue Handlers::NotFoundError => e
       halt_not_found(e.message)
     rescue Handlers::ValidationError => e
@@ -535,8 +542,14 @@ module OodApi
       halt_bad_request(e.message)
     rescue Handlers::ForbiddenError => e
       halt_forbidden(e.message)
-    rescue Handlers::StorageError
-      halt_error(507, 'insufficient_storage', 'No space left on device')
+    rescue Handlers::StorageError => e
+      # Pass the message through. Hardcoding "No space left on device" here
+      # discarded out_of_space_message's wording, so EDQUOT — a per-user home
+      # quota, the case files.rb calls out as the one that actually bites on
+      # HPC sites — was reported as a full filesystem. POST /files already
+      # falls through to the central map and gets this right; the two write
+      # endpoints disagreed on the same condition.
+      halt_error(507, 'insufficient_storage', e.message)
     end
 
     # Delete file or directory

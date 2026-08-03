@@ -969,10 +969,11 @@ Rules:
 
 **A credential-name deny pass runs first and cannot be overridden.** Names
 containing `SECRET`, `TOKEN`, `PASSW`, `PASSPHRASE`, `CREDENTIAL`, `PRIVATE`,
-`JWT`, `APIKEY`, `API_KEY`, `KEYRING`, `KEYFILE`, or `KEYSTORE`
-(case-insensitive) are never disclosed, even if you list them explicitly. So
-are names ending in `_KEY`, `_PEM`, or `_CERT`, with an optional plural or
-digit suffix — `MY_KEYS` and `SLURM_KEY2` are refused, `SLURM_KEYWORD` is not.
+`JWT`, `APIKEY`, `API_KEY`, `KEYRING`, `KEYFILE`, `KEYSTORE`, `BEARER`,
+`OAUTH`, or `SIGNATURE` (case-insensitive) are never disclosed, even if you
+list them explicitly. So are names ending in `_KEY`, `_PEM`, `_CERT`, `_PASS`,
+`_PWD`, `_HMAC`, or `_REFRESH`, with an optional plural or digit suffix —
+`MY_KEYS` and `SLURM_KEY2` are refused, `SLURM_KEYWORD` is not.
 
 This exists because the scheduler prefixes the default allowlist grants are
 exactly where credentials appear — `SLURM_JWT` holds a bearer token for

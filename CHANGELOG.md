@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [Unreleased]
+
+### Fixed
+
+- `GET /api/v1/files/content` returned a generic `{"error":"bad_request"}`
+  body for every error, including 404 and 403. The route set an
+  `application/octet-stream` content type before the read, so any error raised
+  afterwards kept it — and the filter that normalises non-JSON error bodies
+  then replaced the real message. The content type is now set only on success.
+  Status codes were always correct; only the bodies were wrong.
+
+- `PUT /api/v1/files` reported a disk-quota failure as "No space left on
+  device". The route discarded the message that distinguishes them, so EDQUOT
+  — a per-user home quota, and the case that actually bites on HPC sites —
+  looked like a full filesystem. `POST /api/v1/files` already reported it
+  correctly, so the two write endpoints disagreed.
+
+- `docs/api.md` listed the credential deny-pattern stems as of v0.3.2, missing
+  the seven added in v0.4.0. Since that section states there is no override, an
+  operator whose `SLURM_PASS` vanished on upgrade would not have found it in
+  the list.
+
+- `docs/installation.md` did not document `OOD_API_ALLOW_NATIVE` or
+  `OOD_API_MAX_CONTEXT_TOTAL_BYTES`, and `docs/user-guide.md` still listed
+  `native` as an ordinary submit option without noting it is now off by
+  default. The v0.4.0 changelog also gave two different counts for the same
+  deny-list change; both now say seven, which is what the code adds.
+
 ## [0.4.0] - 2026-08-03
 
 Security release. **Sites should upgrade.**
@@ -21,9 +49,9 @@ the same request would be refused for.
 **Three changes a site may notice.** `options.native` is now disabled unless
 you set `OOD_API_ALLOW_NATIVE=true`. Writes carrying an `X-OOD-API-Token`
 header need `Content-Type: application/json` like any other write, which every
-documented example already sends. The environment endpoint refuses about twenty
-more credential-shaped variable names, so a site whose allowlist exposed one of
-those will see it disappear.
+documented example already sends. The environment endpoint refuses
+seven more credential-shaped stems, so a site whose allowlist exposed a matching
+variable will see it disappear.
 
 Everything else is a fix without a contract change: several classes of
 malformed input that returned 500 now return a proper status, the site-context
@@ -76,7 +104,7 @@ now recorded in the audit log.
   the latter left the same destination reachable. Everything else in `native`
   passes through untouched, including unrelated bundles such as `-N2`.
 
-- **Twelve more credential-shaped environment names were disclosed.** `PASSW`
+- **Seven more credential stems are now refused.** `PASSW`
   requires the W, so `SLURM_PASS` and `SLURM_PWD` — the two commonest
   abbreviations — both slipped past while `SLURM_PASSWORD` was caught. Added
   those plus `BEARER`, `OAUTH`, `_HMAC`, `_REFRESH` and `SIGNATURE`. `AUTH`,
