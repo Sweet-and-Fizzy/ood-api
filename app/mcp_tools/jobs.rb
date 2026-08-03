@@ -148,12 +148,24 @@ module OodApi
         required:   ['cluster_id', 'script_content']
       })
 
+      # Same fields as the REST twin: the scheduler writes these paths as the
+      # user, so an audit record that omits them names nothing that was
+      # written. Extracted to keep `call` within the method-length limit.
+      def self.audit_fields(cluster_id, output_path, error_path, workdir, native)
+        { cluster:     cluster_id,
+          output_path: output_path,
+          error_path:  error_path,
+          workdir:     workdir,
+          native:      native.is_a?(Array) ? native.join(' ') : native }
+      end
+
       def self.call(server_context:, cluster_id:, script_content:, workdir: nil,
                     job_name: nil, queue_name: nil, accounting_id: nil,
                     wall_time: nil, output_path: nil, error_path: nil,
                     native: nil, after: nil, afterok: nil, afternotok: nil, afterany: nil, **_params)
         user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
-        job_info, cluster = Handlers::Audit.log(op: 'submit_job', user: user, source: 'mcp', cluster: cluster_id) do
+        audit = audit_fields(cluster_id, output_path, error_path, workdir, native)
+        job_info, cluster = Handlers::Audit.log(op: 'submit_job', user: user, source: 'mcp', **audit) do
           Handlers::Jobs.submit(
             clusters:       OodApi::App.clusters,
             cluster_id:     cluster_id,

@@ -46,7 +46,13 @@ module Handlers
       SECRET | TOKEN | PASSW | PASSPHRASE | CREDENTIAL | PRIVATE |
       JWT | APIKEY | API_KEY |
       _KEY(S|\d+)?\b | KEYRING | KEYFILE | KEYSTORE |
-      _PEM\b | _CERT(S|IFICATE)?\b
+      _PEM\b | _CERT(S|IFICATE)?\b |
+      # PASSW needs the W, so the two commonest abbreviations of "password"
+      # both slipped past while PASSWORD was caught.
+      _PASS\b | _PWD\b |
+      # Unambiguous credential stems. BEARER, OAUTH and HMAC have no ordinary
+      # meaning in a scheduler variable; a REFRESH here is a refresh token.
+      BEARER | OAUTH | _HMAC\b | _REFRESH\b | SIGNATURE
     /xi
 
     def self.list(prefix: nil)

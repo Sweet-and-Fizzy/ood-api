@@ -24,6 +24,40 @@ variable names it previously returned.
 
 ### Security
 
+- **`options.native` bypassed the job path deny-list.** `output_path`,
+  `error_path` and `workdir` are validated against the allowed roots and the
+  sensitive-path deny-list, because the scheduler writes them as the user.
+  `native` is raw scheduler argv and was not validated — and `ood_core` appends
+  it *after* the flags built from those options, so a `--output=` inside
+  `native` silently overrode the path just approved. The same file was refused
+  as `output_path` and accepted as `native`.
+
+  That is the invariant SECURITY.md states, and the deny-list is not a
+  privilege control: the point is that an agent acting on injected input cannot
+  reach `~/.ssh/authorized_keys`, and through `native` it could. Path-bearing
+  flags in `native` (`-o`, `--output`, `-e`, `--error`, `-D`, `--chdir` and the
+  PBS/LSF/SGE equivalents, in both `--flag=value` and `--flag value` forms) are
+  now validated like any other job path. Everything else in `native` passes
+  through untouched.
+
+- **Twelve more credential-shaped environment names were disclosed.** `PASSW`
+  requires the W, so `SLURM_PASS` and `SLURM_PWD` — the two commonest
+  abbreviations — both slipped past while `SLURM_PASSWORD` was caught. Added
+  those plus `BEARER`, `OAUTH`, `_HMAC`, `_REFRESH` and `SIGNATURE`. `AUTH`,
+  `SESSION`, `COOKIE` and `NONCE` are deliberately still permitted: they have
+  ordinary meanings, on the same reasoning that excluded `SALT`.
+
+- **A refused token left no audit record.** Every other refusal in the app logs
+  one, but `Audit.log` wraps an operation and a failed authentication has none
+  — so repeated guesses against an app token were invisible in the PUN log,
+  which is the only place this app records anything. Both REST and MCP now
+  record the attempt and the path. The token value is never logged.
+
+- **`submit_job` audit records named no path.** Every file operation logs the
+  path it touched; job submission logged only the cluster, despite being the
+  one operation whose writes happen out of process. `output_path`,
+  `error_path`, `workdir` and `native` are now recorded on both surfaces.
+
 - **A scheduler string that was not valid UTF-8 turned a successful request
   into a 500.** Job names come from the user's own `-J` flag or a filename, so
   a locale-mangled byte is reachable in practice. `to_json` raised after the

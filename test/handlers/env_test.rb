@@ -110,6 +110,26 @@ class HandlersEnvTest < Minitest::Test
   # exactly where credentials show up. SLURM_JWT is a real Slurm variable
   # holding a bearer token for slurmrestd, and it matches the allowed `SLURM_`
   # prefix — so it leaked under any site policy until the deny pass existed.
+  # PASSW needs the W, so the two commonest abbreviations of "password" both
+  # slipped past while PASSWORD was caught. BEARER, OAUTH, HMAC and a REFRESH
+  # in a scheduler variable are unambiguous credential stems.
+  def test_denies_credential_abbreviations_and_auth_stems
+    ['SLURM_PASS', 'SLURM_PWD', 'SLURM_BEARER', 'SLURM_OAUTH', 'SLURM_REFRESH', 'SLURM_SIGNATURE',
+     'SLURM_HMAC'].each do |name|
+      assert Handlers::Env::DENIED_PATTERN.match?(name), "#{name} is credential-shaped"
+    end
+  end
+
+  # AUTH, SESSION, COOKIE and NONCE have ordinary meanings and are deliberately
+  # absent, on the same reasoning that excluded SALT. The \\b anchors must also
+  # keep PASSTHROUGH and REFRESHED out of the abbreviation stems.
+  def test_ambiguous_and_neighbouring_names_stay_allowed
+    ['SLURM_PASSTHROUGH', 'SLURM_REFRESHED', 'SLURM_AUTH', 'SLURM_SESSION', 'SLURM_COOKIE', 'SLURM_NONCE',
+     'SLURM_JOB_ID'].each do |name|
+      refute Handlers::Env::DENIED_PATTERN.match?(name), "#{name} must not be refused"
+    end
+  end
+
   def test_denies_credentials_that_match_an_allowed_prefix
     ENV['SLURM_JWT'] = 'a-real-token'
     ENV['OOD_API_SECRET_KEY'] = 'shh'

@@ -70,6 +70,49 @@ module Handlers
       Files.validate_path!(Files.normalize_path(path))
     end
 
+    # Flags that name a file or directory the scheduler will write to, across
+    # the adapters ood_core ships. Long forms may be spelled `--output=PATH` or
+    # `--output PATH`; short forms take the next element.
+    NATIVE_PATH_FLAGS = [
+      '-o', '--output', '-e', '--error', '-D', '--chdir', '--workdir',
+      '-oo', '-eo', '-cwd', '-wd', '-w'
+    ].freeze
+
+    # `native` is raw scheduler argv, and adapters append it AFTER the options
+    # this handler validated — ood_core's Slurm adapter builds `-o
+    # script.output_path` at slurm.rb:644 and concatenates native at :671.
+    # sbatch honours the last occurrence of a repeated flag, so `--output=` in
+    # native silently overrides the path job_path! just approved. The same
+    # request was refused as `output_path` and accepted as `native`.
+    #
+    # That defeats the invariant SECURITY.md states — "Job paths are validated
+    # like any other write, since the scheduler writes them as the user" — and
+    # the deny-list is not a privilege control, so "the user could run sbatch
+    # themselves" does not answer it. The point is that an agent acting on
+    # injected input cannot reach ~/.ssh/authorized_keys, and via native it
+    # could.
+    #
+    # Only path-bearing flags are inspected. Everything else in native passes
+    # through untouched, so `--nodes=4` or a site-specific flag still works.
+    def self.validate_native_paths!(native)
+      return unless native.is_a?(Array)
+
+      args = native.map(&:to_s)
+      index = 0
+      while index < args.length
+        arg = args[index]
+        flag, inline = arg.split('=', 2)
+
+        if NATIVE_PATH_FLAGS.include?(flag)
+          # `--output=PATH` carries its value; `-o PATH` takes the next element.
+          job_path!(inline || args[index + 1])
+          index += inline ? 1 : 2
+        else
+          index += 1
+        end
+      end
+    end
+
     # wall_time reaches the scheduler unmodified; a non-numeric value silently
     # became "no limit" rather than an error.
     def self.validate_wall_time(value)
@@ -112,6 +155,7 @@ module Handlers
       job_path!(workdir)
       job_path!(options[:output_path])
       job_path!(options[:error_path])
+      validate_native_paths!(options[:native])
 
       script = build_script(script_content, workdir, options)
       deps = [:after, :afterok, :afternotok, :afterany].each_with_object({}) do |k, h|
