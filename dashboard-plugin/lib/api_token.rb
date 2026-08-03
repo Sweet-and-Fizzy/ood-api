@@ -131,6 +131,19 @@ class ApiToken
     @last_used_at = attrs[:last_used_at]
   end
 
+  # Timestamps for display. The store is a plain JSON file the installation
+  # guide tells operators they may write by hand, and `date -Iseconds` is not
+  # portable — BSD date on macOS rejects it outright. A malformed value must
+  # not take down the whole token page, and the raw string is more useful to
+  # whoever has to fix it than a blank cell would be.
+  def created_at_display(fallback = '-')
+    format_timestamp(created_at, fallback)
+  end
+
+  def last_used_at_display(fallback)
+    format_timestamp(last_used_at, fallback)
+  end
+
   def destroy
     self.class.with_lock do
       tokens = self.class.load_tokens
@@ -157,5 +170,15 @@ class ApiToken
   rescue SystemCallError, IOError => e
     Rails.logger.error("Failed to record API token last-used: #{e.class}")
     false
+  end
+
+  private
+
+  def format_timestamp(value, fallback)
+    return fallback if value.blank?
+
+    Time.parse(value.to_s).strftime('%Y-%m-%d %H:%M')
+  rescue ArgumentError, TypeError
+    value.to_s
   end
 end

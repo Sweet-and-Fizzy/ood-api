@@ -45,8 +45,8 @@
             <% @tokens.each do |token| %>
               <tr>
                 <td><%= token.name %></td>
-                <td><%= token.created_at ? Time.parse(token.created_at).strftime('%Y-%m-%d %H:%M') : '-' %></td>
-                <td><%= token.last_used_at ? Time.parse(token.last_used_at).strftime('%Y-%m-%d %H:%M') : t('dashboard.api_tokens.never') %></td>
+                <td><%= token.created_at_display %></td>
+                <td><%= token.last_used_at_display(t('dashboard.api_tokens.never')) %></td>
                 <td class="text-end">
                   <%= button_to api_token_path(token.id),
                       method: :delete,
