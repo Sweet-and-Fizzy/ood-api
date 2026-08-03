@@ -454,6 +454,20 @@ class HandlersFilesTest < Minitest::Test
     end
   end
 
+  # APFS is normalization-insensitive: a name written in NFD reaches the same
+  # file as its NFC spelling. The deny-list compares byte-exactly after
+  # case-folding, so a non-ASCII entry would be bypassable the same way the
+  # uppercase spellings were. Every entry is ASCII today, where NFD and NFC are
+  # identical — this fails if that stops being true, so whoever adds such an
+  # entry has to normalize the comparison rather than discover it in review.
+  def test_deny_list_entries_stay_ascii_so_normalization_cannot_bypass_them
+    offenders = (Handlers::Files::DENIED_EXACT + Handlers::Files::DENIED_DIRS).reject(&:ascii_only?)
+
+    assert_empty offenders,
+                 'non-ASCII deny entries need unicode_normalize on both sides of the comparison ' \
+                 "(APFS treats NFD and NFC as the same file): #{offenders.inspect}"
+  end
+
   # A single readlink follows one hop. With a -> b -> denied and the final
   # target absent, the check saw `b` — an innocuous name — and never examined
   # the real destination. One hop was refused; two were not. This escaped the
