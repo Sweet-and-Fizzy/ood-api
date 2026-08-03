@@ -14,8 +14,15 @@ require_relative 'test_helper'
 class DocsTest < Minitest::Test
   ROOT = File.expand_path('..', __dir__)
 
+  # Always UTF-8. Ruby otherwise reads in the locale's encoding, and under a
+  # LANG-less environment — an OOD container, a CI runner — that is US-ASCII,
+  # so every one of these checks errored on the em-dashes in our own prose.
   def read_doc(name)
-    File.read(File.join(ROOT, name))
+    read_utf8(File.join(ROOT, name))
+  end
+
+  def read_utf8(path)
+    File.read(path, encoding: 'UTF-8')
   end
 
   # Tracked files only. Globbing the working tree also picks up scratch drafts
@@ -33,7 +40,7 @@ class DocsTest < Minitest::Test
   # The README advertises a tool count. mcp_server.rb is the only place the
   # list actually lives.
   def test_documented_mcp_tool_count_matches_the_server
-    src = File.read(File.join(ROOT, 'app/mcp_server.rb'))
+    src = read_utf8(File.join(ROOT, 'app/mcp_server.rb'))
     actual = src[/tools:\s*\[(.*?)\]/m, 1].scan(/\w+Tool/).uniq.size
 
     # Numerals only, and the number must sit directly before "tools" (or
@@ -42,7 +49,7 @@ class DocsTest < Minitest::Test
     # made it match the "2" in the "### 3.2 Available tools" heading.
     found = 0
     all_docs.each do |path|
-      File.read(path).scan(/\b(\d+)[ \t]+(?:MCP[ \t]+)?tools\b/i).flatten.each do |claimed|
+      read_utf8(path).scan(/\b(\d+)[ \t]+(?:MCP[ \t]+)?tools\b/i).flatten.each do |claimed|
         found += 1
         assert_equal actual, claimed.to_i,
                      "#{File.basename(path)} claims #{claimed} tools, server registers #{actual}"
@@ -57,7 +64,7 @@ class DocsTest < Minitest::Test
 
   # CONTRIBUTING states the coverage floor; test_helper.rb enforces it.
   def test_documented_coverage_floor_matches_the_enforced_one
-    helper = File.read(File.join(ROOT, 'test/test_helper.rb'))
+    helper = read_utf8(File.join(ROOT, 'test/test_helper.rb'))
     enforced = helper[/minimum_coverage\(line:\s*(\d+)\)/, 1].to_i
     claimed = read_doc('CONTRIBUTING.md')[/line-coverage floor \(currently (\d+)%\)/, 1]
     refute_nil claimed, 'CONTRIBUTING no longer states a coverage floor — did the wording change?'
@@ -69,7 +76,7 @@ class DocsTest < Minitest::Test
 
   # CONTRIBUTING names the Ruby versions CI runs; ci.yml is the source of truth.
   def test_documented_ruby_matrix_matches_ci
-    ci = File.read(File.join(ROOT, '.github/workflows/ci.yml'))
+    ci = read_utf8(File.join(ROOT, '.github/workflows/ci.yml'))
     versions = ci[/ruby:\s*\[(.*?)\]/, 1].scan(/[\d.]+/)
     claimed = read_doc('CONTRIBUTING.md')[/Ruby ([\d.]+)[–-]([\d.]+)/, 0]
     refute_nil claimed, 'CONTRIBUTING no longer states a Ruby range — did the wording change?'
@@ -83,11 +90,11 @@ class DocsTest < Minitest::Test
   # The app-token header name appears in prose across several guides. Getting it
   # wrong hands a reader a request that silently 401s.
   def test_documented_token_header_matches_app_auth
-    auth = File.read(File.join(ROOT, 'lib/app_auth.rb'))
+    auth = read_utf8(File.join(ROOT, 'lib/app_auth.rb'))
     header = auth[/TOKEN_HEADER\s*=\s*'HTTP_(\w+)'/, 1].tr('_', '-')
 
     all_docs.each do |path|
-      body = File.read(path)
+      body = read_utf8(path)
       next unless body.match?(/X-OOD-API/i)
 
       # Header names are case-insensitive on the wire; the docs use
@@ -104,10 +111,10 @@ class DocsTest < Minitest::Test
   # in a header it was not meant for. The markdown check above cannot catch this
   # (it skips any file that never mentions the right header at all).
   def test_dashboard_token_page_documents_the_app_token_header
-    auth = File.read(File.join(ROOT, 'lib/app_auth.rb'))
+    auth = read_utf8(File.join(ROOT, 'lib/app_auth.rb'))
     header = auth[/TOKEN_HEADER\s*=\s*'HTTP_(\w+)'/, 1].tr('_', '-')
     view = File.join(ROOT, 'dashboard-plugin/views/api_tokens/index.html.erb')
-    body = File.read(view)
+    body = read_utf8(view)
 
     assert_match(/#{Regexp.escape(header)}/i, body,
                  "the token page must show #{header}, the header app_auth.rb reads")
@@ -123,7 +130,7 @@ class DocsTest < Minitest::Test
   def test_documented_write_examples_send_the_required_content_type
     broken = []
     all_docs.each do |path|
-      lines = File.read(path).lines
+      lines = read_utf8(path).lines
       lines.each_with_index do |line, i|
         next unless line.match?(/curl\b/)
 
@@ -148,7 +155,7 @@ class DocsTest < Minitest::Test
   def test_relative_markdown_links_resolve
     broken = []
     all_docs.each do |path|
-      File.read(path).scan(/\]\(([^):#]+\.md)(?:#[^)]*)?\)/).flatten.each do |link|
+      read_utf8(path).scan(/\]\(([^):#]+\.md)(?:#[^)]*)?\)/).flatten.each do |link|
         target = File.expand_path(link, File.dirname(path))
         broken << "#{File.basename(path)} -> #{link}" unless File.exist?(target)
       end

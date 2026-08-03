@@ -90,7 +90,9 @@ class ApiToken
     def load_tokens
       return [] unless TOKEN_FILE.exist?
 
-      JSON.parse(TOKEN_FILE.read, symbolize_names: true)
+      # Explicit encoding, matching lib/api_token.rb: without one Ruby uses the
+      # locale's, and a token name is free text a user typed.
+      JSON.parse(TOKEN_FILE.read(encoding: 'UTF-8'), symbolize_names: true)
     rescue JSON::ParserError => e
       Rails.logger.error("Failed to parse API tokens file: #{e.message}")
       []
