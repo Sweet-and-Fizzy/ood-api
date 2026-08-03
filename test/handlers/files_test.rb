@@ -379,6 +379,49 @@ class HandlersFilesTest < Minitest::Test
     end
   end
 
+  # The dangling-leaf guard above does not cover a symlink ABOVE the target.
+  # find_real_parent stops at the nearest existing ancestor, so a link like
+  # /tmp/hd -> $HOME turns a request for /tmp/hd/.ssh/authorized_keys (leaf and
+  # .ssh both absent) into the resolved path $HOME, whose path relative to home
+  # is "" and matches no denied entry. The leaf is not itself a symlink, so the
+  # dangling guard never fires, and the write landed on the real file.
+  def test_denies_denied_path_reached_through_a_symlinked_ancestor
+    with_fake_home do |home|
+      link_dir = File.join(Dir.tmpdir, "anc_#{Process.pid}")
+      FileUtils.rm_f(link_dir)
+      File.symlink(home, link_dir)
+
+      ['.bashrc', File.join('.ssh', 'authorized_keys'),
+       File.join('.config', 'ondemand', 'tokens.json')].each do |rel|
+        target = File.join(home, rel)
+        FileUtils.rm_rf(File.dirname(target)) unless File.dirname(target) == home
+
+        assert_raises(Handlers::ForbiddenError, "~/#{rel} must be refused through a symlinked ancestor") do
+          Handlers::Files.validate_path!(Handlers::Files.normalize_path(File.join(link_dir, rel)))
+        end
+      end
+    ensure
+      FileUtils.rm_f(link_dir)
+    end
+  end
+
+  # Symlinked ancestors are ordinary in home directories (~/scratch -> /scratch,
+  # or a link back to home). Resolving through one must not refuse a legitimate
+  # write, including one that creates intermediate directories.
+  def test_allows_ordinary_paths_reached_through_a_symlinked_ancestor
+    with_fake_home do |home|
+      link_dir = File.join(Dir.tmpdir, "anc_ok_#{Process.pid}")
+      FileUtils.rm_f(link_dir)
+      File.symlink(home, link_dir)
+
+      ['notes.txt', File.join('proj', 'deep', 'f.txt')].each do |rel|
+        Handlers::Files.validate_path!(Handlers::Files.normalize_path(File.join(link_dir, rel)))
+      end
+    ensure
+      FileUtils.rm_f(link_dir)
+    end
+  end
+
   # A hardlink is a second name for the same inode. realpath resolves it to
   # itself, so name-based checks cannot see the denied original — the deny-list
   # has to compare device+inode.

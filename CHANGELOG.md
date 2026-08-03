@@ -7,7 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-03
+
+Three security fixes. **Sites should upgrade.**
+
+The most serious lets a caller write to any file on the sensitive-path
+deny-list — shell init files, `~/.ssh/authorized_keys` — by pointing a symlink
+at one that does not exist yet. It is reachable through the MCP `write_file`
+tool, so an agent acting on injected content could establish access outliving
+the session.
+
+One behaviour change worth checking before upgrading: writes carrying an
+`X-OOD-API-Token` header now require `Content-Type: application/json` like any
+other write, and the environment endpoint refuses several credential-shaped
+variable names it previously returned.
+
 ### Security
+
+- **A symlink anywhere above a target bypassed the sensitive-path deny-list.**
+  Path validation resolved only as far as the nearest *existing* ancestor. With
+  a link such as `~/proj/up -> ~`, a request for `~/proj/up/.ssh/authorized_keys`
+  — where neither the key file nor `.ssh` exists yet — resolved to `$HOME`
+  itself, whose path relative to home is empty and matches no denied entry. The
+  leaf was not a symlink, so the dangling-link guard did not apply either.
+
+  Every denied target was writable in a single call: shell init files,
+  `~/.ssh/authorized_keys` (created at the modes sshd accepts), user systemd
+  units, and the app's own token store — the last letting a caller install a
+  token of their choosing. Job `output_path` and `error_path` were affected
+  through the same validation.
+
+  A link pointing back at home is ordinary in HPC home directories, alongside
+  the common `~/scratch -> /scratch/$USER` pattern, so this needed no unusual
+  setup. Paths are now resolved along their full length, with the components
+  below the deepest existing ancestor re-appended, so the deny-list compares
+  against the file that would actually be created.
 
 - **A symlink whose target did not yet exist bypassed the sensitive-path
   deny-list.** `Pathname#exist?` follows symlinks, so a dangling link looked
@@ -62,6 +96,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It now logs the name — never the value — so the allowlist can be corrected.
 
 ### Fixed
+
+- `docs/api.md` listed ten credential-name stems for the environment deny
+  pass where the code now has sixteen, and described `_JWT`/`JWT_` where the
+  pattern matches `JWT` anywhere. `SLURM_KEYRING`, `OOD_PASSPHRASE`, `MY_PEM`
+  and `MY_CERT` were among the names silently refused but documented as
+  returned. Since the section states there is no override, an operator whose
+  variable vanished had nothing to go on.
 
 - The dashboard's token page showed `curl -H "Authorization: Bearer ..."`
   directly beneath a newly created application token. `Authorization` is owned
@@ -332,7 +373,8 @@ running as a Passenger app under the PUN as the authenticated user.
 - API token file is created with mode `0600` atomically, with no window where
   it is readable at the umask default.
 
-[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.2.0...v0.3.0
