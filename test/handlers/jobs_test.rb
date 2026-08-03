@@ -2,8 +2,49 @@
 
 require_relative '../test_helper'
 require_relative '../../app/handlers/jobs'
+require 'tmpdir'
 
 class HandlersJobsTest < Minitest::Test
+  # Local copy: the files test defines its own, and these two suites do not
+  # share a helper module.
+  def with_fake_home
+    Dir.mktmpdir('jobs_home') do |fake|
+      Dir.stub(:home, fake) { yield fake }
+    end
+  end
+
+  # `native` is raw scheduler argv, and ood_core appends it AFTER the options
+  # this handler validated — the Slurm adapter builds `-o script.output_path`
+  # then concatenates native. sbatch honours the last occurrence of a repeated
+  # flag, so `--output=` in native silently overrode the path job_path! had
+  # just approved: the same file was refused as output_path and accepted as
+  # native. That defeats the invariant SECURITY.md states, and the deny-list is
+  # not a privilege control — the point is that an agent on injected input
+  # cannot reach ~/.ssh/authorized_keys.
+  def test_native_path_flags_are_validated_like_output_path
+    with_fake_home do |home|
+      denied = File.join(home, '.ssh', 'authorized_keys')
+      [["--output=#{denied}"], ['-o', denied], ["--error=#{denied}"], ['-e', denied],
+       ["--chdir=#{File.dirname(denied)}"], ['-D', File.dirname(denied)],
+       ['-N', '2', "--output=#{denied}"]].each do |native|
+        assert_raises(Handlers::ForbiddenError, "native #{native.inspect} must be refused") do
+          Handlers::Jobs.validate_native_paths!(native)
+        end
+      end
+    end
+  end
+
+  # Only path-bearing flags are inspected; everything else in native is a
+  # legitimate scheduler option and must pass through untouched.
+  def test_native_non_path_flags_are_left_alone
+    with_fake_home do |home|
+      [["--output=#{File.join(home, 'ok.out')}"], ['-o', File.join(home, 'ok.out')],
+       ['--nodes=4'], ['-N', '2', '--exclusive'], ['--output'], [], nil].each do |native|
+        Handlers::Jobs.validate_native_paths!(native)
+      end
+    end
+  end
+
   include TestHelpers
 
   def setup
@@ -130,6 +171,21 @@ class HandlersJobsTest < Minitest::Test
     )
     assert_equal '789', job_info.id
     assert_equal :cluster1, cluster.id
+  end
+
+  # The wiring, not just the helper: a test that calls validate_native_paths!
+  # directly still passes if the call is dropped from submit, which is exactly
+  # the gap that let this bug exist. Go through the real entry point.
+  def test_submit_refuses_a_denied_path_hidden_in_native
+    with_fake_home do |home|
+      denied = File.join(home, '.ssh', 'authorized_keys')
+
+      assert_raises(Handlers::ForbiddenError, 'submit must validate native paths') do
+        Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1',
+                              script_content: 'echo hi', workdir: home,
+                              native: ["--output=#{denied}"])
+      end
+    end
   end
 
   def test_submit_raises_validation_error_on_nil_content

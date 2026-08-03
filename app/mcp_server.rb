@@ -130,6 +130,11 @@ module OodApi
     # /api/v1/* enforced one — the same capabilities behind weaker auth.
     lambda do |env|
       if OodApi::AppAuth.authenticate(env) == false
+        # Recorded for the same reason as the REST filter: a refused token is
+        # the one refusal that used to leave no trace, and this surface is the
+        # one an agent drives. The token value is never logged.
+        Handlers::Audit.emit_event(op: 'authenticate', user: ENV['USER'] || ENV['LOGNAME'] || 'unknown', source: 'mcp',
+                                   status: 'denied', path: env['PATH_INFO'].to_s)
         return [401,
                 { 'Content-Type' => 'application/json' },
                 [{ error: 'unauthorized', message: 'Invalid or missing API token' }.to_json]]

@@ -354,8 +354,16 @@ module OodApi
       halt_bad_request('script must be an object') unless body['script'].nil? || body['script'].is_a?(Hash)
       halt_bad_request('options must be an object') unless body['options'].nil? || body['options'].is_a?(Hash)
 
+      # Record the paths the scheduler will write as the user. Every file
+      # operation logs its path; submit_job logged only the cluster, so a job
+      # redirecting output into the user's home left a record naming no path
+      # at all — the one operation whose writes happen out of process.
       job_info, cluster = Handlers::Audit.log(op: 'submit_job', user: current_user, source: 'rest',
-                                              cluster: body['cluster']) do
+                                              cluster: body['cluster'],
+                                              output_path: body.dig('options', 'output_path'),
+                                              error_path: body.dig('options', 'error_path'),
+                                              workdir: body.dig('script', 'workdir'),
+                                              native: body.dig('options', 'native')&.join(' ')) do
         Handlers::Jobs.submit(
           clusters:       self.class.clusters,
           cluster_id:     body['cluster'],
@@ -585,7 +593,17 @@ module OodApi
     # surfaces enforce app tokens identically.
     def authenticate!
       result = OodApi::AppAuth.authenticate(request.env)
-      halt_unauthorized if result == false
+      if result == false
+        # Every other refusal in this app leaves a record; a rejected token did
+        # not, because Audit.log wraps an operation and a failed auth has none.
+        # That made repeated guesses against a 256-bit app token invisible in
+        # the PUN log, which is the only place this app records anything. The
+        # token itself is never logged — only that one was presented and
+        # refused.
+        Handlers::Audit.emit_event(op: 'authenticate', user: current_user, source: 'rest',
+                                   status: 'denied', path: request.path_info)
+        halt_unauthorized
+      end
 
       @current_token = result
     end
