@@ -54,9 +54,9 @@ Sites may additionally require a per-client **application token** in an
 
 ### Content-Type on writes
 
-`POST`, `PUT`, `PATCH`, and `DELETE` requests that carry a body must send
-`Content-Type: application/json`, or the API returns **415**. Every example
-below already does.
+`POST`, `PUT`, and `PATCH` requests must send `Content-Type: application/json`,
+or the API returns **415** — whether or not they carry a body. `DELETE` is
+exempt. Every example below already does this.
 
 This is a CSRF defense rather than a parsing requirement. With OOD's default
 session-cookie authentication, a browser attaches your session to a
@@ -400,6 +400,8 @@ curl -X POST \
   outside the allowed roots or on the sensitive-path deny-list. The scheduler
   writes those paths as you, so they are validated like any other write
 - 404 - Cluster not found
+- 413 - The request body exceeds `OOD_API_MAX_FILE_WRITE`; a large job script
+  hits the same limit as a file write
 - 415 - `Content-Type` is not `application/json`
 - 422 - The scheduler rejected the job (bad queue, account, or resource
   request); the message carries the scheduler's own text
@@ -671,6 +673,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 **Errors:**
 - 400 - Missing `path`, a non-scalar `path`, or a `path` containing a null byte
+  or invalid UTF-8
 - 403 - Path outside the allowed roots, or on the sensitive-path deny-list
 - 404 - Path not found
 
@@ -697,7 +700,8 @@ that distinction matters.
 - Body: Raw file contents
 
 **Errors:**
-- 400 - Cannot read directory, or file too large (exceeds configured max, default 10 MB)
+- 400 - Cannot read directory, not a regular file (FIFO, device node), file
+  too large, or a non-numeric or zero `max_size` (exceeds configured max, default 10 MB)
 - 403 - Permission denied or path not in allowed directories
 - 404 - File not found
 
@@ -1155,8 +1159,8 @@ The API uses standard HTTP status codes:
 | 401 | Unauthorized (missing/invalid token) |
 | 403 | Forbidden (permission denied, path not allowed) |
 | 404 | Not Found (resource doesn't exist) |
-| 413 | Payload Too Large (**write** body exceeds the size limit) |
-| 415 | Unsupported Media Type (a bodied write did not send `Content-Type: application/json`) |
+| 413 | Payload Too Large (any request body exceeds the size limit, including a job script) |
+| 415 | Unsupported Media Type (a write other than `DELETE` did not send `Content-Type: application/json`) |
 | 422 | Unprocessable Entity (job submission/cancellation failed) |
 | 500 | Internal Server Error |
 | 501 | Not Implemented (the site's scheduler adapter does not support the operation) |
