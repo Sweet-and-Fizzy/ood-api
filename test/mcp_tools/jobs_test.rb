@@ -261,4 +261,18 @@ class ReleaseJobToolTest < Minitest::Test
     content = result.to_h
     assert content[:isError]
   end
+
+  # hold and release omitted ValidationError from their rescue lists while all
+  # five sibling job tools include it, so a bad job id escaped as a JSON-RPC
+  # internal error instead of a clean tool error. REST returns 400 here.
+  def test_hold_and_release_report_a_bad_job_id_as_a_tool_error
+    @mock_clusters = [mock_cluster(id: 'cluster1')]
+    OodApi::App.stubs(:clusters).returns(@mock_clusters)
+    bad = (+"job\xFF").force_encoding('UTF-8')
+
+    [OodApi::Tools::HoldJobTool, OodApi::Tools::ReleaseJobTool].each do |tool|
+      result = tool.call(server_context: nil, cluster_id: 'cluster1', job_id: bad)
+      assert result.error?, "#{tool} must return a tool error, not raise"
+    end
+  end
 end
