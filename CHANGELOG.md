@@ -9,18 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.4.0] - 2026-08-03
 
-Three security fixes. **Sites should upgrade.**
+Security release. **Sites should upgrade.**
 
-The most serious lets a caller write to any file on the sensitive-path
-deny-list — shell init files, `~/.ssh/authorized_keys` — by pointing a symlink
-at one that does not exist yet. It is reachable through the MCP `write_file`
-tool, so an agent acting on injected content could establish access outliving
-the session.
+Twenty-two fixes since v0.3.2, most of them in the controls that keep an agent
+acting on prompt-injected content from establishing access that outlives the
+session. Six were ways past the sensitive-path deny-list: four through symlinks
+and case handling on the file endpoints, and two through job submission, where
+`options.native` and `#SBATCH` directives could direct a job's output to a path
+the same request would be refused for.
 
-One behaviour change worth checking before upgrading: writes carrying an
-`X-OOD-API-Token` header now require `Content-Type: application/json` like any
-other write, and the environment endpoint refuses several credential-shaped
-variable names it previously returned.
+**Three changes a site may notice.** `options.native` is now disabled unless
+you set `OOD_API_ALLOW_NATIVE=true`. Writes carrying an `X-OOD-API-Token`
+header need `Content-Type: application/json` like any other write, which every
+documented example already sends. The environment endpoint refuses about twenty
+more credential-shaped variable names, so a site whose allowlist exposed one of
+those will see it disappear.
+
+Everything else is a fix without a contract change: several classes of
+malformed input that returned 500 now return a proper status, the site-context
+endpoint can no longer be made to hang a worker, and refused authentication is
+now recorded in the audit log.
 
 ### Security
 
