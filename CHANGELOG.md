@@ -24,6 +24,16 @@ variable names it previously returned.
 
 ### Security
 
+- **A scheduler string that was not valid UTF-8 turned a successful request
+  into a 500.** Job names come from the user's own `-J` flag or a filename, so
+  a locale-mangled byte is reachable in practice. `to_json` raised after the
+  operation had already succeeded — the audit log recorded `status=ok` while
+  the caller got an error — and one such job broke `list_jobs` for every job on
+  the cluster, not only its own. `Handlers::Audit` already scrubbed for this
+  reason, which is why the log survived a response that could not be built.
+  Job, cluster and file responses now scrub the same way; invalid bytes render
+  as `?` so the value stays recognisable.
+
 - **An unauthenticated caller could trigger a 500 and see a Rack internal
   class name.** Sinatra merges `@request.params` before it runs `before`
   filters, so a malformed body is parsed upstream of authentication — the

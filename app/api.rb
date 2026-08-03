@@ -598,9 +598,9 @@ module OodApi
     def cluster_json(cluster)
       {
         id:         cluster.id.to_s,
-        title:      cluster.metadata.title || cluster.id.to_s,
-        adapter:    cluster.job_config[:adapter],
-        login_host: cluster.login&.host
+        title:      json_safe(cluster.metadata.title || cluster.id.to_s),
+        adapter:    json_safe(cluster.job_config[:adapter]),
+        login_host: json_safe(cluster.login&.host)
       }
     end
 
@@ -618,19 +618,36 @@ module OodApi
       native_state = native_state.to_s.downcase if native_state
 
       {
-        job_id:          info.id,
+        job_id:          json_safe(info.id),
         cluster:         cluster.id.to_s,
-        job_name:        info.job_name,
-        job_owner:       info.job_owner,
+        job_name:        json_safe(info.job_name),
+        job_owner:       json_safe(info.job_owner),
         status:          info.status.to_s,
         native_state:    native_state,
-        queue_name:      info.queue_name,
-        accounting_id:   info.accounting_id,
+        queue_name:      json_safe(info.queue_name),
+        accounting_id:   json_safe(info.accounting_id),
         submitted_at:    info.submission_time&.iso8601,
         started_at:      info.dispatch_time&.iso8601,
         wallclock_time:  info.wallclock_time,
         wallclock_limit: info.wallclock_limit
       }
+    end
+
+    # Strings from a scheduler are not guaranteed to be valid UTF-8. A job name
+    # comes from the user's own `-J` flag or a filename, and a locale-mangled
+    # byte in one makes `to_json` raise JSON::GeneratorError — after the
+    # operation has already succeeded, so the audit log records status=ok and
+    # the caller gets a 500. One bad job then breaks `list_jobs` for every job
+    # on the cluster, not just its own.
+    #
+    # Handlers::Audit.safe_to_s already scrubs for the same reason, which is why
+    # the log survives a response that cannot be built. Scrub here so the two
+    # agree. Non-strings pass through untouched — Integers and nil are what the
+    # numeric and absent fields legitimately carry.
+    def json_safe(value)
+      return value unless value.is_a?(String)
+
+      value.valid_encoding? ? value : value.scrub('?')
     end
 
     # Returns nil when absent (meaning "no caller-supplied limit"), otherwise a
@@ -718,13 +735,13 @@ module OodApi
 
     def build_file_hash(path, stat, use_ids: false)
       {
-        path:      path.to_s,
-        name:      path.basename.to_s,
+        path:      json_safe(path.to_s),
+        name:      json_safe(path.basename.to_s),
         directory: path.directory?,
         size:      path.directory? ? nil : stat.size,
         mode:      stat.mode,
-        owner:     use_ids ? stat.uid.to_s : Etc.getpwuid(stat.uid).name,
-        group:     use_ids ? stat.gid.to_s : Etc.getgrgid(stat.gid).name,
+        owner:     json_safe(use_ids ? stat.uid.to_s : Etc.getpwuid(stat.uid).name),
+        group:     json_safe(use_ids ? stat.gid.to_s : Etc.getgrgid(stat.gid).name),
         mtime:     stat.mtime.iso8601
       }
     end

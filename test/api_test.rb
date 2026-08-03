@@ -203,6 +203,31 @@ class ApiTest < Minitest::Test
 
   # Jobs API - Get
 
+  # Scheduler strings are not guaranteed to be valid UTF-8 — a job name comes
+  # from the user's own -J flag or a filename. One bad byte made to_json raise
+  # after the operation had already succeeded, so the audit log recorded
+  # status=ok and the caller got a 500. Worse, one such job broke list_jobs for
+  # every job on the cluster. Handlers::Audit.safe_to_s already scrubs for this
+  # reason; the response builders have to agree.
+  def test_invalid_utf8_from_the_scheduler_does_not_break_the_response
+    token = create_test_token
+    bad = (+"bad\xFF\xFEname").force_encoding('UTF-8')
+    refute bad.valid_encoding?, 'the fixture must actually be invalid UTF-8'
+
+    mock_adapter = mock('adapter')
+    info = mock_job_info(id: '12345', job_name: bad)
+    mock_adapter.stubs(:info).with('12345').returns(info)
+    mock_adapter.stubs(:info_where_owner).returns([info])
+    @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
+
+    get '/api/v1/jobs/12345', { cluster: 'cluster1' }, auth_header(token)
+    assert_equal 200, last_response.status, 'a bad byte must not 500 the request'
+    assert_equal 'bad??name', json_response['data']['job_name']
+
+    get '/api/v1/jobs', { cluster: 'cluster1' }, auth_header(token)
+    assert_equal 200, last_response.status, 'one bad job must not break the whole listing'
+  end
+
   def test_get_job_returns_details
     token = create_test_token
 
