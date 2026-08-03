@@ -135,7 +135,8 @@ module OodApi
           wall_time:      { type: 'integer', description: 'Wall time limit in seconds' },
           output_path:    { type: 'string', description: 'Path for stdout output' },
           error_path:     { type: 'string', description: 'Path for stderr output' },
-          native:         { description: 'Native scheduler directives (passed through to the scheduler)' },
+          native:         { description: 'Raw scheduler arguments. Disabled unless the site sets ' \
+                                         'OOD_API_ALLOW_NATIVE=true.' },
           after:          { type: 'array', items: { type: 'string' },
     description: 'Job IDs that must start before this job' },
           afterok:        { type: 'array', items: { type: 'string' },
@@ -242,7 +243,8 @@ module OodApi
           Handlers::Jobs.hold(clusters: OodApi::App.clusters, cluster_id: cluster_id, job_id: job_id)
         end
         MCP::Tool::Response.new([{ type: 'text', text: "Job #{job_id} held." }])
-      rescue Handlers::NotFoundError, Handlers::AdapterError, Handlers::NotSupportedError => e
+      rescue Handlers::NotFoundError, Handlers::ValidationError,
+             Handlers::AdapterError, Handlers::NotSupportedError => e
         MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
       end
     end
@@ -265,7 +267,8 @@ module OodApi
           Handlers::Jobs.release(clusters: OodApi::App.clusters, cluster_id: cluster_id, job_id: job_id)
         end
         MCP::Tool::Response.new([{ type: 'text', text: "Job #{job_id} released." }])
-      rescue Handlers::NotFoundError, Handlers::AdapterError, Handlers::NotSupportedError => e
+      rescue Handlers::NotFoundError, Handlers::ValidationError,
+             Handlers::AdapterError, Handlers::NotSupportedError => e
         MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
       end
     end

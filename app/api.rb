@@ -363,7 +363,7 @@ module OodApi
                                               output_path: body.dig('options', 'output_path'),
                                               error_path: body.dig('options', 'error_path'),
                                               workdir: body.dig('script', 'workdir'),
-                                              native: body.dig('options', 'native')&.join(' ')) do
+                                              native: audit_native(body.dig('options', 'native'))) do
         Handlers::Jobs.submit(
           clusters:       self.class.clusters,
           cluster_id:     body['cluster'],
@@ -683,6 +683,15 @@ module OodApi
 
     # Returns nil when absent (meaning "no caller-supplied limit"), otherwise a
     # positive Integer. Halts 400 on anything else.
+    # `native` reaches the route as whatever JSON the caller sent. Calling
+    # join on a String or Hash raised, so a client error surfaced as a 500 —
+    # and Handlers::Jobs.validate_native_paths! tolerates a non-Array, so the
+    # handler was written to accept what the route crashed on. The MCP twin
+    # already did this correctly.
+    def audit_native(value)
+      value.is_a?(Array) ? value.join(' ') : value
+    end
+
     def parse_max_size(raw)
       return nil if raw.nil? || raw.to_s.empty?
 

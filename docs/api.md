@@ -774,7 +774,7 @@ control, not a parsing instruction; see
 - 403 - Permission denied or path not in allowed directories
 - 415 - `Content-Type` is not `application/json`
 - 413 - File too large (exceeds configured max, default 50 MB)
-- 507 - No space left on device
+- 507 - The filesystem is full or the user is over quota
 
 **Example:**
 ```bash

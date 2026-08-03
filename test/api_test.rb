@@ -201,6 +201,24 @@ class ApiTest < Minitest::Test
     assert_equal '12345', json_response['data'].first['job_id']
   end
 
+  # `native` arrives as whatever JSON the caller sent. The audit field called
+  # join on it unguarded, so a String or Hash raised and a client error
+  # surfaced as a 500 — while Handlers::Jobs.validate_native_paths! tolerates
+  # a non-Array, so the handler accepted what the route crashed on. The MCP
+  # twin already guarded this.
+  def test_non_array_native_is_a_client_error_not_a_500
+    token = create_test_token
+
+    ['--exclusive', { 'a' => 1 }, 42].each do |value|
+      post '/api/v1/jobs',
+           { cluster: 'cluster1', script: { content: 'x' }, options: { native: value } }.to_json,
+           auth_header(token).merge('CONTENT_TYPE' => 'application/json')
+
+      refute_equal 500, last_response.status,
+                   "native as #{value.class} must not be an internal error"
+    end
+  end
+
   # Jobs API - Get
 
   # Scheduler strings are not guaranteed to be valid UTF-8 — a job name comes

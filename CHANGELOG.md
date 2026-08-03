@@ -7,9 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [Unreleased]
-
 ### Fixed
+
+- `POST /api/v1/jobs` returned 500 when `options.native` was not an array. The
+  audit field called `join` on it unguarded, so a String or Hash — a client
+  mistake — surfaced as a server fault. The handler already tolerated a
+  non-array, and the MCP tool already guarded it, so only the REST route
+  crashed.
+
+- The MCP `hold_job` and `release_job` tools let a `ValidationError` escape as
+  a JSON-RPC internal error, where their five sibling job tools return a clean
+  tool error. A malformed job id was reported as a server failure rather than a
+  bad argument. REST was already correct.
+
+- `docs/api.md` still documented the `PUT /api/v1/files` 507 as "No space left
+  on device" — the exact wording the code fix above removed. The `POST` entry
+  already read "The filesystem is full or the user is over quota".
+
+- The MCP `submit_job` schema described `native` as "passed through to the
+  scheduler" with no mention that it is off unless a site opts in, so an agent
+  would send it and get a 400 it could not explain from the tool description.
 
 - `GET /api/v1/files/content` returned a generic `{"error":"bad_request"}`
   body for every error, including 404 and 403. The route set an
