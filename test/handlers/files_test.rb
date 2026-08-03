@@ -319,6 +319,66 @@ class HandlersFilesTest < Minitest::Test
     end
   end
 
+  # A symlink whose target does not exist yet bypassed every layer. `exist?`
+  # follows the link, so a dangling one looked missing: validate_path! ascended
+  # the LINK's path instead of the target's, so a link in /tmp pointing at
+  # ~/.bashrc resolved to /tmp, passed the allowed-roots check, and reached the
+  # deny-list as a pair of paths neither of which was under $HOME. The write
+  # then followed the link and created the file at the target.
+  #
+  # Absent files are the ones worth planting: .bashrc and .zshrc are missing on
+  # plenty of HPC accounts, and ~/.ssh/authorized_keys on any account that has
+  # never used key auth.
+  def test_denies_dangling_symlink_pointing_at_a_denied_file
+    with_fake_home do |home|
+      ['.bashrc', '.zshrc', File.join('.ssh', 'authorized_keys')].each do |rel|
+        target = File.join(home, rel)
+        link = File.join(Dir.tmpdir, "dangling_#{Process.pid}_#{rel.tr('./', '_')}")
+        FileUtils.rm_f([target, link])
+        File.symlink(target, link)
+
+        refute File.exist?(target), "#{rel} must not exist for this to be the dangling case"
+        assert_raises(Handlers::ForbiddenError, "a dangling link to #{rel} must be refused") do
+          Handlers::Files.validate_path!(Handlers::Files.normalize_path(link))
+        end
+      ensure
+        FileUtils.rm_f(link)
+      end
+    end
+  end
+
+  # The link target is resolved lexically against the link's own directory, so
+  # a relative target has to be handled too.
+  def test_denies_dangling_symlink_with_a_relative_target
+    with_fake_home do |home|
+      FileUtils.mkdir_p(File.join(home, 'sub'))
+      link = File.join(home, 'sub', 'rel_link')
+      File.symlink('../.bashrc', link)
+
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.validate_path!(Handlers::Files.normalize_path(link))
+      end
+    end
+  end
+
+  # The guard must not refuse ordinary dangling links. Writing through a link
+  # to a file that does not exist yet is normal, and the allowed roots are
+  # realpath'd — so the target has to be resolved the same way or every
+  # legitimate link in Dir.tmpdir is refused (on macOS /var vs /private/var).
+  def test_allows_dangling_symlink_pointing_at_an_allowed_path
+    with_fake_home do |home|
+      [File.join(home, 'notes.txt'), File.join(Dir.tmpdir, "ok_#{Process.pid}.txt")].each do |target|
+        link = "#{target}.link"
+        FileUtils.rm_f([target, link])
+        File.symlink(target, link)
+
+        Handlers::Files.validate_path!(Handlers::Files.normalize_path(link))
+      ensure
+        FileUtils.rm_f([target, link])
+      end
+    end
+  end
+
   # A hardlink is a second name for the same inode. realpath resolves it to
   # itself, so name-based checks cannot see the denied original — the deny-list
   # has to compare device+inode.
