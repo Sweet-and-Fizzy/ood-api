@@ -942,12 +942,16 @@ Rules:
 - Variable names containing commas are not supported
 
 **A credential-name deny pass runs first and cannot be overridden.** Names
-matching `SECRET`, `TOKEN`, `PASSW`, `CREDENTIAL`, `_JWT`, `JWT_`, `_KEY`,
-`APIKEY`, `API_KEY`, or `PRIVATE` (case-insensitive) are never disclosed, even
-if you list them explicitly. This exists because the scheduler prefixes the
-default allowlist grants are exactly where credentials appear — `SLURM_JWT`
-holds a bearer token for `slurmrestd` and begins with the allowed `SLURM_`
-prefix, and these values reach an LLM.
+containing `SECRET`, `TOKEN`, `PASSW`, `PASSPHRASE`, `CREDENTIAL`, `PRIVATE`,
+`JWT`, `APIKEY`, `API_KEY`, `KEYRING`, `KEYFILE`, or `KEYSTORE`
+(case-insensitive) are never disclosed, even if you list them explicitly. So
+are names ending in `_KEY`, `_PEM`, or `_CERT`, with an optional plural or
+digit suffix — `MY_KEYS` and `SLURM_KEY2` are refused, `SLURM_KEYWORD` is not.
+
+This exists because the scheduler prefixes the default allowlist grants are
+exactly where credentials appear — `SLURM_JWT` holds a bearer token for
+`slurmrestd` and begins with the allowed `SLURM_` prefix, and these values
+reach an LLM.
 
 A listed-but-denied variable is absent from `GET /api/v1/env` and returns 403
 from `GET /api/v1/env/:name`, with a message saying the name looks like a

@@ -195,6 +195,15 @@ module Handlers
       raise ForbiddenError, 'Access denied: path not in allowed directories' unless allowed
 
       deny_sensitive!(path, real_path)
+      # real_path stops at the nearest existing ancestor, which is not where
+      # the write lands when a component above the target is a symlink. Check
+      # the true destination against both the allowed roots and the deny-list.
+      destination = resolved_destination(path)
+      unless allowed_roots.any? { |root| path_under?(destination, root) }
+        raise ForbiddenError, 'Access denied: path not in allowed directories'
+      end
+
+      deny_sensitive!(path, destination)
       deny_dangling_symlink!(path)
       deny_by_inode!(path)
     end
@@ -381,6 +390,38 @@ module Handlers
         return p.realpath if p.exist?
       end
       Pathname.new('/')
+    end
+
+    # Where a write to `path` would actually land, with every symlinked
+    # component resolved — including ones above a target that does not exist.
+    #
+    # find_real_parent alone is not enough for the deny-list. It stops at the
+    # nearest EXISTING ancestor, so a link like /tmp/hd -> $HOME turns a request
+    # for /tmp/hd/.ssh/authorized_keys (leaf and .ssh both absent) into the
+    # resolved path $HOME — whose path relative to home is "", which matches no
+    # denied entry. Neither the requested string nor that answer is under a
+    # denied path, so the deny-list passed and the write landed on the real
+    # authorized_keys. The leaf is not itself a symlink here, so
+    # deny_dangling_symlink! does not fire either.
+    #
+    # Resolving the deepest existing ancestor and re-appending the components
+    # below it reconstructs the true destination, so the deny-list compares
+    # against the file that would actually be created.
+    def self.resolved_destination(path)
+      return path.realpath if path.exist?
+
+      remainder = []
+      current = path
+      loop do
+        parent = current.parent
+        remainder.unshift(current.basename)
+        break if parent == current # reached the root without finding one
+
+        return remainder.inject(parent.realpath) { |acc, part| acc + part } if parent.exist?
+
+        current = parent
+      end
+      path
     end
 
     private_class_method :allowed_path_roots, :path_under?, :find_real_parent,

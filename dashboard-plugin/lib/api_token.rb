@@ -1,5 +1,11 @@
 # frozen_string_literal: true
 
+# Time.parse and Time#iso8601 live in the stdlib `time` library, not in core.
+# Rails loads it, so this file works without the require — but ood-api's twin
+# (lib/api_token.rb) broke exactly this way when it was loaded outside Rack.
+# Requiring it directly keeps the two copies honest about their dependencies.
+require 'time'
+
 # Represents an API token for authenticating programmatic access to OOD.
 # Tokens are stored in a user-local JSON file.
 #
@@ -39,6 +45,11 @@ class ApiToken
       attrs ? new(attrs) : nil
     end
 
+    # No caller in this plugin — the Dashboard only lists, creates and revokes.
+    # Authentication runs in the ood-api process against its own copy
+    # (lib/api_token.rb). Kept so the two files stay comparable: the sync
+    # requirement noted above is easier to check when neither has quietly
+    # dropped a method the other has.
     def find_by_token(token_string)
       return nil if token_string.blank?
 
