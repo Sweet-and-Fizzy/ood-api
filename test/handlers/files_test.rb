@@ -454,6 +454,82 @@ class HandlersFilesTest < Minitest::Test
     end
   end
 
+  # A single readlink follows one hop. With a -> b -> denied and the final
+  # target absent, the check saw `b` — an innocuous name — and never examined
+  # the real destination. One hop was refused; two were not. This escaped the
+  # allowed roots as well as the deny-list, since neither check ever saw where
+  # the write would land.
+  def test_denies_multi_hop_symlink_chain_to_a_denied_file
+    with_fake_home do |home|
+      target = File.join(home, '.ssh', 'authorized_keys')
+      FileUtils.mkdir_p(File.dirname(target))
+      hops = (1..3).map { |i| File.join(home, "hop#{i}") }
+      FileUtils.rm_f(hops)
+
+      File.symlink(target, hops[0])
+      File.symlink(hops[0], hops[1])
+      File.symlink(hops[1], hops[2])
+
+      hops.each_with_index do |link, i|
+        assert_raises(Handlers::ForbiddenError, "a #{i + 1}-hop chain to authorized_keys must be refused") do
+          Handlers::Files.validate_path!(Handlers::Files.normalize_path(link))
+        end
+      end
+    ensure
+      FileUtils.rm_f(hops || [])
+    end
+  end
+
+  # A chain whose end is outside every allowed root must be refused too — that
+  # is confinement, not just the deny-list.
+  def test_denies_symlink_chain_leaving_the_allowed_roots
+    with_fake_home do |home|
+      outside = File.join(__dir__, '..', '..', 'tmp', "chain_escape_#{Process.pid}")
+      links = [File.join(home, 'e1'), File.join(home, 'e2')]
+      FileUtils.rm_f(links)
+      File.symlink(outside, links[0])
+      File.symlink(links[0], links[1])
+
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.validate_path!(Handlers::Files.normalize_path(links[1]))
+      end
+    ensure
+      FileUtils.rm_f((links || []) + [outside].compact)
+    end
+  end
+
+  # A chain that loops must be refused rather than followed forever.
+  def test_refuses_a_symlink_loop_without_hanging
+    with_fake_home do |home|
+      a = File.join(home, 'loop_a')
+      b = File.join(home, 'loop_b')
+      FileUtils.rm_f([a, b])
+      File.symlink(b, a)
+      File.symlink(a, b)
+
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.validate_path!(Handlers::Files.normalize_path(a))
+      end
+    ensure
+      FileUtils.rm_f([a, b].compact)
+    end
+  end
+
+  # Chains to permitted destinations stay usable.
+  def test_allows_multi_hop_symlink_chain_to_an_allowed_path
+    with_fake_home do |home|
+      target = File.join(home, 'ok.txt')
+      links = [File.join(home, 'g1'), File.join(home, 'g2')]
+      FileUtils.rm_f(links + [target])
+      File.symlink(target, links[0])
+      File.symlink(links[0], links[1])
+
+      Handlers::Files.validate_path!(Handlers::Files.normalize_path(links[1]))
+    ensure
+      FileUtils.rm_f((links || []) + [target].compact)
+    end
+  end
+
   # A hardlink is a second name for the same inode. realpath resolves it to
   # itself, so name-based checks cannot see the denied original — the deny-list
   # has to compare device+inode.

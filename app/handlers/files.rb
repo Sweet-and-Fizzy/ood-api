@@ -227,15 +227,34 @@ module Handlers
     # with realpath, because realpath on a dangling link raises ENOENT — the
     # very case this guards. Relative targets ("../../.bashrc") resolve
     # correctly through expand_path.
+    # Follow a symlink chain to its end, lexically. realpath cannot do this
+    # when the final target does not exist, which is the whole case this
+    # guards. A single readlink is not enough either: with a -> b -> denied,
+    # one hop reports `b`, an innocuous name, and the real destination is
+    # never examined — that let a two-hop chain write outside every allowed
+    # root, not just past the deny-list.
+    MAX_SYMLINK_HOPS = 32
+
+    def self.resolve_link_chain(path)
+      current = path
+      MAX_SYMLINK_HOPS.times do
+        return current unless current.symlink?
+
+        current = Pathname.new(File.expand_path(File.readlink(current.to_s), current.dirname.to_s))
+      end
+      # Still a link after the cap: a loop, or nested past anything legitimate.
+      raise ForbiddenError, 'Access denied: symbolic link could not be resolved'
+    end
+
     def self.deny_dangling_symlink!(path)
       return unless path.symlink?
 
-      target = Pathname.new(File.expand_path(File.readlink(path.to_s), path.dirname.to_s))
+      target = resolve_link_chain(path)
       # The allowed roots are realpath'd, so the target must be too or nothing
       # matches: on macOS Dir.tmpdir is /var/folders/... while its realpath is
       # /private/var/folders/.... The target itself may not exist, so resolve
       # through its nearest existing ancestor, as validate_path! does.
-      resolved = target.exist? ? target.realpath : find_real_parent(target)
+      resolved = target.exist? ? target.realpath : resolved_destination(target)
 
       deny_sensitive!(target, resolved)
       raise ForbiddenError, 'Access denied: path not in allowed directories' unless
