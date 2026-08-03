@@ -195,7 +195,45 @@ module Handlers
       raise ForbiddenError, 'Access denied: path not in allowed directories' unless allowed
 
       deny_sensitive!(path, real_path)
+      deny_dangling_symlink!(path)
       deny_by_inode!(path)
+    end
+
+    # A symlink whose target does not exist yet defeats every other check here.
+    # `exist?` follows the link, so a dangling one is "missing": validate_path!
+    # takes find_real_parent, which ascends the LINK's own path and reports the
+    # link's directory rather than the target's. A link at /tmp/x -> ~/.bashrc
+    # therefore resolves to /tmp, passes the allowed-roots test, and reaches
+    # deny_sensitive! as the pair (/tmp/x, /tmp) — neither is under $HOME, so
+    # the deny-list never fires. deny_by_inode! then returns early for the same
+    # reason. The subsequent write follows the link and creates the file at the
+    # target.
+    #
+    # That is the persistence case the deny-list exists to stop, and absent
+    # files are exactly the ones worth planting: .bashrc and .zshrc are missing
+    # on plenty of HPC accounts, and ~/.ssh/authorized_keys on any account that
+    # has never used key auth.
+    #
+    # readlink is resolved lexically against the link's directory rather than
+    # with realpath, because realpath on a dangling link raises ENOENT — the
+    # very case this guards. Relative targets ("../../.bashrc") resolve
+    # correctly through expand_path.
+    def self.deny_dangling_symlink!(path)
+      return unless path.symlink?
+
+      target = Pathname.new(File.expand_path(File.readlink(path.to_s), path.dirname.to_s))
+      # The allowed roots are realpath'd, so the target must be too or nothing
+      # matches: on macOS Dir.tmpdir is /var/folders/... while its realpath is
+      # /private/var/folders/.... The target itself may not exist, so resolve
+      # through its nearest existing ancestor, as validate_path! does.
+      resolved = target.exist? ? target.realpath : find_real_parent(target)
+
+      deny_sensitive!(target, resolved)
+      raise ForbiddenError, 'Access denied: path not in allowed directories' unless
+        allowed_path_roots.any? { |root| path_under?(resolved, root) }
+    rescue SystemCallError
+      # Unreadable link: refuse rather than guess where it points.
+      raise ForbiddenError, 'Access denied: symbolic link could not be resolved'
     end
 
     # Name-based checks cannot see a hardlink: a second name for a denied

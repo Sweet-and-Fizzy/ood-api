@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **A symlink whose target did not yet exist bypassed the sensitive-path
+  deny-list.** `Pathname#exist?` follows symlinks, so a dangling link looked
+  like a missing file: path validation ascended the link's own directory
+  instead of the target's. A link in `/tmp` pointing at `~/.bashrc` therefore
+  resolved to `/tmp`, passed the allowed-roots check, and reached the deny-list
+  as a pair of paths neither of which was under `$HOME`. The inode check
+  returned early for the same reason. The write then followed the link and
+  created the file at the target.
+
+  This is the persistence case the deny-list exists to prevent, and absent
+  files are the ones worth planting — `.bashrc` and `.zshrc` are missing on
+  plenty of HPC accounts, and `~/.ssh/authorized_keys` on any account that has
+  never used key authentication. It was reachable through the MCP `write_file`
+  tool, so an agent acting on injected content could establish access that
+  outlives the session. Existing denied files were always refused correctly;
+  only the not-yet-created case was affected.
+
+  Job submission was affected identically, since `output_path`, `error_path`
+  and `workdir` are validated through the same code, and the scheduler writes
+  those paths as the user.
+
+  Symlink targets are now resolved before the deny-list runs. Ordinary
+  dangling links pointing at allowed paths still work.
+
 - The CSRF filter no longer treats the presence of an `X-OOD-API-Token` header
   as grounds to skip the JSON content-type requirement on writes. The header
   was only read, never validated, and in the default configuration
