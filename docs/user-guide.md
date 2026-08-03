@@ -279,7 +279,7 @@ not a broken install.
 | `release_job` | **cluster_id**, **job_id** | Release a held job |
 
 `submit_job`'s optional parameters: `workdir`, `job_name`, `queue_name`,
-`accounting_id`, `wall_time` (seconds), `output_path`, `error_path`, `native`,
+`accounting_id`, `wall_time` (seconds), `output_path`, `error_path`,
 and dependencies (`after`, `afterok`, `afternotok`, `afterany`).
 
 > MCP tools take **flat** parameters, as listed above — `script_content`,

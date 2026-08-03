@@ -191,6 +191,8 @@ page** titled "App has not been initialized" means step 3 has not been done.
 | `OOD_API_ENV_ALLOWLIST` | No | See [docs/api.md](api.md#environment-variable-allowlist) | Comma-separated allowlist for env vars endpoint. Entries ending in `*` are prefix matches. |
 | `OOD_API_CONTEXT_PATH` | No | `/etc/ood/config/agents.d` | Path to directory containing site-specific agent context files (*.md) |
 | `OOD_API_MAX_CONTEXT_BYTES` | No | `262144` (256 KB) | Per-file cap on agent context fragments. A larger file is replaced with a note rather than served. |
+| `OOD_API_MAX_CONTEXT_TOTAL_BYTES` | No | `1048576` (1 MB) | Cap across all context fragments together. The per-file cap alone bounds nothing when there are many files. |
+| `OOD_API_ALLOW_NATIVE` | No | unset | Set to `true` to accept `options.native` on job submission. It is raw scheduler argv and can override the paths this API validates, so it is off by default — see [the note in the API guide](api.md#submit-job). |
 
 ## Troubleshooting
 

@@ -78,6 +78,55 @@ class FilesApiTest < Minitest::Test
 
   # Read file content
 
+  # The route set an octet-stream content type before the read, so every error
+  # raised afterwards kept it — and the `after` filter, which rewrites non-JSON
+  # error bodies, replaced them all with a generic {"error":"bad_request"}. A
+  # 404 reported bad_request; a 403 did too. The sibling GET /api/v1/files
+  # returns the documented body for the same conditions.
+  def test_content_errors_return_their_documented_body
+    token = create_test_token
+    dir = File.join(@test_dir, 'adir')
+    FileUtils.mkdir_p(dir)
+
+    get '/api/v1/files/content', { path: File.join(@test_dir, 'nope.txt') }, auth_header(token)
+    assert_equal 404, last_response.status
+    assert_equal 'not_found', json_response['error']
+    assert_match(/not found/i, json_response['message'])
+
+    get '/api/v1/files/content', { path: dir }, auth_header(token)
+    assert_equal 400, last_response.status
+    assert_equal 'bad_request', json_response['error']
+    assert_match(/directory/i, json_response['message'])
+  end
+
+  # A successful read must still carry the binary content type.
+  def test_content_success_keeps_the_octet_stream_type
+    token = create_test_token
+    path = File.join(@test_dir, 'ok.txt')
+    File.write(path, 'hello world')
+
+    get '/api/v1/files/content', { path: path }, auth_header(token)
+
+    assert_equal 200, last_response.status
+    assert_includes last_response.headers['content-type'].to_s, 'application/octet-stream'
+    assert_equal 'hello world', last_response.body
+  end
+
+  # PUT hardcoded "No space left on device", discarding out_of_space_message's
+  # wording. EDQUOT — a per-user home quota — is the case that actually bites on
+  # HPC sites, and POST already reported it correctly, so the two write
+  # endpoints disagreed on the same condition.
+  def test_put_reports_a_quota_failure_as_a_quota_failure
+    token = create_test_token
+    Handlers::Files.stubs(:write).raises(Handlers::StorageError, 'Disk quota exceeded')
+
+    put "/api/v1/files?path=#{CGI.escape(File.join(@test_dir, 'q.txt'))}", 'hi',
+        auth_header(token).merge('CONTENT_TYPE' => 'application/json')
+
+    assert_equal 507, last_response.status
+    assert_equal 'Disk quota exceeded', json_response['message']
+  end
+
   def test_get_files_content_returns_file
     token = create_test_token
     file_path = File.join(@test_dir, 'content.txt')
