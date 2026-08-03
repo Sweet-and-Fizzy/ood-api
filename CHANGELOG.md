@@ -24,6 +24,31 @@ variable names it previously returned.
 
 ### Security
 
+- **BREAKING: `options.native` is now disabled unless a site opts in.** It is
+  raw scheduler argv, and matching flag spellings cannot constrain it —
+  `getopt_long` accepts any unambiguous prefix, so refusing `--output` still
+  admits `--out`, `--outp` and `--outpu`. Two rounds of patching spellings did
+  not converge.
+
+  Every other part of Open OnDemand takes `native` from a trusted source: Batch
+  Connect from the site admin's `submit.yml.erb`, filtered through Rails strong
+  params so no HTTP caller can inject it; Job Composer from a file the user
+  wrote, with no HTTP surface at all. This API was the only one accepting it
+  from an arbitrary caller. The ecosystem tolerates raw argv because OOD ships
+  a Shell app — a user who can set `native` already has a terminal — and that
+  assumption is exactly what an agent driving this API does not satisfy.
+
+  Set `OOD_API_ALLOW_NATIVE=true` to restore it. Job paths are then only as
+  constrained as the scheduler makes them.
+
+- **A `#SBATCH` directive in the job script could set the output path.**
+  `sbatch` lets command-line options beat script directives, and `ood_core`
+  emits `-o` only when `output_path` is set — so a request that omitted it left
+  the script free to direct its own output, reaching a path the same request
+  would have been refused for as `output_path`. An output path is now always
+  supplied, defaulting to `slurm-%j.out` in the validated working directory,
+  which is where the scheduler would have written it anyway.
+
 - **`options.native` bypassed the job path deny-list, including when the path
   was bundled with its flag.** `output_path`,
   `error_path` and `workdir` are validated against the allowed roots and the

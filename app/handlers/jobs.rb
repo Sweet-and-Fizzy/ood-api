@@ -85,6 +85,53 @@ module Handlers
     NATIVE_SHORT_PATH_FLAGS = NATIVE_PATH_FLAGS.reject { |f| f.start_with?('--') }
                                                .sort_by { |f| -f.length }.freeze
 
+    # %j is Slurm's job-id token. Other schedulers use different tokens, but
+    # they all treat an unrecognised one as a literal, so the file still lands
+    # inside the validated workdir — the property that matters here.
+    def self.default_output_path(workdir)
+      File.join(workdir.to_s, 'slurm-%j.out')
+    end
+
+    # `native` is off unless a site turns it on.
+    #
+    # Every other system in the OOD ecosystem takes `native` from someone
+    # trusted: Batch Connect from the site admin's submit.yml.erb, filtered
+    # through Rails strong params so no HTTP caller can inject it (see
+    # session_contexts_controller.rb, `permit(@session_context.attributes.keys)`);
+    # Job Composer from a file the user wrote, with no HTTP surface at all.
+    # This app was the only one accepting it from an arbitrary API caller.
+    #
+    # The ecosystem tolerates raw argv because OOD ships a Shell app — a user
+    # who can set `native` already has a terminal, so scheduler flags grant
+    # nothing new. That assumption is exactly what this app removes: an agent
+    # driving these tools over MCP on injected input has no shell, and the
+    # deny-list is the only thing between it and ~/.ssh/authorized_keys.
+    #
+    # Flag matching cannot close this. getopt_long accepts any unambiguous
+    # prefix, so refusing `--output` still admits `--out`, `--outp`, `--outpu`;
+    # two rounds of patching the spellings did not converge. A site that needs
+    # native passthrough sets OOD_API_ALLOW_NATIVE=true and accepts that job
+    # paths are then only as constrained as sbatch makes them.
+    def self.native_allowed?
+      ENV['OOD_API_ALLOW_NATIVE'] == 'true'
+    end
+
+    def self.reject_native!(native)
+      return if native.nil? || (native.respond_to?(:empty?) && native.empty?)
+
+      unless native_allowed?
+        raise ValidationError,
+              'options.native is disabled. It is raw scheduler argv and can override ' \
+              'validated job paths, so it is opt-in: set OOD_API_ALLOW_NATIVE=true to enable it.'
+      end
+
+      validate_native_paths!(native)
+    end
+
+    # Best-effort path checking for sites that have opted in. This is defence
+    # in depth, not a guarantee — see native_allowed? for why exact-spelling
+    # matching cannot be complete.
+    #
     # `native` is raw scheduler argv, and adapters append it AFTER the options
     # this handler validated — ood_core's Slurm adapter builds `-o
     # script.output_path` at slurm.rb:644 and concatenates native at :671.
@@ -180,7 +227,19 @@ module Handlers
       job_path!(workdir)
       job_path!(options[:output_path])
       job_path!(options[:error_path])
-      validate_native_paths!(options[:native])
+      reject_native!(options[:native])
+
+      # Always give the adapter an output path, even when the caller omitted
+      # one. sbatch lets command-line options beat #SBATCH directives, and
+      # ood_core emits `-o` only `unless script.output_path.nil?` — so with no
+      # output_path a `#SBATCH --output=~/.ssh/authorized_keys` in the script
+      # body took effect, reaching a path the same request would be refused for
+      # as output_path. Defaulting it means -o is always on the command line
+      # and a script directive can never win.
+      #
+      # The default matches what Slurm would have done anyway: slurm-<jobid>.out
+      # in the working directory, which job_path! has already validated.
+      options = options.merge(output_path: default_output_path(workdir)) if options[:output_path].nil?
 
       script = build_script(script_content, workdir, options)
       deps = [:after, :afterok, :afternotok, :afterany].each_with_object({}) do |k, h|

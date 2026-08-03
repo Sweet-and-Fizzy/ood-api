@@ -358,7 +358,12 @@ Content-Type: application/json
 | `options.afternotok` | array | No | Job IDs that must fail |
 | `options.afterany` | array | No | Job IDs that must complete (any exit status) |
 
-**`options.native` is raw scheduler argv.** Each element becomes a separate
+**`options.native` is disabled by default.** It is raw scheduler argv, and
+a caller can use it to override the paths this API validates — so a site that
+wants it must set `OOD_API_ALLOW_NATIVE=true`. Without that, a request
+carrying `native` is refused with 400.
+
+When enabled: Each element becomes a separate
 command-line argument to the submit command — `["-N", "2"]` becomes `sbatch -N 2`.
 Values are not interpreted by a shell, so a value containing `;` or `$(…)` is
 passed through as one literal argument rather than executed. But any flag the
