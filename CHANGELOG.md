@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `POST /api/v1/jobs` returned 500 when a path option was not a string.
+  `job_path!` validated `path.to_s`, so a Hash became the string `{"a"=>1}` and
+  passed the check — then `Pathname.new` raised `TypeError` on the original
+  object. Path options must now be strings, refused with 400 where the other
+  path rules live.
+
 - `POST /api/v1/jobs` returned 500 when `options.native` was not an array. The
   audit field called `join` on it unguarded, so a String or Hash — a client
   mistake — surfaced as a server fault. The handler already tolerated a

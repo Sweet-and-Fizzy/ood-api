@@ -67,6 +67,12 @@ module Handlers
     def self.job_path!(path)
       return if path.nil? || path.to_s.empty?
 
+      # A path has to be a String. `to_s` below would happily turn a Hash into
+      # `{"a"=>1}` and validate that, and Pathname.new then raises TypeError on
+      # the original object — a client mistake surfacing as a 500. Reject the
+      # shape here, where the other path rules already live.
+      raise ValidationError, 'path options must be strings' unless path.is_a?(String)
+
       Files.validate_path!(Files.normalize_path(path))
     end
 
