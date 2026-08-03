@@ -7,7 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-03
+
+Follow-up fixes to v0.4.0. No API contract changes and nothing to do on
+upgrade.
+
+The one worth knowing about is the site-context endpoint: it failed outright
+when the PUN's locale was not UTF-8, which an em-dash in a policy fragment was
+enough to trigger. The rest are error responses that reported the wrong thing —
+a 404 that said `bad_request`, a disk-quota failure that said the disk was
+full, and two shapes of malformed request that returned 500 instead of 400.
+
 ### Fixed
+
+- **The site-context endpoint failed on ordinary punctuation when the PUN's
+  locale was not UTF-8.** Files were read in the locale's encoding, and with
+  `LANG` unset that is `US-ASCII` — so an em-dash in an operator's policy note
+  raised `Encoding::CompatibilityError` and took out `GET /api/v1/context` and
+  the MCP context resource entirely. The PUN's environment is whatever
+  `nginx_stage` sets, so this was not hypothetical. Context fragments and both
+  token stores are now read as UTF-8, and an invalid byte in a fragment
+  degrades that fragment rather than the endpoint.
 
 - `POST /api/v1/jobs` returned 500 when a path option was not a string.
   `job_path!` validated `path.to_s`, so a Hash became the string `{"a"=>1}` and
@@ -561,7 +581,8 @@ running as a Passenger app under the PUN as the authenticated user.
 - API token file is created with mode `0600` atomically, with no window where
   it is readable at the umask default.
 
-[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.0...v0.3.1
