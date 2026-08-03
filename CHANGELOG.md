@@ -24,6 +24,23 @@ variable names it previously returned.
 
 ### Security
 
+- **A symlink chain of two or more hops escaped path confinement entirely.**
+  The guard resolved a single `readlink`, so with `a -> b -> ~/.ssh/authorized_keys`
+  it inspected `b` — an innocuous name — and never saw the real destination.
+  One hop was refused; two were not. This defeated the allowed-roots check as
+  well as the deny-list, so a chain could write anywhere on the filesystem the
+  user can reach, not merely to a denied file. Job `output_path` and
+  `error_path` shared it. Chains are now followed to their end, with a hop cap
+  so a loop is refused rather than followed forever.
+
+- **The deny-list compared names case-sensitively.** macOS and Windows
+  filesystems are usually case-insensitive, so `~/.SSH/authorized_keys` is
+  `~/.ssh/authorized_keys` there — but only the lowercase spelling was refused,
+  and a write to the uppercase one landed on the canonical denied file. Names
+  are now compared case-folded. As with the two symlink bypasses below, this
+  only applied to a path that did not exist yet: once it does, `realpath`
+  canonicalises the case and the deny-list already caught it.
+
 - **A symlink anywhere above a target bypassed the sensitive-path deny-list.**
   Path validation resolved only as far as the nearest *existing* ancestor. With
   a link such as `~/proj/up -> ~`, a request for `~/proj/up/.ssh/authorized_keys`

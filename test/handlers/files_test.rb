@@ -422,6 +422,128 @@ class HandlersFilesTest < Minitest::Test
     end
   end
 
+  # macOS and Windows filesystems are usually case-insensitive, so
+  # ~/.SSH/authorized_keys IS ~/.ssh/authorized_keys there. The deny-list
+  # compared exact case, so the uppercase spelling was permitted and the write
+  # landed on the canonical denied file. realpath canonicalises the case once
+  # the path exists, so this only bit when the target did not yet exist — the
+  # same window the two symlink bypasses used.
+  def test_denies_denied_paths_spelled_in_a_different_case
+    with_fake_home do |home|
+      ['.BASHRC', '.Bashrc', File.join('.SSH', 'authorized_keys'),
+       File.join('.Ssh', 'AUTHORIZED_KEYS'),
+       File.join('.CONFIG', 'systemd', 'user', 'x.service')].each do |rel|
+        target = File.join(home, rel)
+        FileUtils.rm_rf(File.dirname(target)) unless File.dirname(target) == home
+
+        assert_raises(Handlers::ForbiddenError, "#{rel} must be refused whatever its case") do
+          Handlers::Files.validate_path!(Handlers::Files.normalize_path(target))
+        end
+      end
+    end
+  end
+
+  # Case-folding must not widen the match: a name that merely starts with a
+  # denied one is still ordinary.
+  def test_case_folding_does_not_refuse_ordinary_paths
+    with_fake_home do |home|
+      ['.bashrc_backup', '.BASHRC_BACKUP', 'notes.txt', 'Documents/README',
+       'sshkeys/mine.pub', '.configuration'].each do |rel|
+        Handlers::Files.validate_path!(Handlers::Files.normalize_path(File.join(home, rel)))
+      end
+    end
+  end
+
+  # APFS is normalization-insensitive: a name written in NFD reaches the same
+  # file as its NFC spelling. The deny-list compares byte-exactly after
+  # case-folding, so a non-ASCII entry would be bypassable the same way the
+  # uppercase spellings were. Every entry is ASCII today, where NFD and NFC are
+  # identical — this fails if that stops being true, so whoever adds such an
+  # entry has to normalize the comparison rather than discover it in review.
+  def test_deny_list_entries_stay_ascii_so_normalization_cannot_bypass_them
+    offenders = (Handlers::Files::DENIED_EXACT + Handlers::Files::DENIED_DIRS).reject(&:ascii_only?)
+
+    assert_empty offenders,
+                 'non-ASCII deny entries need unicode_normalize on both sides of the comparison ' \
+                 "(APFS treats NFD and NFC as the same file): #{offenders.inspect}"
+  end
+
+  # A single readlink follows one hop. With a -> b -> denied and the final
+  # target absent, the check saw `b` — an innocuous name — and never examined
+  # the real destination. One hop was refused; two were not. This escaped the
+  # allowed roots as well as the deny-list, since neither check ever saw where
+  # the write would land.
+  def test_denies_multi_hop_symlink_chain_to_a_denied_file
+    with_fake_home do |home|
+      target = File.join(home, '.ssh', 'authorized_keys')
+      FileUtils.mkdir_p(File.dirname(target))
+      hops = (1..3).map { |i| File.join(home, "hop#{i}") }
+      FileUtils.rm_f(hops)
+
+      File.symlink(target, hops[0])
+      File.symlink(hops[0], hops[1])
+      File.symlink(hops[1], hops[2])
+
+      hops.each_with_index do |link, i|
+        assert_raises(Handlers::ForbiddenError, "a #{i + 1}-hop chain to authorized_keys must be refused") do
+          Handlers::Files.validate_path!(Handlers::Files.normalize_path(link))
+        end
+      end
+    ensure
+      FileUtils.rm_f(hops || [])
+    end
+  end
+
+  # A chain whose end is outside every allowed root must be refused too — that
+  # is confinement, not just the deny-list.
+  def test_denies_symlink_chain_leaving_the_allowed_roots
+    with_fake_home do |home|
+      outside = File.join(__dir__, '..', '..', 'tmp', "chain_escape_#{Process.pid}")
+      links = [File.join(home, 'e1'), File.join(home, 'e2')]
+      FileUtils.rm_f(links)
+      File.symlink(outside, links[0])
+      File.symlink(links[0], links[1])
+
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.validate_path!(Handlers::Files.normalize_path(links[1]))
+      end
+    ensure
+      FileUtils.rm_f((links || []) + [outside].compact)
+    end
+  end
+
+  # A chain that loops must be refused rather than followed forever.
+  def test_refuses_a_symlink_loop_without_hanging
+    with_fake_home do |home|
+      a = File.join(home, 'loop_a')
+      b = File.join(home, 'loop_b')
+      FileUtils.rm_f([a, b])
+      File.symlink(b, a)
+      File.symlink(a, b)
+
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.validate_path!(Handlers::Files.normalize_path(a))
+      end
+    ensure
+      FileUtils.rm_f([a, b].compact)
+    end
+  end
+
+  # Chains to permitted destinations stay usable.
+  def test_allows_multi_hop_symlink_chain_to_an_allowed_path
+    with_fake_home do |home|
+      target = File.join(home, 'ok.txt')
+      links = [File.join(home, 'g1'), File.join(home, 'g2')]
+      FileUtils.rm_f(links + [target])
+      File.symlink(target, links[0])
+      File.symlink(links[0], links[1])
+
+      Handlers::Files.validate_path!(Handlers::Files.normalize_path(links[1]))
+    ensure
+      FileUtils.rm_f((links || []) + [target].compact)
+    end
+  end
+
   # A hardlink is a second name for the same inode. realpath resolves it to
   # itself, so name-based checks cannot see the denied original — the deny-list
   # has to compare device+inode.
