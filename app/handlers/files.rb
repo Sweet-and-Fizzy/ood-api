@@ -24,7 +24,12 @@ module Handlers
     # caller's mistake, not a server fault: a component that is not a directory,
     # a symlink loop, or a name longer than the filesystem allows. They escaped
     # as blank 500s on REST and as -32603 protocol errors on MCP.
-    BAD_PATH_ERRORS = [:ENOTDIR, :ELOOP, :ENAMETOOLONG, :EISDIR, :EINVAL].filter_map do |name|
+    #
+    # EEXIST is here because a symlink loop makes `exist?` false — the kernel
+    # answers ELOOP, not "no" — so `mkpath` runs on a parent that is already
+    # there and raises. Listing it centrally keeps every method that shares
+    # this rescue consistent; mkdir additionally maps it to its own message.
+    BAD_PATH_ERRORS = [:ENOTDIR, :ELOOP, :ENAMETOOLONG, :EISDIR, :EINVAL, :EEXIST].filter_map do |name|
       Errno.const_get(name) if Errno.const_defined?(name)
     end.freeze
 

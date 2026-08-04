@@ -115,12 +115,28 @@ module OodApi
   end
 
   JSONRPC_INTERNAL_ERROR = -32_603
+  JSONRPC_INVALID_PARAMS = -32_602
 
-  def self.jsonrpc_error(status, message)
+  # JSON has no Infinity literal, but `1e400` overflows to Float::INFINITY when
+  # parsed. json_schemer validates an integer-typed parameter by calling
+  # Float#floor, which raises FloatDomainError on a non-finite value — so the
+  # schema check itself dies before any handler runs, and the app's own numeric
+  # guards never get a chance. Refuse the value here, where it is still a
+  # client error, rather than reporting it as an internal fault.
+  def self.non_finite_number?(value)
+    case value
+    when Float then !value.finite?
+    when Hash then value.any? { |_, v| non_finite_number?(v) }
+    when Array then value.any? { |v| non_finite_number?(v) }
+    else false
+    end
+  end
+
+  def self.jsonrpc_error(status, message, code = JSONRPC_INTERNAL_ERROR)
     [status,
      { 'Content-Type' => 'application/json' },
      [{ jsonrpc: '2.0', id: nil,
-        error: { code: JSONRPC_INTERNAL_ERROR, message: message } }.to_json]]
+        error: { code: code, message: message } }.to_json]]
   end
 
   def self.mcp_rack_app(transport = build_mcp_transport)
@@ -140,7 +156,20 @@ module OodApi
                 [{ error: 'unauthorized', message: 'Invalid or missing API token' }.to_json]]
       end
 
-      transport.handle_request(Rack::Request.new(env))
+      request = Rack::Request.new(env)
+      if (body = request.body&.read)
+        request.body.rewind
+        parsed = begin
+          JSON.parse(body)
+        rescue JSON::ParserError
+          nil
+        end
+        if parsed && non_finite_number?(parsed)
+          return jsonrpc_error(400, 'Invalid params: a number is not finite', JSONRPC_INVALID_PARAMS)
+        end
+      end
+
+      transport.handle_request(request)
     rescue Interrupt, SystemExit
       raise
     rescue Exception => e # rubocop:disable Lint/RescueException

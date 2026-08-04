@@ -274,4 +274,50 @@ class McpServerTest < Minitest::Test
       assert_equal 200, status, "Host: #{host} must be served — Apache validates Host upstream"
     end
   end
+
+  # JSON has no Infinity literal, but `1e400` overflows to Float::INFINITY on
+  # parse. json_schemer validates an integer-typed param by calling
+  # Float#floor, which raises FloatDomainError — so the schema check died
+  # before any handler ran and the app's own numeric guards never executed.
+  # The client saw -32603 internal error for what is a client mistake.
+  def test_non_finite_numbers_are_rejected_as_invalid_params
+    app = OodApi.mcp_rack_app
+
+    bodies = {
+      'max_size'  => '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":' \
+                     '{"name":"read_file","arguments":{"path":"/tmp/x","max_size":1e400}}}',
+      'negative'  => '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":' \
+                     '{"name":"read_file","arguments":{"path":"/tmp/x","max_size":-1e400}}}',
+      'wall_time' => '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":' \
+                     '{"name":"submit_job","arguments":{"cluster_id":"c","script_content":"x","wall_time":1e400}}}'
+    }
+
+    bodies.each do |label, body|
+      env = Rack::MockRequest.env_for('/', method: 'POST', input: body)
+      env['CONTENT_TYPE'] = 'application/json'
+      env['HTTP_ACCEPT'] = 'application/json, text/event-stream'
+
+      status, _headers, resp = app.call(env)
+      parsed = JSON.parse(Array(resp).join)
+
+      assert_equal 400, status, "#{label}: a non-finite number is a client error"
+      assert_equal(-32_602, parsed.dig('error', 'code'),
+                   "#{label}: must be invalid params, not internal error")
+    end
+  end
+
+  # The guard reads the body to inspect it; the transport must still see it.
+  def test_ordinary_tool_calls_still_reach_the_transport
+    app = OodApi.mcp_rack_app
+    body = '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+    env = Rack::MockRequest.env_for('/', method: 'POST', input: body)
+    env['CONTENT_TYPE'] = 'application/json'
+    env['HTTP_ACCEPT'] = 'application/json, text/event-stream'
+
+    status, _headers, resp = app.call(env)
+    parsed = JSON.parse(Array(resp).join)
+
+    assert_equal 200, status
+    assert parsed.dig('result', 'tools')&.any?, 'tools/list must still be served'
+  end
 end

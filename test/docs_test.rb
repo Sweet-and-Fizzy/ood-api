@@ -160,15 +160,35 @@ class DocsTest < Minitest::Test
     section = doc[/A credential-name deny pass runs first.*?(?=\n\n[A-Z])/m]
     refute_nil section, 'the deny-pass section moved; this guard needs updating'
 
-    stems = section.scan(/`([A-Z_][A-Z_0-9]*)`/).flatten.uniq
-    assert_operator stems.length, :>=, 20, "expected the full stem list, found #{stems.length}"
+    documented = section.scan(/`([A-Z_][A-Z_0-9]*)`/).flatten.uniq
 
-    stems.each do |stem|
-      name = stem.start_with?('_') ? "X#{stem}" : "X_#{stem}_Y"
-      probe = stem.start_with?('_') ? name : "X_#{stem}"
+    # Direction 1 — the docs promise protection the code does not provide.
+    documented.each do |stem|
+      probe = stem.start_with?('_') ? "X#{stem}" : "X_#{stem}"
       assert Handlers::Env::DENIED_PATTERN.match?(probe),
              "docs list #{stem} as denied, but DENIED_PATTERN does not match #{probe}"
     end
+
+    # Direction 2 — the code denies something the docs never mention. This is
+    # the way it has actually drifted every time: a stem is added to the
+    # pattern and the prose is not updated, so an operator cannot tell why
+    # their variable disappeared. Enumerating the pattern is what catches it;
+    # iterating the docs alone never can.
+    in_pattern = Handlers::Env::DENIED_PATTERN.source
+                                              .gsub(/#.*$/, '') # strip inline comments
+                                              .scan(/[A-Z_][A-Z_]+/).uniq
+                                              .reject { |s| ['S', 'IFICATE'].include?(s) }
+
+    missing = in_pattern.reject { |stem| documented.include?(stem) }
+    assert_empty missing,
+                 "DENIED_PATTERN refuses #{missing.join(', ')} but docs/api.md does not list " \
+                 'them — an operator cannot tell why the variable vanished'
+
+    # Exact, not a floor: a floor lets documented stems be silently dropped
+    # one at a time, and needs manual bumping on every addition — the same
+    # manual step that failed before.
+    assert_equal in_pattern.sort, documented.sort,
+                 'the documented stem list and DENIED_PATTERN must match exactly'
   end
 
   # Records every connection attempt into the returned array. Prepended rather

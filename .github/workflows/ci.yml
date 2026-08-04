@@ -35,3 +35,25 @@ jobs:
           bundler-cache: true
       - name: Run RuboCop
         run: bundle exec rubocop
+
+  # SECURITY.md documents the dependency-advisory posture, including one
+  # advisory held open behind the Ruby 3.0 floor. Dependabot cannot report on
+  # an accepted-and-pinned advisory, so without this the claim rests on
+  # someone remembering to run the tool by hand.
+  audit:
+    name: Dependency advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+      - name: Install bundler-audit
+        run: gem install bundler-audit
+      # The excon advisory is disclosed in SECURITY.md and cannot be fixed
+      # without dropping Ruby 3.0, which OOD 3.x sites need. Ignoring it here
+      # keeps the job meaningful: a NEW advisory fails the build, and dropping
+      # this line is the reminder to update SECURITY.md when the floor moves.
+      - name: Check for known advisories
+        run: bundler-audit check --update --ignore CVE-2026-54171

@@ -697,7 +697,13 @@ module OodApi
     def parse_max_size(raw)
       return nil if raw.nil? || raw.to_s.empty?
 
-      halt_bad_request('max_size must be a positive integer') unless /\A\d+\z/.match?(raw.to_s)
+      # Rack tags query values UTF-8 without checking them, so `?max_size=%FF`
+      # arrives as a String that is not well-formed text and Regexp#match?
+      # raises ArgumentError. A malformed value is not a number either way, so
+      # refuse it here rather than let it escape the route's rescue list.
+      text = raw.to_s
+      halt_bad_request('max_size must be a positive integer') unless text.valid_encoding?
+      halt_bad_request('max_size must be a positive integer') unless /\A\d+\z/.match?(text)
 
       value = raw.to_i
       halt_bad_request('max_size must be greater than zero') if value.zero?
