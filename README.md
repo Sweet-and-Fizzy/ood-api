@@ -37,7 +37,7 @@ This README is for administrators evaluating the app. The guides:
 
 Three things worth knowing before you read further.
 
-**Maturity.** v0.4.1. Verified against OOD 4.2.3 with Slurm, and running at a
+**Maturity.** v0.4.2. Verified against OOD 4.2.3 with Slurm, and running at a
 small number of sites — see [Testing](#testing) for the current list. Treat it
 as early software.
 
