@@ -116,6 +116,7 @@ module OodApi
 
   JSONRPC_INTERNAL_ERROR = -32_603
   JSONRPC_INVALID_PARAMS = -32_602
+  JSONRPC_METHOD_NOT_FOUND = -32_601
 
   # JSON has no Infinity literal, but `1e400` overflows to Float::INFINITY when
   # parsed. json_schemer validates an integer-typed parameter by calling
@@ -132,24 +133,64 @@ module OodApi
     end
   end
 
+  # The mcp gem's method handlers index `params` directly — `request[:name]`,
+  # `request.dig(:_meta, ...)`, `request[:level]` — assuming it is an object.
+  # JSON-RPC permits `params` to be an array, and the gem's own param check
+  # accepts a missing one, so a request with an array, scalar, or absent
+  # `params` reaches those handlers and raises `TypeError`/`NoMethodError`,
+  # surfacing a client mistake as a -32603 internal error. A request that
+  # carries `params` at all must carry an object; refuse anything else here.
+  #
+  # `null`/absent params is left alone: some methods (`ping`, `tools/list`)
+  # legitimately take none, and the gem handles that. Only a *present,
+  # non-object* params is malformed.
+  def self.malformed_params?(parsed)
+    return false unless parsed.is_a?(Hash) && parsed.key?('method')
+
+    params = parsed['params']
+
+    # tools/call has no meaning without a `name`, and the gem reads it as
+    # `params[:name]` — so a null or absent params reaches `nil[:name]` and
+    # crashes. For that method, params must be a present object.
+    return params.nil? || !params.is_a?(Hash) if parsed['method'] == 'tools/call'
+
+    # Every other method: a present params must be an object, but an absent one
+    # is fine (ping, tools/list take none, and the gem handles that).
+    parsed.key?('params') && !params.nil? && !params.is_a?(Hash)
+  end
+
   # A tools/call whose `arguments` is present but not an object reaches the mcp
   # gem's schema check, which calls `.keys` on it and raises for any tool with
-  # a required parameter — surfacing a client mistake as a -32603 internal
-  # error. JSON-RPC params must be structured; an array or scalar `arguments`
-  # is malformed. Refuse it here as invalid params, matching how the non-finite
-  # pre-check handles the same kind of gem-level crash. `null`/absent is fine —
-  # the gem coerces it to an empty hash.
+  # a required parameter. Only reached after malformed_params? has confirmed
+  # `params` is an object, so the dig here is safe.
   def self.malformed_tool_arguments?(parsed)
     return false unless parsed.is_a?(Hash) && parsed['method'] == 'tools/call'
+    return false unless parsed['params'].is_a?(Hash)
 
-    args = parsed.dig('params', 'arguments')
+    args = parsed['params']['arguments']
     !args.nil? && !args.is_a?(Hash)
   end
 
-  # Two client-input shapes crash the mcp gem one layer below the app's own
-  # validation, surfacing as -32603 internal errors. Catch them here, on the
-  # parsed body, and return the JSON-RPC 400 the lambda should send — or nil to
-  # let the request through to the transport.
+  # Methods the gem dispatches but this app does not implement — it registers
+  # no prompts, no completion, no resource subscriptions, and no log-level
+  # handler. The gem answers each with an uncoded capability error that its own
+  # mapper turns into -32603 "internal error", when the honest answer is
+  # -32601 "method not found". Refuse them here with the right code. An unknown
+  # method the gem does not dispatch already returns -32601 on its own.
+  UNSUPPORTED_METHODS = [
+    'prompts/get', 'prompts/list', 'completion/complete',
+    'resources/subscribe', 'resources/unsubscribe', 'logging/setLevel'
+  ].freeze
+
+  def self.unsupported_method?(parsed)
+    parsed.is_a?(Hash) && UNSUPPORTED_METHODS.include?(parsed['method'])
+  end
+
+  # Caller-input shapes that crash the mcp gem one layer below its dispatch,
+  # surfacing as -32603 internal errors (or, for a non-object params, an
+  # unrescued TypeError → HTTP 500). Catch them here, on the parsed body, and
+  # return the JSON-RPC error the lambda should send — or nil to let the
+  # request through to the transport.
   def self.precheck_request_body(request)
     body = request.body&.read or return nil
     request.body.rewind
@@ -160,8 +201,12 @@ module OodApi
     end
     return nil unless parsed
 
-    if non_finite_number?(parsed)
+    if unsupported_method?(parsed)
+      jsonrpc_error(400, 'Method not found', JSONRPC_METHOD_NOT_FOUND)
+    elsif non_finite_number?(parsed)
       jsonrpc_error(400, 'Invalid params: a number is not finite', JSONRPC_INVALID_PARAMS)
+    elsif malformed_params?(parsed)
+      jsonrpc_error(400, 'Invalid params: params must be an object', JSONRPC_INVALID_PARAMS)
     elsif malformed_tool_arguments?(parsed)
       jsonrpc_error(400, 'Invalid params: tool arguments must be an object', JSONRPC_INVALID_PARAMS)
     end

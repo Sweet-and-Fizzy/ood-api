@@ -363,4 +363,65 @@ class McpServerTest < Minitest::Test
                    "#{args} must not be refused by the shape pre-check")
     end
   end
+
+  # Post a raw JSON-RPC body and return [status, error_code].
+  def mcp_post(raw)
+    env = Rack::MockRequest.env_for('/', method: 'POST', input: raw)
+    env['CONTENT_TYPE'] = 'application/json'
+    env['HTTP_ACCEPT'] = 'application/json, text/event-stream'
+    status, _headers, resp = OodApi.mcp_rack_app.call(env)
+    [status, JSON.parse(Array(resp).join).dig('error', 'code')]
+  end
+
+  # JSON-RPC permits `params` to be an array, and the gem's own param check
+  # accepts a missing one — but the gem's method handlers index params as an
+  # object (`request[:name]`, `request.dig(:_meta, …)`). A non-object or, for
+  # tools/call, an absent params reached those handlers and raised, surfacing
+  # as a -32603 (and, for the guard's own dig into a non-hash params, a 500).
+  # All are refused as invalid params before the transport.
+  def test_non_object_params_are_rejected_as_invalid_params
+    [
+      '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":[1,2]}',
+      '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":5}',
+      '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":null}',
+      '{"jsonrpc":"2.0","id":1,"method":"tools/call"}',
+      '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":[]}',
+      '{"jsonrpc":"2.0","id":1,"method":"initialize","params":"x"}'
+    ].each do |raw|
+      status, code = mcp_post(raw)
+      assert_equal 400, status, "#{raw} must be a 400, not a 500 or 200"
+      assert_equal(-32_602, code, "#{raw} must be invalid params, not internal error")
+    end
+  end
+
+  # Methods the app does not implement (no prompts, completion, subscriptions,
+  # or log-level handler) were dispatched by the gem and failed as -32603
+  # internal errors. They are refused as -32601 method-not-found, the honest
+  # code, before the transport.
+  def test_unsupported_methods_are_method_not_found
+    [
+      '{"jsonrpc":"2.0","id":1,"method":"prompts/get","params":{"name":"x"}}',
+      '{"jsonrpc":"2.0","id":1,"method":"completion/complete","params":{"ref":{}}}',
+      '{"jsonrpc":"2.0","id":1,"method":"resources/subscribe","params":{"uri":"x"}}',
+      '{"jsonrpc":"2.0","id":1,"method":"logging/setLevel","params":{"level":"debug"}}'
+    ].each do |raw|
+      status, code = mcp_post(raw)
+      assert_equal(-32_601, code, "#{raw} must be method-not-found, not internal error")
+      assert_equal 400, status
+    end
+  end
+
+  # A method the app DOES support with a well-formed object params must still
+  # reach the transport, not be caught by any pre-check.
+  def test_supported_methods_with_object_params_reach_the_transport
+    [
+      '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}',
+      '{"jsonrpc":"2.0","id":1,"method":"ping"}',
+      '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"ood://context"}}'
+    ].each do |raw|
+      status, code = mcp_post(raw)
+      assert_equal 200, status, "#{raw} must reach the transport"
+      assert_nil code, "#{raw} must not be refused by a pre-check"
+    end
+  end
 end
