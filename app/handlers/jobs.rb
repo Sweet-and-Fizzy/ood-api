@@ -62,6 +62,22 @@ module Handlers
       [job, cluster]
     end
 
+    # Job paths are not files this API writes itself — they are handed to the
+    # scheduler layer, and not every backend treats them as inert data. To stay
+    # safe across all of them without assuming which one a site runs, the path
+    # fields take an allow-list rather than trying to enumerate what to reject.
+    #
+    # The permitted set is what a real scheduler output path needs and nothing
+    # more: alphanumerics, `._-/+=:@~` for path structure and file names, `%`
+    # for the job-id token (`slurm-%j.out`), and any non-ASCII codepoint so an
+    # accented or CJK username in a path is not refused. What is excluded is
+    # the ASCII danger set — spaces, control characters, and punctuation — none
+    # of which belongs in a job path. The list is intentionally tight; loosen
+    # it only with care, since these values leave the app's control once
+    # submitted. General file paths (the file API) are unaffected; this guards
+    # only the scheduler-bound path fields.
+    JOB_PATH_ALLOWED = %r{\A[A-Za-z0-9._/%+=:@~\u{0080}-\u{10FFFF}-]*\z}
+
     # Paths the scheduler will write to on the user's behalf get the same
     # treatment as paths the file tools touch.
     def self.job_path!(path)
@@ -72,6 +88,15 @@ module Handlers
       # the original object — a client mistake surfacing as a 500. Reject the
       # shape here, where the other path rules already live.
       raise ValidationError, 'path options must be strings' unless path.is_a?(String)
+
+      # valid_encoding? first: Regexp#match? raises ArgumentError on invalid
+      # UTF-8, which would surface as a 500. A malformed path is a bad request,
+      # and normalize_path below reports it as one — but only if we reach it.
+      unless path.valid_encoding? && path.match?(JOB_PATH_ALLOWED)
+        raise ValidationError,
+              'job path may contain only letters, digits and ._-/%+=:@~ ' \
+              '(no spaces or other punctuation)'
+      end
 
       Files.validate_path!(Files.normalize_path(path))
     end
