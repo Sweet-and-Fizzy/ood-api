@@ -53,8 +53,10 @@ per-app auth config. Browser login still works (`auth-openidc` is a superset of
 `update_ood_portal`, and restart `httpd`.
 
 **Your IdP must issue JWT access tokens**, since Apache validates the signature
-against the JWKS. Keycloak does by default; CILogon issues opaque tokens and
-needs [a different approach](mcp-auth.md).
+against the JWKS. Keycloak and Dex do by default. CILogon issues opaque tokens
+unless it has configured a token handler for your client, and those cannot be
+validated this way — see
+[If your IdP issues opaque access tokens](mcp-auth.md#if-your-idp-issues-opaque-access-tokens).
 
 **Set `OIDCOAuthRemoteUserClaim` to a claim your [`user_map_match`][portal-yml]
 accepts.** The wrong one authenticates the request and then fails with
@@ -90,11 +92,14 @@ If that page 404s, check that every file under `dashboard-plugin/` is root-owned
 loaded` through Rails, so look in the Dashboard's own log
 (`~/ondemand/data/sys/dashboard/log/production.log`) rather than the PUN log.
 
-**A caveat if your IdP cannot issue JWTs** (Google OIDC, CILogon): Apache then
+**A caveat if your IdP does not issue JWT access tokens** (Google OIDC, and
+CILogon unless it has configured a token handler for your client): Apache then
 only accepts a browser session cookie, so a script has to carry a cookie copied
 from DevTools that expires with the OIDC session — 8 hours by default. Fine
 occasionally, poor for anything unattended. See
-[the REST API guide](api.md#application-tokens) for the full flow.
+[the REST API guide](api.md#application-tokens) for the full flow, and
+[If your IdP issues opaque access tokens](mcp-auth.md#if-your-idp-issues-opaque-access-tokens)
+for the introspection alternative.
 
 Tokens can also be created manually:
 
