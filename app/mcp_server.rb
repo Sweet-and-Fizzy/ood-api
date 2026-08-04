@@ -132,6 +132,41 @@ module OodApi
     end
   end
 
+  # A tools/call whose `arguments` is present but not an object reaches the mcp
+  # gem's schema check, which calls `.keys` on it and raises for any tool with
+  # a required parameter — surfacing a client mistake as a -32603 internal
+  # error. JSON-RPC params must be structured; an array or scalar `arguments`
+  # is malformed. Refuse it here as invalid params, matching how the non-finite
+  # pre-check handles the same kind of gem-level crash. `null`/absent is fine —
+  # the gem coerces it to an empty hash.
+  def self.malformed_tool_arguments?(parsed)
+    return false unless parsed.is_a?(Hash) && parsed['method'] == 'tools/call'
+
+    args = parsed.dig('params', 'arguments')
+    !args.nil? && !args.is_a?(Hash)
+  end
+
+  # Two client-input shapes crash the mcp gem one layer below the app's own
+  # validation, surfacing as -32603 internal errors. Catch them here, on the
+  # parsed body, and return the JSON-RPC 400 the lambda should send — or nil to
+  # let the request through to the transport.
+  def self.precheck_request_body(request)
+    body = request.body&.read or return nil
+    request.body.rewind
+    parsed = begin
+      JSON.parse(body)
+    rescue JSON::ParserError
+      nil
+    end
+    return nil unless parsed
+
+    if non_finite_number?(parsed)
+      jsonrpc_error(400, 'Invalid params: a number is not finite', JSONRPC_INVALID_PARAMS)
+    elsif malformed_tool_arguments?(parsed)
+      jsonrpc_error(400, 'Invalid params: tool arguments must be an object', JSONRPC_INVALID_PARAMS)
+    end
+  end
+
   def self.jsonrpc_error(status, message, code = JSONRPC_INTERNAL_ERROR)
     [status,
      { 'Content-Type' => 'application/json' },
@@ -157,16 +192,8 @@ module OodApi
       end
 
       request = Rack::Request.new(env)
-      if (body = request.body&.read)
-        request.body.rewind
-        parsed = begin
-          JSON.parse(body)
-        rescue JSON::ParserError
-          nil
-        end
-        if parsed && non_finite_number?(parsed)
-          return jsonrpc_error(400, 'Invalid params: a number is not finite', JSONRPC_INVALID_PARAMS)
-        end
+      if (bad = precheck_request_body(request))
+        return bad
       end
 
       transport.handle_request(request)
