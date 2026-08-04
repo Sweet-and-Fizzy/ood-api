@@ -252,6 +252,20 @@ class HandlersEnvTest < Minitest::Test
     end
   end
 
+  # The allowlist is parsed with String#split, which raises on invalid UTF-8.
+  # This value comes from the PUN's environment rather than from a request, so
+  # one stray byte in a site's OOD_API_ENV_ALLOWLIST took out the endpoint on
+  # both surfaces instead of narrowing it.
+  def test_a_malformed_allowlist_does_not_break_the_endpoint
+    ENV['OOD_API_ENV_ALLOWLIST'] = (+"SLURM_\xFF,HOME").force_encoding('UTF-8')
+
+    result = Handlers::Env.list
+    assert_kind_of Hash, result, 'a malformed allowlist entry must not raise'
+    assert result.key?('HOME'), 'the well-formed entries must still be honoured'
+  ensure
+    ENV.delete('OOD_API_ENV_ALLOWLIST')
+  end
+
   # filtered_env runs the same pattern over every name in the real
   # environment. One malformed variable in the PUN's environment took out
   # list_env on both surfaces for every request, not just the caller's.

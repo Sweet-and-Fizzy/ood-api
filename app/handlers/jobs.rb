@@ -165,7 +165,7 @@ module Handlers
     end
 
     def self.validate_native_paths!(native)
-      # Anything other than a flat array of strings is refused rather than
+      # Anything other than a flat array of scalars is refused rather than
       # skipped. Returning early here meant a String or Hash `native` bypassed
       # path validation entirely, leaving whatever ood_core made of it to
       # decide the outcome — and a nested array flattens to argv on the way to

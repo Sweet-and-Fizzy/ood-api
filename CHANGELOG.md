@@ -7,8 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- CI now runs `bundler-audit` on every push and pull request. `SECURITY.md`
+  documents the dependency-advisory posture including one advisory held open
+  behind the Ruby 3.0 floor, and Dependabot cannot report on an accepted-and-
+  pinned advisory — so that claim previously rested on someone remembering to
+  run the tool by hand. A new advisory now fails the build.
+
 ### Fixed
 
+- **`?max_size=%FF` returned a 500.** Rack tags query values UTF-8 without
+  validating them, so a regex in the route raised `ArgumentError` and escaped
+  the route's rescue list. The same class was fixed in the handlers last
+  release; this site lived in the route and was missed. A malformed
+  `OOD_API_ENV_ALLOWLIST` broke the environment endpoint the same way, since
+  `String#split` also raises on invalid UTF-8.
+- **A non-finite number in an MCP tool argument returned an internal error.**
+  JSON has no Infinity literal, but `1e400` overflows to `Float::INFINITY` on
+  parse, and the schema validator calls `Float#floor` on it — so validation
+  died before any handler ran and the app's own numeric guards never
+  executed. Non-finite numbers are now refused at the MCP boundary as invalid
+  params.
+- **`PUT /api/v1/files` returned a 500 through a symlink loop.** A loop makes
+  `exist?` false, so the parent-directory create ran on a path that was
+  already there and raised `EEXIST`, which the write path did not rescue.
 - **Five validators crashed on unexpected input instead of refusing it**,
   turning a client mistake into a 500 on REST and a JSON-RPC internal error on
   MCP. `options.wall_time` and `max_size` rescued `TypeError`/`ArgumentError`

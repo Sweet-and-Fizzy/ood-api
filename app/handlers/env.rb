@@ -93,6 +93,11 @@ module Handlers
     def self.allowlist
       custom = ENV.fetch('OOD_API_ENV_ALLOWLIST', nil)
       if custom
+        # String#split raises on invalid UTF-8, and this value comes from the
+        # PUN's environment rather than from code — a stray byte in a site's
+        # allowlist would take out the endpoint on both surfaces rather than
+        # narrowing it. Scrub so a malformed entry simply fails to match.
+        custom = custom.scrub('?') unless custom.valid_encoding?
         entries = custom.split(',').map(&:strip).reject(&:empty?).uniq
         prefixes = []
         exact = []

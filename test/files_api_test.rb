@@ -168,6 +168,26 @@ class FilesApiTest < Minitest::Test
     assert_match(/max_size/, last_response.body)
   end
 
+  # Rack tags query values UTF-8 without validating them, and Regexp#match?
+  # raises ArgumentError on invalid bytes — so `?max_size=%FF` escaped the
+  # route's rescue list as a 500. Every handler-level regex had an encoding
+  # guard; this one lived in the route and was missed.
+  def test_get_files_content_rejects_max_size_that_is_not_valid_utf8
+    token = create_test_token
+    file_path = File.join(@test_dir, 'enc.txt')
+    File.write(file_path, 'test content')
+
+    ["\xFF", "5\xFF", "\xC3\x28"].each do |raw|
+      get '/api/v1/files/content',
+          { path: file_path, max_size: (+raw).force_encoding('UTF-8') },
+          auth_header(token)
+
+      assert_equal 400, last_response.status,
+                   "max_size #{raw.bytes.inspect} must be a 400, not a 500"
+      assert_match(/max_size/, last_response.body)
+    end
+  end
+
   def test_get_files_content_rejects_non_numeric_max_size
     token = create_test_token
     file_path = File.join(@test_dir, 'abc.txt')

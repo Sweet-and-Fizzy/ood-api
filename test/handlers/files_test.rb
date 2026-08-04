@@ -736,6 +736,23 @@ class HandlersFilesTest < Minitest::Test
     assert_match(/null byte/, err.message)
   end
 
+  # A symlink loop makes `exist?` false — the kernel answers ELOOP rather than
+  # "no" — so `mkpath` ran on a parent that was already there and raised
+  # EEXIST, which write did not rescue. mkdir rescued it; its siblings did not.
+  def test_write_through_a_symlink_loop_is_a_client_error
+    loop_a = File.join(@test_dir, 'loop_a')
+    loop_b = File.join(@test_dir, 'loop_b')
+    File.symlink(loop_b, loop_a)
+    File.symlink(loop_a, loop_b)
+
+    error = assert_raises(Handlers::ValidationError, Handlers::ForbiddenError) do
+      Handlers::Files.write(path: File.join(loop_a, 'child.txt'), content: 'x')
+    end
+    refute_nil error
+  ensure
+    FileUtils.rm_f([loop_a, loop_b])
+  end
+
   # max_size was guarded with `to_i < 1`, and to_i on Float::INFINITY raises
   # FloatDomainError rather than returning a number. The REST route's
   # /\A\d+\z/ blocked that spelling, so MCP — which passes the value straight

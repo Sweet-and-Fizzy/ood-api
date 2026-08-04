@@ -32,8 +32,9 @@ bundle exec rubocop
 
 ## Before you open a pull request
 
-CI runs the test suite across Ruby 3.0–3.3 plus RuboCop, and will fail on any
-of the following. Running them locally first is faster than a round trip.
+CI runs the test suite across Ruby 3.0–3.3, and RuboCop once on 3.2. It will
+fail on any of the following. Running them locally first is faster than a
+round trip.
 
 ```bash
 bundle exec rake test      # 0 failures
@@ -77,9 +78,9 @@ CI and are deliberately out of scope.
 
 **Coverage.** The suite enforces a line-coverage floor (currently 91%) when
 `COVERAGE_ENFORCE=1` is set, which CI does. Don't lower the floor to make a
-change pass. Note that a plain `bundle exec rake test` reports a *higher*
-figure than the enforced run, because enforcement tracks a wider set of files —
-so run it the way CI does before you push:
+change pass. Both runs report the same figure — the variable only decides
+whether falling below the floor fails the run — so run it the way CI does
+before you push:
 
 ```bash
 COVERAGE_ENFORCE=1 bundle exec rake test
