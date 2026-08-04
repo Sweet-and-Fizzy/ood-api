@@ -3,11 +3,17 @@
 This guide configures your OOD site so MCP clients (Claude Code, Claude
 Desktop, Cursor, etc.) can authenticate and use the API programmatically.
 
-Both methods below produce the same thing: a **JWT in an `Authorization: Bearer`
-header**, which is what ood-api authenticates with. They differ only in how the
-client obtains that JWT. This is separate from
-[application tokens](installation.md#optional-application-tokens), which some
-sites require *in addition* in an `X-OOD-API-Token` header.
+Both methods below produce the same thing: a **bearer token in an
+`Authorization` header**, which Apache validates before the request reaches
+ood-api. They differ only in how the client obtains that token. This is
+separate from [application tokens](installation.md#optional-application-tokens),
+which some sites require *in addition* in an `X-OOD-API-Token` header.
+
+Both methods assume your IdP issues **JWT access tokens**, which Apache can
+validate offline against a JWKS. Not every IdP does — CILogon issues opaque
+access tokens by default, and neither method works as written there. See
+[If your IdP issues opaque access tokens](#if-your-idp-issues-opaque-access-tokens)
+before you start.
 
 Both build on the same core setup — Method 1 is a subset of Method 2, so you can
 start simple and add OAuth discovery later.
@@ -24,8 +30,10 @@ start simple and add OAuth discovery later.
 
 - Open OnDemand 3.x or 4.x with ood-api installed
 - HTTPS (required in production)
-- An OIDC identity provider with a JWKS endpoint (CILogon, Keycloak,
-  Dex, institutional IdPs)
+- An OIDC identity provider that issues **JWT access tokens** and publishes a
+  JWKS endpoint (Keycloak, Dex, many institutional IdPs). CILogon issues
+  opaque access tokens by default and needs
+  [a different approach](#if-your-idp-issues-opaque-access-tokens).
 
 ## Core setup
 
@@ -60,8 +68,10 @@ no effect until it expires on its own.
 
 If prompt revocation matters at your site, the options are short
 access-token lifetimes paired with refresh, or introspecting on every
-request — which adds a network dependency to every API call. Neither is
-implemented in ood-api today.
+request — `OIDCOAuthTokenIntrospectionInterval -1`, which adds a network
+dependency to every API call. Introspection at its default interval does
+*not* help: it caches until the token's own expiry, so it gives the same
+guarantee as JWKS validation. Neither option is implemented in ood-api today.
 
 ### Configuration
 
@@ -233,14 +243,20 @@ This tells clients the IdP's OAuth endpoints. If your IdP already
 publishes its own at `https://your-idp/.well-known/oauth-authorization-server`,
 you can skip this file — clients will fetch it from the IdP directly.
 
-**CILogon example:**
+**CILogon example.** The endpoints below are correct, but note that CILogon
+issues opaque access tokens unless a token handler is configured for your
+client — so Method 2 does not work end-to-end there without the introspection
+setup described under
+[If your IdP issues opaque access tokens](#if-your-idp-issues-opaque-access-tokens).
+Kept here because the endpoint list is still the right reference for a CILogon
+site.
 
 ```json
 {
   "issuer": "https://cilogon.org",
   "authorization_endpoint": "https://cilogon.org/authorize",
   "token_endpoint": "https://cilogon.org/oauth2/token",
-  "registration_endpoint": "https://cilogon.org/oauth2/register",
+  "registration_endpoint": "https://cilogon.org/oauth2/oidc-cm",
   "device_authorization_endpoint": "https://cilogon.org/oauth2/device_authorization",
   "revocation_endpoint": "https://cilogon.org/oauth2/revoke",
   "introspection_endpoint": "https://cilogon.org/oauth2/introspect",
@@ -251,8 +267,8 @@ you can skip this file — clients will fetch it from the IdP directly.
     "refresh_token",
     "urn:ietf:params:oauth:grant-type:device_code"
   ],
-  "code_challenge_methods_supported": ["S256"],
-  "token_endpoint_auth_methods_supported": ["none"]
+  "code_challenge_methods_supported": ["plain", "S256"],
+  "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"]
 }
 ```
 
@@ -271,7 +287,7 @@ you can skip this file — clients will fetch it from the IdP directly.
 > `refresh_token`, `device_code`, `client_credentials`, and RFC 8693
 > token-exchange, plus revocation and introspection endpoints. These are
 > **not tested against ood-api** and are not part of either method
-> documented here — see [Token lifecycle](#token-lifecycle-untested)
+> documented here — see [Token lifecycle](#token-lifecycle-partly-untested)
 > below before relying on them.
 
 **Keycloak example:**
@@ -438,7 +454,153 @@ If DCR is not available, pre-register an OAuth client in your IdP with:
 
 Give users the client ID to configure in their MCP client settings.
 
-## Token lifecycle (untested)
+## If your IdP issues opaque access tokens
+
+Both methods above rely on Apache validating a bearer token offline: it fetches
+the IdP's signing keys once and checks the token's signature itself. That only
+works when the access token is a **JWT** — a signed, self-describing token.
+
+Some IdPs issue **opaque** access tokens instead: a random string that carries
+no claims and cannot be validated without asking the IdP about it. Local
+validation against a JWKS does not apply, so Apache has to ask the IdP —
+configure `OIDCOAuthIntrospectionEndpoint` with a client ID and secret rather
+than relying on `OIDCOAuthVerifyJwksUri`.
+
+The three directives go in `oidc_settings`, the same block
+[installation step 2](installation.md#2-configure-authentication) already uses.
+The portal generator emits each key verbatim as an Apache directive, but only
+inside the OIDC block — so `oidc_uri`, `oidc_provider_metadata_url` and
+`oidc_client_id` must already be set, which they are at any site doing browser
+SSO:
+
+```yaml
+oidc_settings:
+  OIDCOAuthIntrospectionEndpoint: 'https://cilogon.org/oauth2/introspect'
+  OIDCOAuthClientID: 'cilogon:/client_id/YOUR_CLIENT_ID'
+  OIDCOAuthClientSecret: 'YOUR_CLIENT_SECRET'
+  OIDCOAuthRemoteUserClaim: 'username'
+```
+
+Replace `OIDCOAuthVerifyJwksUri` from
+[installation step 2](installation.md#2-configure-authentication) with these —
+they are alternative validation paths, not additions.
+
+**`OIDCOAuthRemoteUserClaim` is the setting to get right**, and its value
+differs from the JWKS path. Under introspection the "claims" are the fields of
+the *introspection response*, not of a JWT. CILogon's response contains
+`client_id`, `exp`, `iat`, `iss`, `jti`, `nbf`, `scope`, `token_type` and
+`username` — note there is **no `sub`**, which is `mod_auth_openidc`'s default
+and is also what the install guide tells ACCESS sites to use for JWT
+validation. Left at the default, every request fails to map a user. Set it to
+a field your response actually contains, and make sure that value is one your
+[`user_map_match`](https://osc.github.io/ood-documentation/latest/reference/files/ood-portal-yml.html)
+accepts.
+
+The other defaults are usually fine: client authentication is
+`client_secret_basic` and the token is sent as the `token` parameter.
+
+**This does not cost a round trip per request.** `mod_auth_openidc` caches an
+introspection result until the token's own expiry —
+`OIDCOAuthTokenIntrospectionInterval` defaults to `0`, meaning "cache until
+`exp`". Setting it to `-1` is what makes it introspect on every request, and a
+positive value bounds the cache to that many seconds. The same directive also
+bounds the cache for locally validated JWTs, so it is worth knowing whichever
+path you take.
+
+The corollary matters more than the cost: at the default, revoking a token at
+the IdP does not take effect until it expires — the same limitation
+[described above](#a-revoked-token-keeps-working-until-it-expires) for JWKS
+validation. **Introspection does not buy prompt revocation unless you set
+`-1`**, and that is the setting that costs a round trip.
+
+**Two caveats before you build on this.** Upstream marks the OAuth 2.0
+resource-server functionality in `mod_auth_openidc` — the whole `OIDCOAuth*`
+family — as deprecated and superseded by
+[`mod_oauth2`](https://github.com/OpenIDC/mod_oauth2). In practice that does
+not change what you should do today: OOD's portal generator emits only what you
+put in `oidc_settings`, and has no way to configure a different module, so
+`OIDCOAuth*` is the path available at an OOD site. The directives work in
+current releases. Treat the deprecation as a reason to watch upstream, not a
+reason to avoid this.
+
+And **ood-api has not been tested in this configuration**; the section below
+records what we established about CILogon's token format, not a working
+deployment.
+
+### CILogon
+
+CILogon issues opaque access tokens by default. We confirmed this by running a
+device-code grant against a CILogon client registered for an ACCESS-CI site: the
+`access_token` came back as a 196-character base32 string with no dots, while
+the `id_token` in the same response was a normal JWT. The opaque token
+validates through `https://cilogon.org/oauth2/introspect`, which returns
+`active: true` along with `client_id`, `exp`, `iat`, `iss`, `jti`, `nbf`,
+`scope` and `username`.
+
+This is not universal to CILogon. Its underlying OA4MP software issues a JWT
+access token when a *token handler* is configured for the client, and an opaque
+one when it is not — CILogon documents JWT issuance (SciTokens, WLCG, RFC 9068,
+GA4GH Passports) as a [Full Service subscription feature](https://www.cilogon.org/jwt).
+The LIGO/IGWN virtual issuer at `https://cilogon.org/igwn` demonstrably issues
+JWT access tokens. So the answer depends on how CILogon has configured your
+client, and it is not something you can change from your end by adjusting
+scopes or registration options.
+
+Two practical consequences:
+
+- **Discovery does not advertise the access-token format.** Neither the base
+  issuer nor `igwn` publishes `access_token_signing_alg_values_supported`, so
+  there is no field that answers this directly — request a token and look at
+  it. A JWT-issuing tenant *is* distinguishable in other ways, notably its own
+  `jwks_uri` (`https://cilogon.org:443/oauth2/certs/igwn` rather than
+  `/oauth2/certs`), but that only tells you a tenant exists. It cannot tell you
+  whether your client on the base issuer has a token handler configured, which
+  is the case that matters for ACCESS-CI sites.
+- **ACCESS-CI clients are on the base `https://cilogon.org` issuer** — there is
+  no `access` virtual issuer — so they get opaque tokens unless CILogon has
+  configured a handler for that specific client.
+
+To check your own client, request a token and inspect its shape. A JWT starts
+with `ey` and has exactly two dots; anything else is opaque:
+
+Needs `jq`, which is not installed on a stock RHEL-family OOD host
+(`dnf install jq`).
+
+```bash
+CLIENT_ID='cilogon:/client_id/YOUR_CLIENT_ID'
+CLIENT_SECRET='YOUR_CLIENT_SECRET'
+
+# Device-code grant, so no callback server is needed.
+RESP=$(curl -s -u "$CLIENT_ID:$CLIENT_SECRET" \
+  --data-urlencode 'scope=openid email profile org.cilogon.userinfo' \
+  https://cilogon.org/oauth2/device_authorization)
+DEVICE_CODE=$(echo "$RESP" | jq -r .device_code)
+echo "$RESP" | jq -r .verification_uri_complete
+```
+
+Open that URL and approve in a browser. **Then** run the exchange — running it
+first returns `authorization_pending`, which is expected rather than an error:
+
+```bash
+curl -s -u "$CLIENT_ID:$CLIENT_SECRET" \
+  -d 'grant_type=urn:ietf:params:oauth:grant-type:device_code' \
+  -d "device_code=$DEVICE_CODE" \
+  https://cilogon.org/oauth2/token \
+  | jq -r 'if .access_token == null then "not yet: \(.error)"
+           elif (.access_token | startswith("ey")) and (.access_token | split(".") | length) == 3
+           then "JWT" else "OPAQUE (\(.access_token | length) chars)" end'
+```
+
+`OPAQUE` means the JWKS methods above will not work for this client.
+
+If the result is opaque and you need bearer-token API access, the options are
+to ask CILogon whether a token handler can be configured for your client, or to
+front ood-api with an IdP that issues JWTs. Open OnDemand's own
+[ACCESS authentication guide](https://osc.github.io/ood-documentation/latest/authentication/nsf-access.html)
+configures browser SSO only and does not cover bearer-token validation, so
+there is no established recipe for this upstream.
+
+## Token lifecycle (partly untested)
 
 Everything in this section is derived from CILogon's published metadata
 and from probing its endpoints. **None of it has been exercised
@@ -460,7 +622,10 @@ not a scope requested at authorization time. Untested against ood-api.
 **Device code flow** suits a client with no browser, such as an agent
 running on a compute node. The node displays a short code the user
 approves from another device, avoiding a long-lived token pasted into
-the job environment. Untested against ood-api.
+the job environment. The grant itself works against CILogon — we used it
+to obtain a real token, as described under
+[CILogon](#cilogon) — but the resulting token has not been exercised against
+ood-api.
 
 ## Application tokens
 

@@ -122,9 +122,12 @@ on top of that.
 
 - **Open OnDemand 3.x or 4.x**, verified through 4.2.3 (Ruby 3.3.10). The
   optional Dashboard plugin needs 4.0+.
-- **An OIDC identity provider that issues JWTs**, with a JWKS endpoint Apache
-  can reach. This is the part most likely to constrain you — see
-  [installation](docs/installation.md#2-configure-authentication).
+- **An OIDC identity provider that issues JWT access tokens**, with a JWKS
+  endpoint Apache can reach. This is the part most likely to constrain you.
+  CILogon issues opaque access tokens unless it has configured a token handler
+  for your client, which needs
+  [a different setup](docs/mcp-auth.md#if-your-idp-issues-opaque-access-tokens).
+  See [installation](docs/installation.md#2-configure-authentication).
 - Nothing on your compute nodes. The app runs on the OOD host and reaches
   clusters through `ood_core`, and `mod_auth_openidc` already ships with OOD.
 
@@ -135,7 +138,8 @@ NGINX, verify. Full walkthrough in
 **[docs/installation.md](docs/installation.md)**.
 
 How long it takes depends almost entirely on your identity provider. If it
-already issues JWTs and you know which claim maps to your usernames, it is a
+already issues JWT access tokens and you know which claim maps to your
+usernames, it is a
 short job. If not, expect to spend your time there rather than on the app.
 
 

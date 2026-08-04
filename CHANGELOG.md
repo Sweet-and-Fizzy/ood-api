@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+
+- **`docs/mcp-auth.md` claimed CILogon works with the JWKS bearer-token setup;
+  it does not.** CILogon issues opaque access tokens unless it has configured a
+  token handler for the client, and Apache cannot validate those offline
+  against a JWKS — confirmed by running a device-code
+  grant against a real CILogon client and getting back a 196-character base32
+  access token alongside a JWT `id_token`. `docs/installation.md` already said
+  this and pointed at `mcp-auth.md`, which then contradicted it, so a CILogon
+  site was sent to a page telling it the opposite. There is now a section
+  explaining what opaque tokens mean for `mod_auth_openidc`, the three
+  directives an introspection setup needs, and how to check your own client.
+  Whether a client gets JWTs depends on a token handler CILogon configures, so
+  this is per-client rather than a property of CILogon as a whole, and no
+  discovery field advertises it.
+- The same section previously said introspection costs a network round trip on
+  every API call. It does not by default: `mod_auth_openidc` caches an
+  introspection result until the token's own expiry, and only
+  `OIDCOAuthTokenIntrospectionInterval -1` introspects per request. The
+  corollary is now stated too — at the default interval, introspection gives
+  no better revocation than JWKS validation.
+- The `OIDCOAuth*` directives are marked deprecated upstream in favour of
+  `mod_oauth2`. Noted where they are recommended, along with why it does not
+  change what an OOD site should do: the portal generator can only emit
+  directives placed in `oidc_settings`, so there is no way to configure a
+  different module through `ood_portal.yml`.
+- The CILogon discovery example carried three values that no longer match the
+  live document: the registration endpoint, the PKCE methods, and the token
+  endpoint auth methods.
+
 ### Added
 
 - CI now runs `bundler-audit` on every push and pull request. `SECURITY.md`
