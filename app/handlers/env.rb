@@ -64,11 +64,23 @@ module Handlers
       vars
     end
 
+    # Regexp#match? raises ArgumentError on invalid UTF-8, so running the deny
+    # pattern on unvalidated bytes meant the credential filter crashed before
+    # it could refuse — a 500 where a 403 belonged. Treat a name that is not
+    # well-formed text as denied: no real environment variable is spelled that
+    # way, so the only caller sending one is probing.
+    def self.credential_name?(name)
+      s = name.to_s
+      return true unless s.valid_encoding?
+
+      DENIED_PATTERN.match?(s)
+    end
+
     def self.get(name:)
       # Distinguish the two refusals. A site that explicitly allowlists
       # MY_API_KEY and is told it is "not in allowlist" has been handed a
       # false statement, and will go looking in the wrong place.
-      if DENIED_PATTERN.match?(name)
+      if credential_name?(name)
         raise ForbiddenError,
               'Access denied: the name looks like a credential and is refused regardless of the allowlist'
       end
@@ -107,7 +119,7 @@ module Handlers
     end
 
     def self.allowed?(name)
-      return false if DENIED_PATTERN.match?(name)
+      return false if credential_name?(name)
 
       allowlist_permits?(name)
     end
@@ -115,7 +127,7 @@ module Handlers
     def self.filtered_env
       denied = []
       vars = ENV.select do |name, _|
-        if DENIED_PATTERN.match?(name) && allowlist_permits?(name)
+        if credential_name?(name) && allowlist_permits?(name)
           # Only worth reporting when the allowlist would otherwise have let it
           # through. Every other denied name is already excluded, so logging it
           # would be noise on every single call.

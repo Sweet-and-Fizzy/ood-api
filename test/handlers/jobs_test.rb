@@ -103,6 +103,27 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
+  # JSON parses `1e400` to Float::INFINITY, and Integer(Infinity) raises
+  # FloatDomainError — a RangeError, which escaped a rescue listing only
+  # TypeError and ArgumentError. A client sending an oversized literal got a
+  # 500 instead of a 400.
+  def test_wall_time_rejects_values_that_are_not_finite_integers
+    # JSON.parse turns an oversized literal into Float::INFINITY, which is how
+    # this arrives from a real request body.
+    from_json = JSON.parse('{"wall_time":1e400}')['wall_time']
+    assert_equal Float::INFINITY, from_json
+
+    [from_json, Float::INFINITY, -Float::INFINITY, Float::NAN, 'abc', {}, []].each do |value|
+      assert_raises(Handlers::ValidationError, "wall_time #{value.inspect} must be a 400") do
+        Handlers::Jobs.validate_wall_time(value)
+      end
+    end
+
+    assert_equal 3600, Handlers::Jobs.validate_wall_time(3600)
+    assert_equal 3600, Handlers::Jobs.validate_wall_time('3600')
+    assert_nil Handlers::Jobs.validate_wall_time(nil)
+  end
+
   # validate_native_paths! returned early unless native was an Array, so a
   # String, Hash or nested Array skipped path validation entirely and left the
   # outcome to whatever ood_core made of the shape. Refuse it instead.

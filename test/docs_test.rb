@@ -150,6 +150,27 @@ class DocsTest < Minitest::Test
                  "write examples missing Content-Type: application/json (they return 415): #{broken.join(', ')}"
   end
 
+  # This list has drifted from the code three times — twice in released
+  # versions, each time leaving a site believing a credential was filtered
+  # when it was not. Probe each documented stem behaviourally rather than
+  # string-matching the regex source, so the check fails whether the docs or
+  # the pattern move.
+  def test_documented_credential_stems_match_the_deny_pattern
+    doc = read_doc('docs/api.md')
+    section = doc[/A credential-name deny pass runs first.*?(?=\n\n[A-Z])/m]
+    refute_nil section, 'the deny-pass section moved; this guard needs updating'
+
+    stems = section.scan(/`([A-Z_][A-Z_0-9]*)`/).flatten.uniq
+    assert_operator stems.length, :>=, 20, "expected the full stem list, found #{stems.length}"
+
+    stems.each do |stem|
+      name = stem.start_with?('_') ? "X#{stem}" : "X_#{stem}_Y"
+      probe = stem.start_with?('_') ? name : "X_#{stem}"
+      assert Handlers::Env::DENIED_PATTERN.match?(probe),
+             "docs list #{stem} as denied, but DENIED_PATTERN does not match #{probe}"
+    end
+  end
+
   # Records every connection attempt into the returned array. Prepended rather
   # than stubbed so a call from anywhere in the stack is caught, including from
   # inside a gem.

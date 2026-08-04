@@ -161,7 +161,7 @@ module Handlers
     def self.validate_native_shape!(native)
       return if native.is_a?(Array) && native.all? { |a| a.is_a?(String) || a.is_a?(Numeric) }
 
-      raise ValidationError, 'options.native must be an array of strings'
+      raise ValidationError, 'options.native must be a flat array of strings or numbers'
     end
 
     def self.validate_native_paths!(native)
@@ -216,7 +216,11 @@ module Handlers
       raise ValidationError, 'options.wall_time must be greater than zero' if seconds < 1
 
       seconds
-    rescue TypeError, ArgumentError
+    # RangeError as well: JSON parses `1e400` to Float::INFINITY, and
+    # Integer(Infinity) raises FloatDomainError — a RangeError, not an
+    # ArgumentError — so an oversized literal escaped as a 500 rather than a
+    # 400. Same for NaN.
+    rescue TypeError, ArgumentError, RangeError
       raise ValidationError, 'options.wall_time must be an integer number of seconds'
     end
 

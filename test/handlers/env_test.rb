@@ -236,4 +236,34 @@ class HandlersEnvTest < Minitest::Test
   ensure
     ['MY_API_KEY', 'SITE_NOTE'].each { |k| ENV.delete(k) }
   end
+
+  # Regexp#match? raises ArgumentError on invalid UTF-8, and the deny pattern
+  # is the FIRST thing Env.get runs — so a malformed name crashed the
+  # credential filter before it could refuse, giving a 500 where a 403
+  # belonged. A security control must not fall over on hostile input.
+  def test_a_name_that_is_not_valid_utf8_is_refused_not_crashed
+    [(+"SLURM_\xFF").force_encoding('UTF-8'),
+     (+"\xC3\x28").force_encoding('UTF-8'),
+     (+"\xFF\xFE_KEY").force_encoding('UTF-8')].each do |bad|
+      error = assert_raises(Handlers::ForbiddenError, "#{bad.bytes} must be refused") do
+        Handlers::Env.get(name: bad)
+      end
+      assert_match(/credential/i, error.message)
+    end
+  end
+
+  # filtered_env runs the same pattern over every name in the real
+  # environment. One malformed variable in the PUN's environment took out
+  # list_env on both surfaces for every request, not just the caller's.
+  def test_a_malformed_variable_name_does_not_break_the_listing
+    ENV[(+"BAD_\xFF").force_encoding('UTF-8')] = 'x'
+    ENV['SLURM_CONF'] = '/etc/slurm/slurm.conf'
+
+    result = Handlers::Env.list
+    assert_equal '/etc/slurm/slurm.conf', result['SLURM_CONF'],
+                 'a malformed name elsewhere must not suppress valid variables'
+  ensure
+    ENV.delete((+"BAD_\xFF").force_encoding('UTF-8'))
+    ENV.delete('SLURM_CONF')
+  end
 end

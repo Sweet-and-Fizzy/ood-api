@@ -54,7 +54,12 @@ class ApiToken
       return nil if token_string.blank?
 
       load_tokens.each do |attrs|
-        return new(attrs) if tokens_match?(attrs[:token].to_s, token_string.to_s)
+        # Only a String is a credential, matching lib/api_token.rb: `to_s`
+        # would turn an unquoted `"token": 123456` into a working token.
+        stored = attrs[:token]
+        next unless stored.is_a?(String)
+
+        return new(attrs) if tokens_match?(stored, token_string.to_s)
       end
       nil
     end

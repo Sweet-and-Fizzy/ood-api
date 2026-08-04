@@ -39,7 +39,13 @@ module OodApi
         return nil if plain_token.nil? || plain_token.empty?
 
         load_tokens.each do |attrs|
-          return new(attrs) if tokens_match?(attrs[:token].to_s, plain_token.to_s)
+          # Only a String is a credential. `to_s` on its own would turn an
+          # unquoted `"token": 123456` in a hand-edited file into a working
+          # token spelled "123456", and installation docs invite hand-editing.
+          stored = attrs[:token]
+          next unless stored.is_a?(String)
+
+          return new(attrs) if tokens_match?(stored, plain_token.to_s)
         end
         nil
       end

@@ -123,6 +123,23 @@ class HandlersClustersTest < Minitest::Test
     assert_match(/sacctmgr failed/, error.message)
   end
 
+  # Scheduler stderr is arbitrary bytes, and unavailable? matched patterns
+  # against it raw. Regexp#match? raises ArgumentError on invalid UTF-8, so a
+  # malformed byte in the scheduler's own message turned a clean 503 into a
+  # 500 from inside the error path itself.
+  def test_adapter_message_with_invalid_utf8_still_classifies
+    adapter_error = Class.new(StandardError)
+    adapter = mock('adapter')
+    adapter.expects(:accounts).raises(adapter_error, (+"Connection refused \xFF").force_encoding('UTF-8'))
+    @clusters[0].stubs(:job_adapter).returns(adapter)
+
+    # "connection refused" is an unavailability pattern, so this must come back
+    # as the 503-mapped error rather than raising ArgumentError.
+    assert_raises(Handlers::SchedulerUnavailableError) do
+      Handlers::Clusters.accounts(clusters: @clusters, id: 'cluster1')
+    end
+  end
+
   def test_queues_raises_not_supported_for_not_implemented
     adapter = mock('adapter')
     adapter.expects(:queues).raises(NotImplementedError, 'no queues')
