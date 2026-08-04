@@ -58,6 +58,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Several MCP requests with a non-object `params` returned an internal error
+  or a 500.** JSON-RPC permits `params` to be an array or absent, but the MCP
+  library's method handlers index it as an object, so an array, scalar, or
+  (for `tools/call`) missing `params` reached those handlers and raised —
+  surfacing as `-32603`, and in one case an unhandled `TypeError` → HTTP 500.
+  A request that carries `params` must now carry an object, refused as
+  `-32602` at the transport boundary before the library sees it.
+- **MCP methods the app does not implement returned an internal error instead
+  of method-not-found.** `prompts/*`, `completion/complete`, resource
+  subscriptions, and `logging/setLevel` are dispatched by the library but
+  unsupported here; each failed as `-32603`. They now return `-32601` method
+  not found, the correct code.
 - **An MCP `tools/call` with non-object `arguments` returned an internal
   error.** A JSON array or scalar in place of the arguments object reached the
   MCP library's schema check, which indexes it as a hash and raises for any
