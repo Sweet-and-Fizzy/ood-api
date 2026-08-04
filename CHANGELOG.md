@@ -15,6 +15,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pinned advisory — so that claim previously rested on someone remembering to
   run the tool by hand. A new advisory now fails the build.
 
+### Security
+
+- **Job output, error and working-directory paths now take a strict character
+  allow-list.** These values are handed to the scheduler, where some backends
+  treat them as more than inert data, so the app no longer relies on the
+  backend to handle them safely. Permitted are letters, digits, `._-/%+=:@~`,
+  the `%` job-id token, and non-ASCII characters (so accented and CJK
+  usernames are unaffected); spaces and other punctuation are refused. Ordinary
+  file operations are not touched — this applies only to the scheduler-bound
+  path fields, including any inside `options.native`.
+
 ### Fixed
 
 - **`?max_size=%FF` returned a 500.** Rack tags query values UTF-8 without

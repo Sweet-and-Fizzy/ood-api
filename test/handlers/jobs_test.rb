@@ -13,6 +13,73 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
+  # Job paths take an allow-list because not every scheduler backend treats
+  # them as inert data, and a deny-list cannot both permit spaces and stay
+  # safe. Everything below is outside the permitted set — punctuation and
+  # whitespace that has no place in a scheduler output path.
+  def test_job_paths_outside_the_allowed_character_set_are_refused
+    with_fake_home do |home|
+      refused = [
+        'out$(id).log', 'out`whoami`.log', 'out;touch x;.log', 'out|id.log',
+        'out&id.log', 'a>b.log', 'a<b.log', "line1\nline2.log", "cr\r.log",
+        'sub(shell).log',
+        'out touch PWNED.log',    # space — the VAR=value command-prefix bypass
+        "out\ttouch PWNED.log",   # tab — same
+        "quote'.log", 'dquote".log', 'star*.log', 'q?.log', 'brace{a,b}.log'
+      ]
+      refused.each do |p|
+        assert_raises(Handlers::ValidationError, "#{p.inspect} must be refused") do
+          Handlers::Jobs.job_path!(File.join(home, p))
+        end
+      end
+    end
+  end
+
+  # The allow-list still has to admit every character a real scheduler output
+  # path needs, or it breaks ordinary use. `%` is load-bearing — it is the
+  # scheduler's job-id token in the default output path.
+  def test_job_paths_within_the_allowed_character_set_pass
+    with_fake_home do |home|
+      ['slurm-%j.out', 'my-report.log', 'job_2024.out', 'data.v2.log',
+       'a+b=c.log', 'user@host.out', 'run:1.log'].each do |p|
+        Handlers::Jobs.job_path!(File.join(home, p))
+      end
+    end
+  end
+
+  # A non-ASCII username or filename is legitimate and inert in the sink — the
+  # danger is the ASCII shell metacharacters, which stay excluded. Rejecting
+  # accented or CJK paths would wall off international users for no gain.
+  def test_job_paths_with_non_ascii_characters_pass
+    with_fake_home do |home|
+      ['josé/slurm-%j.out', '李四/out.log', 'münchen/job.out',
+       'Резюме.out'].each do |p|
+        Handlers::Jobs.job_path!(File.join(home, p))
+      end
+    end
+  end
+
+  # The allow-list runs a regex, which raises on invalid UTF-8. Guarding on
+  # valid_encoding? first keeps a malformed path a 400 rather than a 500.
+  def test_job_path_with_invalid_utf8_is_a_clean_validation_error
+    with_fake_home do |home|
+      bad = File.join(home, (+"out\xFF.log").force_encoding('UTF-8'))
+      assert_raises(Handlers::ValidationError) { Handlers::Jobs.job_path!(bad) }
+    end
+  end
+
+  # The allow-list must also cover paths arriving through `native`, which reach
+  # the same job_path! chokepoint — otherwise a site with native enabled has an
+  # unscreened route to the scheduler layer.
+  def test_native_path_values_are_screened_by_the_allow_list
+    with_fake_home do |home|
+      evil = File.join(home, 'out$(id).log')
+      assert_raises(Handlers::ValidationError) do
+        Handlers::Jobs.validate_native_paths!(["--output=#{evil}"])
+      end
+    end
+  end
+
   # `native` is raw scheduler argv, and ood_core appends it AFTER the options
   # this handler validated — the Slurm adapter builds `-o script.output_path`
   # then concatenates native. sbatch honours the last occurrence of a repeated
