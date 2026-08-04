@@ -95,19 +95,13 @@ module Handlers
 
     # getopt_long accepts any unambiguous abbreviation of a long option, so
     # sbatch reads `--out=PATH` as `--output=PATH`. Matching exact spellings
-    # therefore validated `--output` and let `--out`, `--outp` and `--outpu`
-    # straight through to the same destination.
+    # would validate `--output` and let `--out` reach the same destination, so
+    # any long flag that is a prefix of a path-bearing one counts as one.
     #
-    # Enumerating the abbreviations does not converge — that was tried twice.
-    # Invert it instead: treat any long flag that is a prefix of a path-bearing
-    # one as path-bearing. That covers every abbreviation by construction,
-    # including ones added by a future ood_core adapter.
-    #
-    # This deliberately over-matches. sbatch would reject `--o` as ambiguous
-    # between --output and several other options, and we validate its value
-    # anyway; refusing a path that sbatch would not have accepted is the safe
-    # direction. It stays a prefix test rather than a substring one so
-    # `--outputfoo`, a different option entirely, is still left alone.
+    # This over-matches deliberately: `--o` is ambiguous to sbatch and would be
+    # rejected there anyway, and refusing a path the scheduler would not have
+    # accepted is the safe direction. Prefix rather than substring, so
+    # `--outputfoo` — a different option — is left alone.
     def self.long_path_flag?(flag)
       return false unless flag.start_with?('--') && flag.length > 2
 
@@ -123,26 +117,15 @@ module Handlers
 
     # `native` is off unless a site turns it on.
     #
-    # Every other system in the OOD ecosystem takes `native` from someone
-    # trusted: Batch Connect from the site admin's submit.yml.erb, filtered
-    # through Rails strong params so no HTTP caller can inject it (see
-    # session_contexts_controller.rb, `permit(@session_context.attributes.keys)`);
-    # Job Composer from a file the user wrote, with no HTTP surface at all.
-    # This app was the only one accepting it from an arbitrary API caller.
-    #
-    # The ecosystem tolerates raw argv because OOD ships a Shell app — a user
-    # who can set `native` already has a terminal, so scheduler flags grant
-    # nothing new. That assumption is exactly what this app removes: an agent
-    # driving these tools over MCP on injected input has no shell, and the
+    # Elsewhere in OOD, `native` comes from a site admin's config rather than
+    # from a request, and raw argv is tolerated because OOD ships a Shell app —
+    # anyone who can set it already has a terminal. This app removes that
+    # assumption: an agent driving these tools over MCP has no shell, and the
     # deny-list is the only thing between it and ~/.ssh/authorized_keys.
     #
-    # Flag matching is not a control we are willing to stake this on. Long-flag
-    # abbreviations are now handled by construction (see long_path_flag?), but
-    # that only covers the failure mode we know about: native is raw argv for
-    # whatever scheduler the site runs, and a flag this app has never heard of
-    # can still name a path. A site that needs native passthrough sets
-    # OOD_API_ALLOW_NATIVE=true and accepts that job paths are then only as
-    # constrained as the scheduler itself makes them.
+    # validate_native_paths! is defence in depth, not a substitute for the
+    # gate. It only knows the flags listed above, and `native` is argv for
+    # whatever scheduler the site runs.
     def self.native_allowed?
       ENV['OOD_API_ALLOW_NATIVE'] == 'true'
     end
@@ -159,29 +142,37 @@ module Handlers
       validate_native_paths!(native)
     end
 
-    # Best-effort path checking for sites that have opted in. This is defence
-    # in depth, not a guarantee — see native_allowed? for why exact-spelling
-    # matching cannot be complete.
+    # Path checking for sites that have opted in.
     #
-    # `native` is raw scheduler argv, and adapters append it AFTER the options
-    # this handler validated — ood_core's Slurm adapter builds `-o
-    # script.output_path` at slurm.rb:644 and concatenates native at :671.
-    # sbatch honours the last occurrence of a repeated flag, so `--output=` in
-    # native silently overrides the path job_path! just approved. The same
-    # request was refused as `output_path` and accepted as `native`.
+    # Adapters append `native` AFTER the options this handler validated —
+    # ood_core's Slurm adapter builds `-o script.output_path` at slurm.rb:644
+    # and concatenates native at :671 — and sbatch honours the last occurrence
+    # of a repeated flag. So an unchecked `--output=` here silently overrides
+    # the path job_path! just approved.
     #
-    # That defeats the invariant SECURITY.md states — "Job paths are validated
-    # like any other write, since the scheduler writes them as the user" — and
-    # the deny-list is not a privilege control, so "the user could run sbatch
-    # themselves" does not answer it. The point is that an agent acting on
-    # injected input cannot reach ~/.ssh/authorized_keys, and via native it
-    # could.
-    #
-    # Only path-bearing flags are inspected. Everything else in native passes
-    # through untouched, so `--nodes=4` or a site-specific flag still works.
-    def self.validate_native_paths!(native)
-      return unless native.is_a?(Array)
+    # Only path-bearing flags are inspected; `--nodes=4` and site-specific
+    # flags pass through untouched.
+    # Anything other than a flat array of scalars is refused rather than
+    # skipped. Skipping meant a String or Hash `native` bypassed path
+    # validation entirely, leaving whatever ood_core made of it to decide the
+    # outcome — and a nested array flattens to argv on the way to the
+    # scheduler, so its contents are argv too. Numerics are allowed because
+    # `['--nodes', 4]` is an ordinary way to write scheduler argv in JSON.
+    def self.validate_native_shape!(native)
+      return if native.is_a?(Array) && native.all? { |a| a.is_a?(String) || a.is_a?(Numeric) }
 
+      raise ValidationError, 'options.native must be an array of strings'
+    end
+
+    def self.validate_native_paths!(native)
+      # Anything other than a flat array of strings is refused rather than
+      # skipped. Returning early here meant a String or Hash `native` bypassed
+      # path validation entirely, leaving whatever ood_core made of it to
+      # decide the outcome — and a nested array flattens to argv on the way to
+      # the scheduler, so its contents are argv too.
+      return if native.nil?
+
+      validate_native_shape!(native)
       args = native.map(&:to_s)
       index = 0
       while index < args.length

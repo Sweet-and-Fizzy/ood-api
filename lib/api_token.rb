@@ -116,7 +116,17 @@ module OodApi
 
         # Explicit encoding: the PUN's locale may be US-ASCII, and a token
         # name is free text a user typed into the Dashboard.
-        JSON.parse(File.read(TOKENS_FILE, encoding: 'UTF-8'), symbolize_names: true)
+        parsed = JSON.parse(File.read(TOKENS_FILE, encoding: 'UTF-8'), symbolize_names: true)
+
+        # Valid JSON of the wrong shape is a distinct case from unparseable
+        # JSON, and installation docs invite operators to write this file by
+        # hand. A bare object or an array of strings parses fine and then
+        # raises from the callers that index each entry, turning every
+        # authenticated request into a 500.
+        return parsed if parsed.is_a?(Array) && parsed.all?(Hash)
+
+        warn 'ood_api_audit op=token_load status=corrupt error=unexpected_shape'
+        []
       rescue JSON::ParserError => e
         # Failing open to [] means "you have no tokens", which 401s the user
         # rather than erroring. Without this line there is no trace at all when

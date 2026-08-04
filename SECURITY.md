@@ -158,7 +158,7 @@ moves.
 It is not reachable here. `excon` arrives transitively through `fog-core` and is
 loaded into the process when `ood_core` is required, so it is present — but
 nothing in this app constructs an `Excon` connection or makes any outbound HTTP
-request, so there is no redirect for the flaw to apply to. That is verifiable
-rather than asserted: a socket trip-wire across every endpoint on both surfaces
-records zero outbound connections. A site using `ood_core`'s Coder cloud-VM
+request, so there is no redirect for the flaw to apply to. `test/docs_test.rb`
+holds a socket trip-wire over the request surface, so a handler that starts
+calling out fails the suite. A site using `ood_core`'s Coder cloud-VM
 adapter, which does make such calls, should weigh it differently.

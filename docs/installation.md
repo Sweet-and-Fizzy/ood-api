@@ -86,8 +86,9 @@ with the JWT in `Authorization`. Restart the PUN; token management appears at
 `/settings/api_tokens`.
 
 If that page 404s, check that every file under `dashboard-plugin/` is root-owned
-— OOD skips plugins that aren't, silently. Look for `OOD API plugin loaded` in
-the PUN log to confirm it loaded.
+— OOD skips plugins that aren't, silently. The plugin logs `OOD API plugin
+loaded` through Rails, so look in the Dashboard's own log
+(`~/ondemand/data/sys/dashboard/log/production.log`) rather than the PUN log.
 
 **A caveat if your IdP cannot issue JWTs** (Google OIDC, CILogon): Apache then
 only accepts a browser session cookie, so a script has to carry a cookie copied
@@ -187,7 +188,7 @@ page** titled "App has not been initialized" means step 3 has not been done.
 | `OOD_CLUSTERS` | No | `/etc/ood/config/clusters.d` | Path to cluster config directory |
 | `OOD_API_APP_TOKENS` | No | unset | Set to `true` to require a per-client `X-OOD-API-Token` header in addition to Apache's auth. See [application tokens](#optional-application-tokens). |
 | `OOD_API_MAX_FILE_READ` | No | `10485760` (10 MB) | Maximum file read size in bytes (REST and MCP `read_file`) |
-| `OOD_API_MAX_FILE_WRITE` | No | `52428800` (50 MB) | Maximum file write body size in bytes (REST `PUT` and MCP `write_file`) |
+| `OOD_API_MAX_FILE_WRITE` | No | `52428800` (50 MB) | Maximum request body size in bytes for **every** `/api/v1/*` request, not only file writes — job submission and the MCP envelope are bounded by it too. Lowering it to restrict uploads also caps how large a job script may be. |
 | `OOD_API_ENV_ALLOWLIST` | No | See [docs/api.md](api.md#environment-variable-allowlist) | Comma-separated allowlist for env vars endpoint. Entries ending in `*` are prefix matches. |
 | `OOD_API_CONTEXT_PATH` | No | `/etc/ood/config/agents.d` | Path to directory containing site-specific agent context files (*.md) |
 | `OOD_API_MAX_CONTEXT_BYTES` | No | `262144` (256 KB) | Per-file cap on agent context fragments. A larger file is replaced with a note rather than served. |

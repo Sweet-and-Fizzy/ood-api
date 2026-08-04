@@ -28,20 +28,23 @@ module Handlers
     # control on what may be *returned* holds. This mirrors OWASP LLM02
     # (Sensitive Information Disclosure), whose controls are all data-side.
     #
-    # Per CWE-184 this is a supplement, never the primary control: a deny-list
-    # is for catching what a correct allowlist should already have excluded. If
-    # it ever fires in production, the allowlist is wrong (CWE-183) and that is
-    # the thing to fix. `get` reports a deny-list refusal distinctly from an
-    # allowlist miss for exactly this reason — a silent omission would leave an
-    # operator with no way to tell a false positive from a missing variable.
+    # This is a supplement, never the primary control: it catches what a
+    # correct allowlist should already have excluded. If it ever fires in
+    # production the allowlist is too wide, and that is the thing to fix.
+    # `get` reports a deny-list refusal distinctly from an allowlist miss for
+    # exactly this reason — a silent omission would leave an operator with no
+    # way to tell a false positive from a missing variable.
     #
     # Stems must carry a credential meaning on their own. Refusing a real
     # variable is not free: it breaks a working site and points the operator at
     # the wrong cause. `_KEY` therefore allows a trailing plural or digit but
     # not arbitrary text — a bare `\b` misses MY_KEYS and SLURM_KEY2, while
-    # matching `_KEY` anywhere also refuses SLURM_KEYWORD and LMOD_KEYMAP, which
-    # are not credentials. Deliberately absent: SALT and SIGNING, common enough
-    # as ordinary words to cost more than they catch.
+    # matching `_KEY` anywhere also refuses SLURM_KEYWORD and LMOD_KEYMAP,
+    # which are not credentials. The other `\b`-anchored stems take no suffix:
+    # X_PASS2 and X_PWDS are allowed, so a site whose credentials are spelled
+    # that way needs a wider allowlist rather than reliance on this pass.
+    # Deliberately absent: SALT and SIGNING, common enough as ordinary words
+    # to cost more than they catch.
     DENIED_PATTERN = /
       SECRET | TOKEN | PASSW | PASSPHRASE | CREDENTIAL | PRIVATE |
       JWT | APIKEY | API_KEY |
