@@ -681,6 +681,33 @@ options: { job_name: 'api-job' } }.to_json,
     assert_nil json_response['data']['native_state']
   end
 
+  # `touch` was tested for bare presence, and every non-empty string is truthy
+  # in Ruby, so `touch=false` and `touch=0` created the file — the opposite of
+  # what the client asked for. Both truthy and falsey spellings are exercised
+  # here because only the pairing shows the param is read rather than sensed.
+  def test_touch_is_read_as_a_boolean_not_mere_presence
+    ENV.delete('OOD_API_APP_TOKENS')
+    json = { 'CONTENT_TYPE' => 'application/json' }
+
+    ['false', '0', 'no', 'off'].each do |value|
+      path = File.join(Dir.tmpdir, "touch_#{SecureRandom.hex(4)}.txt")
+      post "/api/v1/files?path=#{CGI.escape(path)}&touch=#{value}", '', json
+      assert_equal 400, last_response.status, "touch=#{value} must not create a file"
+      refute File.exist?(path), "touch=#{value} created #{path}"
+    ensure
+      FileUtils.rm_f(path)
+    end
+
+    ['true', '1', 'yes', 'on', 'TRUE'].each do |value|
+      path = File.join(Dir.tmpdir, "touch_#{SecureRandom.hex(4)}.txt")
+      post "/api/v1/files?path=#{CGI.escape(path)}&touch=#{value}", '', json
+      assert_equal 201, last_response.status, "touch=#{value} must create a file"
+      assert File.exist?(path), "touch=#{value} did not create #{path}"
+    ensure
+      FileUtils.rm_f(path)
+    end
+  end
+
   # The first CSRF fix exempted any bodyless request, reasoning that DELETE
   # sends no body. But a form with no fields posts an EMPTY body with a form
   # content type, so cross-origin touch, mkdir, hold and release still worked.
