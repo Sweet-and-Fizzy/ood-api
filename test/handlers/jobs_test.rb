@@ -68,6 +68,19 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
+  # A native element is split on `=` before job_path! ever runs, and
+  # String#split raises on invalid UTF-8 — so a stray byte in native was a 500,
+  # not a 400. Every other split/regex on request data guards encoding first;
+  # native reaches its split earlier, so it needs its own guard.
+  def test_native_element_with_invalid_utf8_is_a_clean_validation_error
+    bad = (+"--comment=x\xFF").force_encoding('UTF-8')
+    assert_raises(Handlers::ValidationError) do
+      Handlers::Jobs.validate_native_paths!([bad])
+    end
+    # and a well-formed native array still works
+    Handlers::Jobs.validate_native_shape!(['--nodes', 4, '--exclusive'])
+  end
+
   # The allow-list must also cover paths arriving through `native`, which reach
   # the same job_path! chokepoint — otherwise a site with native enabled has an
   # unscreened route to the scheduler layer.

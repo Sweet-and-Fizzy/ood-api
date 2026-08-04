@@ -535,7 +535,7 @@ device-code grant against a CILogon client registered for an ACCESS-CI site: the
 the `id_token` in the same response was a normal JWT. The opaque token
 validates through `https://cilogon.org/oauth2/introspect`, which returns
 `active: true` along with `client_id`, `exp`, `iat`, `iss`, `jti`, `nbf`,
-`scope` and `username`.
+`scope`, `token_type` and `username`.
 
 This is not universal to CILogon. Its underlying OA4MP software issues a JWT
 access token when a *token handler* is configured for the client, and an opaque

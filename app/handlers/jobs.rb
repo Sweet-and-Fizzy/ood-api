@@ -184,9 +184,18 @@ module Handlers
     # scheduler, so its contents are argv too. Numerics are allowed because
     # `['--nodes', 4]` is an ordinary way to write scheduler argv in JSON.
     def self.validate_native_shape!(native)
-      return if native.is_a?(Array) && native.all? { |a| a.is_a?(String) || a.is_a?(Numeric) }
+      unless native.is_a?(Array) && native.all? { |a| a.is_a?(String) || a.is_a?(Numeric) }
+        raise ValidationError, 'options.native must be a flat array of strings or numbers'
+      end
 
-      raise ValidationError, 'options.native must be a flat array of strings or numbers'
+      # Every element is about to be `split` on `=`, and String#split raises on
+      # invalid UTF-8. Reject a malformed element here — before the loop — so a
+      # stray byte is a 400, not a 500. The same guard sits ahead of every
+      # other regex/split on request data in this app; `native` reaches its
+      # split before job_path! runs, so it needs its own.
+      return if native.all? { |a| a.is_a?(Numeric) || a.to_s.valid_encoding? }
+
+      raise ValidationError, 'options.native contains a value that is not valid UTF-8'
     end
 
     def self.validate_native_paths!(native)
