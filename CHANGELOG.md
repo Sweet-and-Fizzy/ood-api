@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An MCP `resources/read` with absent or null `params` returned an internal
+  error.** The handler reads `params[:uri]`, so a missing params reached
+  `nil[:uri]` and raised. The params guard required a present object for
+  `tools/call` but not for `resources/read`, which needs one for the same
+  reason; both now do.
 - **An MCP `tools/call` with a non-object `_meta` returned an internal error.**
   The library digs `params._meta.progressToken` unconditionally, so a
   well-formed request whose `params` is an object but whose `_meta` is a

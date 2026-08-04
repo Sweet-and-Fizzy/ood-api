@@ -133,30 +133,33 @@ module OodApi
     end
   end
 
+  # Methods whose handler indexes a REQUIRED field out of `params` — tools/call
+  # reads `params[:name]`, resources/read reads `params[:uri]` (in this app's
+  # own handler). For these, a null or absent params reaches `nil[:field]` and
+  # crashes, so params must be a present object, not merely well-shaped when
+  # present. Methods that legitimately take no params (ping, tools/list) are
+  # not listed.
+  METHODS_REQUIRING_PARAMS = ['tools/call', 'resources/read'].freeze
+
   # The mcp gem's method handlers index `params` directly — `request[:name]`,
   # `request.dig(:_meta, ...)`, `request[:level]` — assuming it is an object.
   # JSON-RPC permits `params` to be an array, and the gem's own param check
-  # accepts a missing one, so a request with an array, scalar, or absent
-  # `params` reaches those handlers and raises `TypeError`/`NoMethodError`,
-  # surfacing a client mistake as a -32603 internal error. A request that
-  # carries `params` at all must carry an object; refuse anything else here.
-  #
-  # `null`/absent params is left alone: some methods (`ping`, `tools/list`)
-  # legitimately take none, and the gem handles that. Only a *present,
-  # non-object* params is malformed.
+  # accepts a missing one, so a request with an array, scalar, or (for the
+  # methods above) absent `params` reaches those handlers and raises,
+  # surfacing a client mistake as a -32603 internal error. Refuse those shapes
+  # here.
   def self.malformed_params?(parsed)
     return false unless parsed.is_a?(Hash) && parsed.key?('method')
 
     params = parsed['params']
 
-    # tools/call has no meaning without a `name`, and the gem reads it as
-    # `params[:name]` — so a null or absent params reaches `nil[:name]` and
-    # crashes. For that method, params must be a present object.
-    return params.nil? || !params.is_a?(Hash) if parsed['method'] == 'tools/call'
-
-    # Every other method: a present params must be an object, but an absent one
-    # is fine (ping, tools/list take none, and the gem handles that).
-    parsed.key?('params') && !params.nil? && !params.is_a?(Hash)
+    if METHODS_REQUIRING_PARAMS.include?(parsed['method'])
+      # params must be a present object.
+      params.nil? || !params.is_a?(Hash)
+    else
+      # a present params must be an object, but an absent one is fine.
+      parsed.key?('params') && !params.nil? && !params.is_a?(Hash)
+    end
   end
 
   # A tools/call whose `arguments` is present but not an object reaches the mcp

@@ -386,11 +386,27 @@ class McpServerTest < Minitest::Test
       '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":null}',
       '{"jsonrpc":"2.0","id":1,"method":"tools/call"}',
       '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":[]}',
+      # resources/read reads params[:uri]; a null or absent params reaches
+      # nil[:uri] in the app's own handler, the same shape tools/call has.
+      '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":null}',
+      '{"jsonrpc":"2.0","id":1,"method":"resources/read"}',
       '{"jsonrpc":"2.0","id":1,"method":"initialize","params":"x"}'
     ].each do |raw|
       status, code = mcp_post(raw)
       assert_equal 400, status, "#{raw} must be a 400, not a 500 or 200"
       assert_equal(-32_602, code, "#{raw} must be invalid params, not internal error")
+    end
+  end
+
+  # resources/read and ping/tools/list differ on absent params: the first needs
+  # a uri, the others take none. An empty-object params for resources/read is
+  # valid (the handler returns empty contents) and must reach the transport.
+  def test_resources_read_with_object_params_reaches_the_transport
+    ['{}', '{"uri":"ood://context"}'].each do |params|
+      raw = %({"jsonrpc":"2.0","id":1,"method":"resources/read","params":#{params}})
+      status, code = mcp_post(raw)
+      assert_equal 200, status, "params=#{params} must reach the transport"
+      assert_nil code, "params=#{params} must not be refused by a pre-check"
     end
   end
 
