@@ -210,9 +210,11 @@ app. Read it before you deploy.
   worth having anyway. We have not tested any of these configurations, so
   verify whichever you choose on your own site.
 - **No read-only mode.** You cannot disable the write, delete, or job-submission
-  surface while keeping the read surface. `OOD_API_MAX_FILE_WRITE=0` rejects
-  file writes with a 413, which is a partial stand-in, but it does not touch
-  delete, mkdir, or job submission — do not mistake it for a read-only switch.
+  surface while keeping the read surface. There is no setting that approximates
+  one: `OOD_API_MAX_FILE_WRITE` bounds the body of *every* request, so lowering
+  it to block writes also rejects job submission, and setting it to `0` stops
+  the MCP endpoint from starting at all. If you need a read-only deployment,
+  do not install this app.
 - **No per-user or per-group enablement.** As an OOD `sys` app it is available
   to everyone who can log into the portal. Restricting it means not installing
   it, or removing it from `/var/www/ood/apps/sys`.

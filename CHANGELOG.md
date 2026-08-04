@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Five validators crashed on unexpected input instead of refusing it**,
+  turning a client mistake into a 500 on REST and a JSON-RPC internal error on
+  MCP. `options.wall_time` and `max_size` rescued `TypeError`/`ArgumentError`
+  but not `RangeError`, so an oversized JSON literal like `1e400` — which
+  parses to `Float::INFINITY` — escaped as a server fault. The environment
+  deny-pattern, the allowlist check, and the scheduler-unavailability matcher
+  all ran regexes against unvalidated bytes, and `Regexp#match?` raises on
+  invalid UTF-8. The environment one mattered most: the deny pattern is the
+  first statement in the lookup, so a malformed name took out the credential
+  filter before it could refuse. A name that is not well-formed text is now
+  treated as denied, and the unavailability matcher scrubs before matching so
+  a malformed byte in scheduler stderr cannot turn a 503 into a 500.
+- **A non-string token value in `tokens.json` authenticated.** The stored
+  value was compared with `to_s`, so an unquoted `"token": 123456` in a
+  hand-edited file yielded a working credential spelled `"123456"`. Only a
+  string is now accepted as a stored token.
+- **The README recommended a read-only workaround that causes an outage.**
+  `OOD_API_MAX_FILE_WRITE=0` was offered as a partial stand-in for the absent
+  read-only mode. It stops the MCP endpoint from starting at all, because the
+  transport requires a positive byte cap; it rejects every request with a
+  body, including job submission, not only writes; and a zero-byte write still
+  succeeds, so it does not even block truncation. The known limitation now
+  says there is no approximation of a read-only mode.
 - **A syntactically valid but wrong-shaped `tokens.json` made every
   authenticated request fail.** Only `JSON::ParserError` was rescued, so a
   file that parsed but was not an array of objects — a bare JSON object, an
@@ -370,7 +393,7 @@ now recorded in the audit log.
 ### Fixed
 
 - `docs/api.md` listed ten credential-name stems for the environment deny
-  pass where the code now has sixteen, and described `_JWT`/`JWT_` where the
+  pass where the code now has twenty-two, and described `_JWT`/`JWT_` where the
   pattern matches `JWT` anywhere. `SLURM_KEYRING`, `OOD_PASSPHRASE`, `MY_PEM`
   and `MY_CERT` were among the names silently refused but documented as
   returned. Since the section states there is no override, an operator whose

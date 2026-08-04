@@ -60,7 +60,12 @@ module Handlers
   ].freeze
 
   def self.unavailable?(message)
+    # Scheduler stderr is arbitrary bytes, and Regexp#match? raises
+    # ArgumentError on invalid UTF-8 — which would turn a clean 503 into a 500
+    # from inside the error path itself. Scrub rather than skip: the bad bytes
+    # are almost never in the part that says "connection refused".
     text = message.to_s
+    text = text.scrub('?') unless text.valid_encoding?
     UNAVAILABLE_PATTERNS.any? { |p| p.match?(text) }
   end
 

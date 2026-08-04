@@ -54,10 +54,22 @@ module Handlers
       raise ForbiddenError, 'Permission denied'
     end
 
+    # True only for a value that converts to a positive integer. Infinity and
+    # NaN raise from to_i rather than returning something comparable, so the
+    # conversion has to be guarded rather than trusted.
+    def self.positive_size?(value)
+      Integer(value).positive?
+    rescue TypeError, ArgumentError, RangeError
+      false
+    end
+
     def self.read(path:, max_size: nil)
       # Guard here as well as at the route: MCP passes max_size straight
       # through, and a negative would reach File.read and raise ArgumentError.
-      raise ValidationError, 'max_size must be greater than zero' if max_size && max_size.to_i < 1
+      # `to_i` is not safe on its own — JSON's `1e400` parses to
+      # Float::INFINITY, whose to_i raises FloatDomainError. The REST route's
+      # /\A\d+\z/ blocks that spelling, so MCP was the only way in.
+      raise ValidationError, 'max_size must be greater than zero' if max_size && !positive_size?(max_size)
 
       p = normalize_path(path)
       validate_path!(p)

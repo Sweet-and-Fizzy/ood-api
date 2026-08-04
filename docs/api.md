@@ -415,7 +415,8 @@ curl -X POST \
 
 **Errors:**
 - 400 - Missing `cluster`, `script.content` absent or not a string, `script`
-  or `options` not an object, or a non-integer `options.wall_time`
+  or `options` not an object, a non-integer `options.wall_time`, or
+  `options.native` that is not a flat array of strings or numbers
 - 403 - `script.workdir`, `options.output_path`, or `options.error_path` is
   outside the allowed roots or on the sensitive-path deny-list. The scheduler
   writes those paths as you, so they are validated like any other write
@@ -1186,6 +1187,7 @@ If the context directory does not exist or contains no markdown files, the respo
 |----------|---------|-------------|
 | `OOD_API_CONTEXT_PATH` | `/etc/ood/config/agents.d` | Path to directory containing site-specific agent context files (*.md) |
 | `OOD_API_MAX_CONTEXT_BYTES` | `262144` (256 KB) | Per-file cap. A larger fragment is replaced with a note rather than served. |
+| `OOD_API_MAX_CONTEXT_TOTAL_BYTES` | `1048576` (1 MB) | Cap across all fragments together. The per-file cap alone bounds nothing when there are many files. |
 
 **Example:**
 ```bash

@@ -735,4 +735,27 @@ class HandlersFilesTest < Minitest::Test
     err = assert_raises(Handlers::ValidationError) { Handlers::Files.list(path: "/tmp/x\0.txt") }
     assert_match(/null byte/, err.message)
   end
+
+  # max_size was guarded with `to_i < 1`, and to_i on Float::INFINITY raises
+  # FloatDomainError rather than returning a number. The REST route's
+  # /\A\d+\z/ blocked that spelling, so MCP — which passes the value straight
+  # through — was the only way in, and it produced a JSON-RPC internal error.
+  def test_max_size_rejects_values_that_are_not_finite_integers
+    path = File.join(@test_dir, 'readable.txt')
+    File.write(path, 'content')
+
+    # An oversized JSON literal arrives as Float::INFINITY, which is the shape
+    # an MCP client actually sends.
+    from_json = JSON.parse('{"max_size":1e400}')['max_size']
+    assert_equal Float::INFINITY, from_json
+
+    [from_json, Float::INFINITY, -Float::INFINITY, Float::NAN, 'abc', {}, [], 0, -1].each do |value|
+      assert_raises(Handlers::ValidationError, "max_size #{value.inspect} must be a 400") do
+        Handlers::Files.read(path: path, max_size: value)
+      end
+    end
+
+    assert_equal 'con', Handlers::Files.read(path: path, max_size: 3)
+    assert_equal 'content', Handlers::Files.read(path: path)
+  end
 end
