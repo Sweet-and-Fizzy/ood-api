@@ -24,6 +24,22 @@ class ApiTokenTest < Minitest::Test
     assert_equal [], OodApi::ApiToken.all
   end
 
+  # Only JSON::ParserError was rescued, so a file that parses but is not an
+  # array of objects reached callers that index each entry and raised —
+  # turning every authenticated request into a 500. docs/installation.md tells
+  # operators they may write this file by hand, so the wrong shape is a
+  # realistic mistake rather than a corrupt-disk case.
+  def test_malformed_but_parseable_token_files_are_ignored
+    FileUtils.mkdir_p(@test_token_dir)
+
+    ['{"id":"a","token":"b"}', '"hello"', 'null', '42', '[1,2,3]', '[null]',
+     '[{"id":"a"},"str"]'].each do |body|
+      File.write(@test_token_file, body)
+      assert_equal [], OodApi::ApiToken.all, "#{body} must be ignored, not raise"
+      assert_nil OodApi::ApiToken.find_by_token('anything'), "#{body} must not authenticate"
+    end
+  end
+
   def test_create_generates_token_with_valid_attributes
     token, plain_token = OodApi::ApiToken.create(name: 'Test Token')
 

@@ -363,7 +363,8 @@ a caller can use it to override the paths this API validates — so a site that
 wants it must set `OOD_API_ALLOW_NATIVE=true`. Without that, a request
 carrying `native` is refused with 400.
 
-When enabled: Each element becomes a separate
+When enabled: it must be a flat array of strings or numbers — any other shape
+is refused with 400. Each element becomes a separate
 command-line argument to the submit command — `["-N", "2"]` becomes `sbatch -N 2`.
 Values are not interpreted by a shell, so a value containing `;` or `$(…)` is
 passed through as one literal argument rather than executed. But any flag the
@@ -798,8 +799,9 @@ POST /api/v1/files?path=:path&touch=true       # empty file
 - `path` (query, required) - Path to create
 - `type` (query) - Pass `directory` to create a directory
 - `touch` (query) - Pass `true`, `1`, `yes` or `on` to create an empty file
-  (like `touch(1)`). Any other value, including `false` and `0`, is treated as
-  not requested.
+  (like `touch(1)`). Case and surrounding whitespace are ignored, so `TRUE`
+  also works. Any other value, including `false` and `0`, is treated as not
+  requested.
   Creating a file **with content** is `PUT`, not `POST`.
 
 One of `type=directory` or `touch=true` is required; a `POST` with neither
@@ -856,7 +858,8 @@ DELETE /api/v1/files?path=:path[&recursive=true]
 ```
 
 **Errors:**
-- 400 - Directory not empty (when `recursive` is not `true`)
+- 400 - Directory not empty (when `recursive` is not `true`); `path` missing,
+  repeated or sent as an array, or containing a null byte
 - 403 - Permission denied or path not in allowed directories
 - 404 - Path not found
 
@@ -977,8 +980,15 @@ containing `SECRET`, `TOKEN`, `PASSW`, `PASSPHRASE`, `CREDENTIAL`, `PRIVATE`,
 `JWT`, `APIKEY`, `API_KEY`, `KEYRING`, `KEYFILE`, `KEYSTORE`, `BEARER`,
 `OAUTH`, or `SIGNATURE` (case-insensitive) are never disclosed, even if you
 list them explicitly. So are names ending in `_KEY`, `_PEM`, `_CERT`, `_PASS`,
-`_PWD`, `_HMAC`, or `_REFRESH`, with an optional plural or digit suffix —
-`MY_KEYS` and `SLURM_KEY2` are refused, `SLURM_KEYWORD` is not.
+`_PWD`, `_HMAC`, or `_REFRESH`.
+
+Suffix handling differs by stem, and only `_KEY` is broadly covered: `MY_KEYS`
+and `SLURM_KEY2` are refused while `SLURM_KEYWORD` is not, `X_CERTS` is refused
+but `X_CERT2` is not, and the remaining stems match no suffix at all, so
+`X_PASS2`, `X_PWDS`, `X_PEMS`, `X_HMACS` and `X_REFRESH2` are all allowed
+through. Treat this pass as a backstop for an allowlist that is already
+correct, not as the control — if a variable at your site holds a credential,
+keep it out of the allowlist rather than relying on its name being caught.
 
 This exists because the scheduler prefixes the default allowlist grants are
 exactly where credentials appear — `SLURM_JWT` holds a bearer token for
@@ -1201,7 +1211,7 @@ The API uses standard HTTP status codes:
 | 500 | Internal Server Error |
 | 501 | Not Implemented (the site's scheduler adapter does not support the operation) |
 | 503 | Service Unavailable (scheduler communication error) |
-| 507 | Insufficient Storage (no space left on device) |
+| 507 | Insufficient Storage (no space left on device, disk quota exceeded, or file too large for the filesystem) |
 
 > **413 applies to writes only.** `PUT /api/v1/files` returns 413
 > `payload_too_large` when the request body exceeds `OOD_API_MAX_FILE_WRITE`.

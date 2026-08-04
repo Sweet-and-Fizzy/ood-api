@@ -640,9 +640,8 @@ module OodApi
 
     def job_json(info, cluster)
       # `status` is the portable ood_core vocabulary, so a client can branch on
-      # it across schedulers. It previously carried the raw native state, which
-      # meant a queued Slurm job reported `pending` where the docs promised
-      # `queued` — and the polling example in docs/api.md could never match.
+      # it across schedulers and the documented values match. Slurm's own
+      # spelling differs — a queued job is `pending` natively, `queued` here.
       #
       # The native string is still exposed, as `native_state`, because it
       # distinguishes outcomes ood_core flattens: `cancelled`, `timeout`, and

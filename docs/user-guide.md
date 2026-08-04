@@ -123,9 +123,10 @@ identity provider, not a reply.
 
 ### 1.1 Bearer JWT (from your identity provider)
 
-This is the usual method. The API does **not** issue JWTs. A JWT comes from the
-OpenID Connect identity provider (IdP) that your OOD site authenticates against —
-the API only validates it.
+This is the usual method. The API does **not** issue or validate JWTs. A JWT
+comes from the OpenID Connect identity provider (IdP) that your OOD site
+authenticates against, and Apache validates it before the request reaches this
+app — so a 401 on a bearer token is an Apache or IdP problem, not an API one.
 
 Getting a token from an OIDC provider by hand is fiddly and provider-specific, so
 rather than crafting OAuth requests yourself, use a maintained CLI token tool:
@@ -280,22 +281,28 @@ not a broken install.
 
 `submit_job`'s optional parameters: `workdir`, `job_name`, `queue_name`,
 `accounting_id`, `wall_time` (seconds), `output_path`, `error_path`,
-and dependencies (`after`, `afterok`, `afternotok`, `afterany`).
+and dependencies (`after`, `afterok`, `afternotok`, `afterany`). There is also
+`native`, raw scheduler arguments, which most sites leave disabled — it is
+refused unless your administrator has set `OOD_API_ALLOW_NATIVE=true`.
 
 > MCP tools take **flat** parameters, as listed above — `script_content`,
 > `job_name`, `wall_time`. The REST API nests the same values under `script`
 > and `options` (`script.content`, `options.job_name`). If you are switching
 > between the two, see [the REST reference](api.md#submit-job).
 
-**Files** (paths must be absolute and within your allowed roots — normally your
-home directory and `/tmp`)
+**Files** (paths must be absolute and within your allowed roots — your home
+directory, `/tmp`, and the directory `$TMPDIR` points at, which on a compute
+node is often per-job scratch)
 
-A few paths inside your home are off limits even though you own them: `~/.ssh`,
-your shell startup files (`.bashrc`, `.zshrc`, `.profile`, …),
-`~/.config/ondemand`, and `~/.config/systemd/user`. Reads and writes both return
-"not accessible through this API". You can still edit them normally in a shell
-or the Files app — the restriction only stops an assistant from changing how you
-log in.
+Some paths inside your home are off limits even though you own them. Anything
+that could let an assistant change how you log in or run commands later:
+`~/.ssh`, your shell startup files (`.bashrc`, `.zshrc`, `.profile`,
+`.bash_aliases`, …), `~/.local/bin`, `~/.config/ondemand`,
+`~/.config/systemd/user`, `~/.config/autostart`, `~/.config/git`,
+`.gitconfig`, `.netrc`, `.forward`, and `.pam_environment`. Reads and writes
+both return "not accessible through this API". You can still edit them
+normally in a shell or the Files app — the restriction only stops an assistant
+from establishing access that outlasts the conversation.
 
 | Tool | Parameters | Does |
 |---|---|---|

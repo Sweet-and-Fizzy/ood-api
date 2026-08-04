@@ -150,6 +150,61 @@ class DocsTest < Minitest::Test
                  "write examples missing Content-Type: application/json (they return 415): #{broken.join(', ')}"
   end
 
+  # Records every connection attempt into the returned array. Prepended rather
+  # than stubbed so a call from anywhere in the stack is caught, including from
+  # inside a gem.
+  def install_outbound_trip_wire
+    require 'socket'
+    require 'ood_core'
+    calls = []
+
+    TCPSocket.singleton_class.prepend(Module.new do
+      define_method(:open) do |*a, **k, &b|
+        calls << "TCPSocket.open(#{a.first})"
+        super(*a, **k, &b)
+      end
+    end)
+
+    if defined?(Excon::Connection)
+      Excon::Connection.prepend(Module.new do
+        define_method(:request) do |*a, **k, &b|
+          calls << 'Excon::Connection#request'
+          super(*a, **k, &b)
+        end
+      end)
+    end
+
+    calls
+  end
+
+  # SECURITY.md says the excon advisory is unreachable because this app makes
+  # no outbound HTTP request. Excon IS loaded — it arrives with ood_core — so
+  # the claim rests entirely on nothing ever opening a connection, which is a
+  # property of the code rather than of the dependency tree.
+  #
+  # Trip-wire on TCPSocket.open and Excon::Connection#request: exercise the
+  # surface and assert neither fires. A future handler that calls out breaks
+  # this before the claim in SECURITY.md becomes false.
+  def test_no_outbound_connections_from_the_request_surface
+    calls = install_outbound_trip_wire
+
+    app = OodApi::App.new
+    [['GET', '/api/v1/clusters'], ['GET', '/api/v1/context'],
+     ['GET', '/api/v1/env'], ['GET', '/api/v1/files?path=/tmp']].each do |method, path|
+      env = Rack::MockRequest.env_for(path, method: method)
+      begin
+        app.call(env)
+      rescue StandardError
+        # A route may fail without a cluster config; only the trip-wire matters.
+        nil
+      end
+    end
+
+    assert_empty calls,
+                 'SECURITY.md claims no outbound HTTP; these connections were attempted: ' \
+                 "#{calls.uniq.join(', ')}"
+  end
+
   # Every relative markdown link must resolve. Renaming a doc is the easiest way
   # to leave a dangling pointer behind.
   def test_relative_markdown_links_resolve

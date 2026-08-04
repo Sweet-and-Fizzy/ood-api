@@ -92,7 +92,15 @@ class ApiToken
 
       # Explicit encoding, matching lib/api_token.rb: without one Ruby uses the
       # locale's, and a token name is free text a user typed.
-      JSON.parse(TOKEN_FILE.read(encoding: 'UTF-8'), symbolize_names: true)
+      parsed = JSON.parse(TOKEN_FILE.read(encoding: 'UTF-8'), symbolize_names: true)
+
+      # Shape guard, matching lib/api_token.rb. Valid JSON that is not an array
+      # of hashes parses and then raises from every caller that indexes an
+      # entry.
+      return parsed if parsed.is_a?(Array) && parsed.all?(Hash)
+
+      Rails.logger.error('API tokens file is not an array of objects; ignoring')
+      []
     rescue JSON::ParserError => e
       Rails.logger.error("Failed to parse API tokens file: #{e.message}")
       []

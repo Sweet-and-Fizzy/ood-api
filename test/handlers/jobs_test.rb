@@ -103,6 +103,26 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
+  # validate_native_paths! returned early unless native was an Array, so a
+  # String, Hash or nested Array skipped path validation entirely and left the
+  # outcome to whatever ood_core made of the shape. Refuse it instead.
+  def test_native_must_be_a_flat_array_of_strings
+    with_fake_home do |home|
+      denied = File.join(home, '.ssh', 'authorized_keys')
+      ["--output=#{denied}", { 'output' => denied }, [["--output=#{denied}"]],
+       [{ 'output' => denied }], [nil]].each do |native|
+        assert_raises(Handlers::ValidationError, "native #{native.inspect} must be refused") do
+          Handlers::Jobs.validate_native_paths!(native)
+        end
+      end
+
+      # A flat array of strings is still accepted, and numbers still work
+      # because `--nodes 4` is an ordinary way to write scheduler argv.
+      Handlers::Jobs.validate_native_paths!(['--nodes', 4])
+      Handlers::Jobs.validate_native_paths!(['--exclusive'])
+    end
+  end
+
   # getopt_long accepts any unambiguous abbreviation, so sbatch reads `--out=`
   # as `--output=`. Matching exact spellings refused `--output=` and accepted
   # `--out=` — the same file, one spelling apart.

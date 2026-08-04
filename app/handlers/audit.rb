@@ -26,8 +26,7 @@ module Handlers
     end
 
     # Backstop. `quote` is written not to raise, but this is on every request
-    # path and a logging failure must never become the caller's failure — an
-    # earlier bug here turned a clean 404 into a 500 and lost the record.
+    # path and a logging failure must never become the caller's failure.
     # Exception rather than StandardError so nothing at all escapes, with an
     # unconditional re-raise for Interrupt/SystemExit, which must not be
     # swallowed.

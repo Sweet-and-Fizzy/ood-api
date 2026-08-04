@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A syntactically valid but wrong-shaped `tokens.json` made every
+  authenticated request fail.** Only `JSON::ParserError` was rescued, so a
+  file that parsed but was not an array of objects — a bare JSON object, an
+  array of strings — reached the callers that index each entry and raised,
+  returning 500. Installation docs invite operators to write this file by
+  hand, so the wrong shape is a realistic mistake. Both token stores now treat
+  an unexpected shape the same as a corrupt file: ignore it, log, and refuse
+  to authenticate.
+- **`options.native` skipped path validation entirely unless it was an
+  array.** The check returned early for any other shape, so a `native` sent as
+  a string, an object, or a nested array reached the scheduler without its
+  paths being examined. It is now refused with a 400 unless it is a flat array
+  of strings or numbers. Only reachable with `OOD_API_ALLOW_NATIVE=true`.
 - **`options.native` accepted abbreviated path flags at sites that had opted
   in.** Schedulers accept any unambiguous abbreviation of a long option, so
   `sbatch` reads `--out=PATH` as `--output=PATH` — but path validation matched
@@ -27,14 +40,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SECURITY.md` said nothing in this app loads the `excon` dependency carrying
   GHSA-48rx-c7pg-q66r. It is loaded transitively when `ood_core` is required.
   The conclusion is unchanged and now stated as verified rather than assumed:
-  the app constructs no `Excon` connection and makes no outbound HTTP request,
-  confirmed by a socket trip-wire across every endpoint on both surfaces.
+  the app constructs no `Excon` connection and makes no outbound HTTP request.
+  `test/docs_test.rb` now holds a socket trip-wire over the request surface,
+  so a handler that starts calling out fails the suite before that claim goes
+  stale.
 - `SECURITY.md` now records what path checking `options.native` still performs
   at sites that opt in, rather than only that the gate exists.
+- **The environment deny-pattern was documented as broader than it is.**
+  `docs/api.md` said seven credential stems accept a plural or digit suffix;
+  only `_KEY` does, `_CERT` takes a plural but not a digit, and the rest match
+  no suffix at all, so `X_PASS2` and `X_PWDS` are allowed through. A site
+  reading the old text could believe it had coverage it did not. The pass is a
+  backstop for a correct allowlist, and the docs now say so.
+- **`OOD_API_MAX_FILE_WRITE` was documented as a file-write limit.** It bounds
+  the body of every `/api/v1/*` request, so lowering it to restrict uploads
+  also caps how large a job script may be.
 - `docs/api.md`: documented the 400 from `GET /api/v1/env` when `prefix` is
-  repeated or sent as an array; corrected the `touch` values; and widened the
-  507 summary, which named only "no space left on device" when the endpoint
-  also reports disk-quota and file-too-large failures.
+  repeated or sent as an array; corrected the `touch` values, including that
+  case and surrounding whitespace are ignored; widened the 507 summary in both
+  tables, which named only "no space left on device" when the endpoint also
+  reports disk-quota and file-too-large failures; and listed the `path`
+  validation errors on `DELETE /api/v1/files`, which its sibling routes
+  already documented.
+- `docs/installation.md`: the plugin's `OOD API plugin loaded` line goes to the
+  Dashboard's Rails log, not the PUN log.
+- `docs/user-guide.md`: `$TMPDIR` is a third allowed root alongside `$HOME` and
+  `/tmp`; the off-limits list was missing `~/.local/bin`, `~/.config/git`,
+  `~/.config/autostart`, `.gitconfig`, `.netrc`, `.forward` and
+  `.pam_environment`; `submit_job` also takes `native`; and JWTs are validated
+  by Apache rather than by this app, so a 401 on a bearer token points at the
+  IdP.
 
 ## [0.4.1] - 2026-08-03
 
