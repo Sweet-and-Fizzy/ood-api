@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-08-04
+
+Hardening and documentation fixes on top of v0.4.1. No API contract changes and
+nothing to do on upgrade.
+
+Two things are worth knowing. Job output, error, and working-directory paths
+now take a strict character allow-list, since those values are handed to the
+scheduler; ordinary paths are unaffected, but a path with a space or other
+punctuation in one of those three fields is refused. And the MCP endpoint now
+rejects malformed JSON-RPC — non-object `params`, `arguments`, or `_meta`, a
+non-finite number, or a method the app does not implement — with a proper
+JSON-RPC error instead of an internal one. Everything else is smaller
+robustness and documentation corrections.
+
 ### Documentation
 
 - **`docs/mcp-auth.md` claimed CILogon works with the JWKS bearer-token setup;
@@ -768,7 +782,8 @@ running as a Passenger app under the PUN as the authenticated user.
 - API token file is created with mode `0600` atomically, with no window where
   it is readable at the umask default.
 
-[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.2...v0.4.0
 [0.3.2]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.1...v0.3.2
