@@ -507,7 +507,7 @@ module OodApi
           Handlers::Files.mkdir(path: path)
         end
       else
-        halt_bad_request('Use PUT to write file contents') unless params[:touch]
+        halt_bad_request('Use PUT to write file contents') unless truthy_param?(:touch)
         result = Handlers::Audit.log(op: 'touch_file', user: current_user, source: 'rest', path: path) do
           Handlers::Files.touch(path: path)
         end
@@ -599,6 +599,9 @@ module OodApi
     end
 
     # ============ Helpers ============
+
+    # Accepted spellings for a boolean query param. See truthy_param?.
+    TRUTHY_PARAM_VALUES = ['true', '1', 'yes', 'on'].freeze
 
     private
 
@@ -727,6 +730,21 @@ module OodApi
       halt_bad_request("#{name} must be a single value") unless value.is_a?(String)
 
       value
+    end
+
+    # A flag param that is present is not the same as one that is set. Testing
+    # bare presence made `touch=false` and `touch=0` create the file, since any
+    # non-empty string is truthy in Ruby. Both spellings are what a client
+    # writes when it means the opposite.
+    #
+    # Not `== 'true'` like `append` and `recursive`: `touch=1` is a documented
+    # form (docs/api.md), so the accepted set is the usual truthy spellings and
+    # everything else — including an empty value — is false.
+    def truthy_param?(name)
+      value = params[name]
+      return false unless value.is_a?(String)
+
+      TRUTHY_PARAM_VALUES.include?(value.strip.downcase)
     end
 
     # Required path param: present, a plain string, and free of null bytes —

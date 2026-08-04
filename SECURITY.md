@@ -83,6 +83,13 @@ app validates, and no amount of flag matching closes that reliably, so it is
 opt-in rather than filtered. Everywhere else in Open OnDemand, `native` comes
 from a site administrator's configuration rather than from a request.
 
+A site that does opt in still gets path checking on the flags this app knows:
+long and short forms, values given inline or as the next argument, values
+bundled onto short flags, and abbreviated long flags, since schedulers accept
+any unambiguous prefix and `--out=` means `--output=`. That is defence in
+depth, not a guarantee — `native` is argv for whatever scheduler the site
+runs, and a flag this app has never heard of can still name a path.
+
 **Credentials in the environment.** The environment endpoint serves an allowlist
 (scheduler and module prefixes, plus a fixed set of names), and a deny-pattern
 refuses credential-shaped names within it — `SLURM_JWT` is a real Slurm variable
@@ -148,7 +155,10 @@ The fix lands in 1.5.0, which requires Ruby 3.1, and this app supports Ruby 3.0
 so that OOD 3.x sites can run it. The advisory stays open until that floor
 moves.
 
-It is not reachable here. `excon` arrives transitively through `fog-core`, which
-`ood_core` pulls in for its Coder cloud-VM adapter. Nothing in this app loads
-that adapter or makes outbound HTTP, so there is no redirect for the flaw to
-apply to. A site using the Coder adapter should weigh it differently.
+It is not reachable here. `excon` arrives transitively through `fog-core` and is
+loaded into the process when `ood_core` is required, so it is present — but
+nothing in this app constructs an `Excon` connection or makes any outbound HTTP
+request, so there is no redirect for the flaw to apply to. That is verifiable
+rather than asserted: a socket trip-wire across every endpoint on both surfaces
+records zero outbound connections. A site using `ood_core`'s Coder cloud-VM
+adapter, which does make such calls, should weigh it differently.

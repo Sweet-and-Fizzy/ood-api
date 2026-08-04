@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`options.native` accepted abbreviated path flags at sites that had opted
+  in.** Schedulers accept any unambiguous abbreviation of a long option, so
+  `sbatch` reads `--out=PATH` as `--output=PATH` — but path validation matched
+  exact spellings, so `--output=` was refused and `--out=` reached the
+  scheduler with the same destination. Any long flag that is a prefix of a
+  path-bearing one is now validated as path-bearing, which covers every
+  abbreviation by construction rather than by enumeration. Only reachable with
+  `OOD_API_ALLOW_NATIVE=true`, which is off by default.
+- **`touch=false` created the file.** `POST /api/v1/files` tested `touch` for
+  presence, and every non-empty string is truthy in Ruby, so the falsey
+  spellings a client writes when it means the opposite still created an empty
+  file. `true`, `1`, `yes` and `on` now create it and anything else does not.
+
+### Documentation
+
+- `SECURITY.md` said nothing in this app loads the `excon` dependency carrying
+  GHSA-48rx-c7pg-q66r. It is loaded transitively when `ood_core` is required.
+  The conclusion is unchanged and now stated as verified rather than assumed:
+  the app constructs no `Excon` connection and makes no outbound HTTP request,
+  confirmed by a socket trip-wire across every endpoint on both surfaces.
+- `SECURITY.md` now records what path checking `options.native` still performs
+  at sites that opt in, rather than only that the gate exists.
+- `docs/api.md`: documented the 400 from `GET /api/v1/env` when `prefix` is
+  repeated or sent as an array; corrected the `touch` values; and widened the
+  507 summary, which named only "no space left on device" when the endpoint
+  also reports disk-quota and file-too-large failures.
+
 ## [0.4.1] - 2026-08-03
 
 Follow-up fixes to v0.4.0. No API contract changes and nothing to do on

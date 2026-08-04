@@ -797,7 +797,9 @@ POST /api/v1/files?path=:path&touch=true       # empty file
 **Parameters:**
 - `path` (query, required) - Path to create
 - `type` (query) - Pass `directory` to create a directory
-- `touch` (query) - Pass `true` to create an empty file (like `touch(1)`).
+- `touch` (query) - Pass `true`, `1`, `yes` or `on` to create an empty file
+  (like `touch(1)`). Any other value, including `false` and `0`, is treated as
+  not requested.
   Creating a file **with content** is `PUT`, not `POST`.
 
 One of `type=directory` or `touch=true` is required; a `POST` with neither
@@ -887,6 +889,9 @@ GET /api/v1/env[?prefix=:prefix]
 
 **Parameters:**
 - `prefix` (query, optional) - Filter to variables starting with this prefix. Applied after the allowlist (can only narrow results, never widen).
+
+**Errors:**
+- 400 - `prefix` was repeated or sent as an array (`?prefix[]=x`)
 
 **Response:**
 ```json
@@ -1225,7 +1230,7 @@ The API uses standard HTTP status codes:
 | `unprocessable_entity` | 422 | Request understood but could not be processed |
 | `not_implemented` | 501 | The site's scheduler adapter does not support this operation |
 | `service_unavailable` | 503 | Scheduler communication error |
-| `insufficient_storage` | 507 | No space left on device |
+| `insufficient_storage` | 507 | The write could not be stored: no space left on device, disk quota exceeded, or file too large for the filesystem |
 
 ## Examples
 

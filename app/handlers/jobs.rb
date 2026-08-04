@@ -91,6 +91,29 @@ module Handlers
     NATIVE_SHORT_PATH_FLAGS = NATIVE_PATH_FLAGS.reject { |f| f.start_with?('--') }
                                                .sort_by { |f| -f.length }.freeze
 
+    NATIVE_LONG_PATH_FLAGS = NATIVE_PATH_FLAGS.select { |f| f.start_with?('--') }.freeze
+
+    # getopt_long accepts any unambiguous abbreviation of a long option, so
+    # sbatch reads `--out=PATH` as `--output=PATH`. Matching exact spellings
+    # therefore validated `--output` and let `--out`, `--outp` and `--outpu`
+    # straight through to the same destination.
+    #
+    # Enumerating the abbreviations does not converge — that was tried twice.
+    # Invert it instead: treat any long flag that is a prefix of a path-bearing
+    # one as path-bearing. That covers every abbreviation by construction,
+    # including ones added by a future ood_core adapter.
+    #
+    # This deliberately over-matches. sbatch would reject `--o` as ambiguous
+    # between --output and several other options, and we validate its value
+    # anyway; refusing a path that sbatch would not have accepted is the safe
+    # direction. It stays a prefix test rather than a substring one so
+    # `--outputfoo`, a different option entirely, is still left alone.
+    def self.long_path_flag?(flag)
+      return false unless flag.start_with?('--') && flag.length > 2
+
+      NATIVE_LONG_PATH_FLAGS.any? { |known| known.start_with?(flag) }
+    end
+
     # %j is Slurm's job-id token. Other schedulers use different tokens, but
     # they all treat an unrecognised one as a literal, so the file still lands
     # inside the validated workdir — the property that matters here.
@@ -113,11 +136,13 @@ module Handlers
     # driving these tools over MCP on injected input has no shell, and the
     # deny-list is the only thing between it and ~/.ssh/authorized_keys.
     #
-    # Flag matching cannot close this. getopt_long accepts any unambiguous
-    # prefix, so refusing `--output` still admits `--out`, `--outp`, `--outpu`;
-    # two rounds of patching the spellings did not converge. A site that needs
-    # native passthrough sets OOD_API_ALLOW_NATIVE=true and accepts that job
-    # paths are then only as constrained as sbatch makes them.
+    # Flag matching is not a control we are willing to stake this on. Long-flag
+    # abbreviations are now handled by construction (see long_path_flag?), but
+    # that only covers the failure mode we know about: native is raw argv for
+    # whatever scheduler the site runs, and a flag this app has never heard of
+    # can still name a path. A site that needs native passthrough sets
+    # OOD_API_ALLOW_NATIVE=true and accepts that job paths are then only as
+    # constrained as the scheduler itself makes them.
     def self.native_allowed?
       ENV['OOD_API_ALLOW_NATIVE'] == 'true'
     end
@@ -163,7 +188,7 @@ module Handlers
         arg = args[index]
         flag, inline = arg.split('=', 2)
 
-        if NATIVE_PATH_FLAGS.include?(flag)
+        if NATIVE_PATH_FLAGS.include?(flag) || long_path_flag?(flag)
           # `--output=PATH` carries its value; `-o PATH` takes the next element.
           job_path!(inline || args[index + 1])
           index += inline ? 1 : 2

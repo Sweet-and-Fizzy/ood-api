@@ -103,6 +103,36 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
+  # getopt_long accepts any unambiguous abbreviation, so sbatch reads `--out=`
+  # as `--output=`. Matching exact spellings refused `--output=` and accepted
+  # `--out=` — the same file, one spelling apart.
+  def test_native_abbreviated_long_flags_are_validated
+    with_fake_home do |home|
+      denied = File.join(home, '.ssh', 'authorized_keys')
+      dir = File.dirname(denied)
+      [["--out=#{denied}"], ["--outp=#{denied}"], ["--outpu=#{denied}"],
+       ["--o=#{denied}"], ['--out', denied], ["--err=#{denied}"],
+       ["--erro=#{denied}"], ["--chdi=#{dir}"], ["--workdi=#{dir}"]].each do |native|
+        assert_raises(Handlers::ForbiddenError, "native #{native.inspect} must be refused") do
+          Handlers::Jobs.validate_native_paths!(native)
+        end
+      end
+    end
+  end
+
+  # An abbreviation is only a prefix of the real flag. `--outputfoo` is a
+  # different option, and unrelated long flags must still pass through or
+  # every site using native passthrough breaks.
+  def test_native_long_flags_that_are_not_abbreviations_are_left_alone
+    with_fake_home do |home|
+      denied = File.join(home, '.ssh', 'authorized_keys')
+      [["--outputfoo=#{denied}"], ["--nodes=#{denied}"], ["--partition=#{denied}"],
+       ["--x=#{denied}"], ['--exclusive'], ['--nodes=4'], ['--']].each do |native|
+        Handlers::Jobs.validate_native_paths!(native)
+      end
+    end
+  end
+
   # A bundle that merely starts with a path flag's letters is a different
   # option — `-N2` is not `-N` with the path "2", and long flags are excluded
   # entirely so `--outputfoo` is left alone.
