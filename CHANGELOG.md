@@ -58,6 +58,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An MCP `tools/call` with non-object `arguments` returned an internal
+  error.** A JSON array or scalar in place of the arguments object reached the
+  MCP library's schema check, which indexes it as a hash and raises for any
+  tool with a required parameter — surfacing a client mistake as a `-32603`
+  internal error rather than `-32602` invalid params. Malformed argument shapes
+  are now refused at the transport boundary, alongside the existing non-finite
+  number check. An absent or `null` arguments value is unaffected.
 - **An invalid-UTF-8 value in `options.native` returned a 500.** Each native
   element is split on `=` before the path fields are validated, and
   `String#split` raises on malformed bytes — so a stray byte was a server

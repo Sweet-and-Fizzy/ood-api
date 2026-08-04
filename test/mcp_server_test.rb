@@ -320,4 +320,47 @@ class McpServerTest < Minitest::Test
     assert_equal 200, status
     assert parsed.dig('result', 'tools')&.any?, 'tools/list must still be served'
   end
+
+  # A tools/call whose `arguments` is a non-object reaches the mcp gem's schema
+  # check, which calls `.keys` on it and raises for any tool with a required
+  # parameter — surfacing a client mistake as a -32603 internal error. It is
+  # refused as invalid params before the transport sees it.
+  def test_non_object_tool_arguments_are_rejected_as_invalid_params
+    app = OodApi.mcp_rack_app
+    ['[1,2]', '5', '"hi"', 'true'].each do |args|
+      body = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":' \
+             "{\"name\":\"get_cluster\",\"arguments\":#{args}}}"
+      env = Rack::MockRequest.env_for('/', method: 'POST', input: body)
+      env['CONTENT_TYPE'] = 'application/json'
+      env['HTTP_ACCEPT'] = 'application/json, text/event-stream'
+
+      status, _headers, resp = app.call(env)
+      parsed = JSON.parse(Array(resp).join)
+
+      assert_equal 400, status, "arguments=#{args} must be a 400"
+      assert_equal(-32_602, parsed.dig('error', 'code'),
+                   "arguments=#{args} must be invalid params, not internal error")
+    end
+  end
+
+  # A well-formed object, and an absent or null arguments (the gem coerces the
+  # latter to an empty hash), must still pass through to the transport.
+  def test_object_and_absent_tool_arguments_still_reach_the_transport
+    app = OodApi.mcp_rack_app
+    ['"arguments":{"cluster_id":"c1"}', '"arguments":null'].each do |args|
+      body = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":' \
+             "{\"name\":\"get_cluster\",#{args}}}"
+      env = Rack::MockRequest.env_for('/', method: 'POST', input: body)
+      env['CONTENT_TYPE'] = 'application/json'
+      env['HTTP_ACCEPT'] = 'application/json, text/event-stream'
+
+      status, _headers, resp = app.call(env)
+      parsed = JSON.parse(Array(resp).join)
+
+      assert_equal 200, status, "#{args} must reach the transport"
+      # a clean tool-level response, not the -32602 pre-check rejection
+      refute_equal(-32_602, parsed.dig('error', 'code'),
+                   "#{args} must not be refused by the shape pre-check")
+    end
+  end
 end
