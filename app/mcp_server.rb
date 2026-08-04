@@ -164,11 +164,26 @@ module OodApi
   # a required parameter. Only reached after malformed_params? has confirmed
   # `params` is an object, so the dig here is safe.
   def self.malformed_tool_arguments?(parsed)
-    return false unless parsed.is_a?(Hash) && parsed['method'] == 'tools/call'
-    return false unless parsed['params'].is_a?(Hash)
+    return false unless tools_call_with_object_params?(parsed)
 
     args = parsed['params']['arguments']
     !args.nil? && !args.is_a?(Hash)
+  end
+
+  # `call_tool` also does `request.dig(:_meta, :progressToken)` unconditionally,
+  # so a tools/call carrying a `params` object with a non-object `_meta` passes
+  # the top-level params check but still crashes the gem — a valid params does
+  # not imply a valid `_meta`. Same shape as the arguments guard: the gem
+  # indexes a second nested field without checking it.
+  def self.malformed_tool_meta?(parsed)
+    return false unless tools_call_with_object_params?(parsed)
+
+    meta = parsed['params']['_meta']
+    !meta.nil? && !meta.is_a?(Hash)
+  end
+
+  def self.tools_call_with_object_params?(parsed)
+    parsed.is_a?(Hash) && parsed['method'] == 'tools/call' && parsed['params'].is_a?(Hash)
   end
 
   # Methods the gem dispatches but this app does not implement — it registers
@@ -209,6 +224,8 @@ module OodApi
       jsonrpc_error(400, 'Invalid params: params must be an object', JSONRPC_INVALID_PARAMS)
     elsif malformed_tool_arguments?(parsed)
       jsonrpc_error(400, 'Invalid params: tool arguments must be an object', JSONRPC_INVALID_PARAMS)
+    elsif malformed_tool_meta?(parsed)
+      jsonrpc_error(400, 'Invalid params: _meta must be an object', JSONRPC_INVALID_PARAMS)
     end
   end
 
