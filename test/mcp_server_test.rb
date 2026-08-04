@@ -394,6 +394,34 @@ class McpServerTest < Minitest::Test
     end
   end
 
+  # `call_tool` also digs `params._meta.progressToken` unconditionally, so a
+  # tools/call with a valid params object but a non-object `_meta` passes the
+  # top-level params check and still crashes the gem — a valid params does not
+  # imply a valid `_meta`. Refused as invalid params, like `arguments`.
+  def test_non_object_tool_meta_is_rejected_as_invalid_params
+    base = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":' \
+           '{"name":"list_clusters","arguments":{},"_meta":%s}}'
+    ['"notahash"', '[1,2]', '5', 'true'].each do |meta|
+      status, code = mcp_post(format(base, meta))
+      assert_equal 400, status, "_meta=#{meta} must be a 400"
+      assert_equal(-32_602, code, "_meta=#{meta} must be invalid params, not internal error")
+    end
+  end
+
+  # A valid object `_meta`, and its absence, must not be refused by a pre-check
+  # — the request should reach the transport. (It then runs the real tool; with
+  # no cluster config in the test env that returns a tool-level error, which is
+  # past the pre-check and not what this asserts.)
+  def test_valid_or_absent_tool_meta_reaches_the_transport
+    ['"_meta":{"progressToken":"t1"},', ''].each do |meta|
+      raw = '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":' \
+            "{\"name\":\"list_clusters\",#{meta}\"arguments\":{}}}"
+      _status, code = mcp_post(raw)
+      refute_equal(-32_602, code, "#{meta.inspect} must not be refused as invalid params")
+      refute_equal(-32_601, code, "#{meta.inspect} must not be refused as method not found")
+    end
+  end
+
   # Methods the app does not implement (no prompts, completion, subscriptions,
   # or log-level handler) were dispatched by the gem and failed as -32603
   # internal errors. They are refused as -32601 method-not-found, the honest

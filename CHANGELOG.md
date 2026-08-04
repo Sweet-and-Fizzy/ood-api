@@ -58,6 +58,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An MCP `tools/call` with a non-object `_meta` returned an internal error.**
+  The library digs `params._meta.progressToken` unconditionally, so a
+  well-formed request whose `params` is an object but whose `_meta` is a
+  string, array, or scalar passed the params check and still crashed the
+  library as `-32603`. `_meta`, like `arguments`, must be an object when
+  present; it is now refused as `-32602` at the boundary.
 - **Several MCP requests with a non-object `params` returned an internal error
   or a 500.** JSON-RPC permits `params` to be an array or absent, but the MCP
   library's method handlers index it as an object, so an array, scalar, or
