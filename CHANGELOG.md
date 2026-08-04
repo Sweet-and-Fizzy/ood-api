@@ -58,6 +58,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **An invalid-UTF-8 value in `options.native` returned a 500.** Each native
+  element is split on `=` before the path fields are validated, and
+  `String#split` raises on malformed bytes — so a stray byte was a server
+  fault rather than a 400. The array's encoding is now checked at the shape
+  gate, before any element is split. Only reachable with
+  `OOD_API_ALLOW_NATIVE=true`.
 - **`?max_size=%FF` returned a 500.** Rack tags query values UTF-8 without
   validating them, so a regex in the route raised `ArgumentError` and escaped
   the route's rescue list. The same class was fixed in the handlers last
