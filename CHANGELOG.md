@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- MCP tools now declare annotations (`readOnlyHint`, `destructiveHint`,
+  `idempotentHint`, `openWorldHint`) in `tools/list`. Twelve tools are
+  read-only. `cancel_job`, `write_file`, and `delete_file` are marked
+  destructive, and `submit_job` is marked non-idempotent, so clients can put a
+  confirmation step in front of them. Before this, the MCP SDK reported every
+  tool as destructive by default.
+
 ## [0.4.2] - 2026-08-04
 
 Hardening and documentation fixes on top of v0.4.1. No API contract changes and

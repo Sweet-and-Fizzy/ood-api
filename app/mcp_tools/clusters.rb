@@ -8,6 +8,7 @@ module OodApi
   module Tools
     class ListClustersTool < MCP::Tool
       tool_name 'list_clusters'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'List all available HPC clusters that allow job submission'
       input_schema({ type: 'object', properties: {} })
 
@@ -31,6 +32,7 @@ module OodApi
 
     class GetClusterTool < MCP::Tool
       tool_name 'get_cluster'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'Get details for a specific HPC cluster by ID'
       input_schema({
         type:       'object',
@@ -57,6 +59,7 @@ module OodApi
 
     class ListAccountsTool < MCP::Tool
       tool_name 'list_accounts'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'List accounts available for job submission on a cluster'
       input_schema({
         type:       'object',
@@ -85,6 +88,7 @@ module OodApi
 
     class GetClusterInfoTool < MCP::Tool
       tool_name 'get_cluster_info'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'Get resource utilization info for a cluster (nodes, CPUs, GPUs)'
       input_schema({
         type:       'object',
@@ -110,6 +114,7 @@ module OodApi
 
     class ListQueuesTool < MCP::Tool
       tool_name 'list_queues'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'List queues/partitions available on a cluster'
       input_schema({
         type:       'object',

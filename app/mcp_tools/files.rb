@@ -25,6 +25,7 @@ module OodApi
 
     class ListFilesTool < MCP::Tool
       tool_name 'list_files'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'List contents of a directory or get file metadata'
       input_schema({
         type:       'object',
@@ -60,6 +61,7 @@ module OodApi
 
     class ReadFileTool < MCP::Tool
       tool_name 'read_file'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'Read the contents of a file'
       input_schema({
         type:       'object',
@@ -87,6 +89,7 @@ module OodApi
 
     class WriteFileTool < MCP::Tool
       tool_name 'write_file'
+      annotations(read_only_hint: false, destructive_hint: true, idempotent_hint: false, open_world_hint: false)
       description 'Write content to a file (creates or overwrites)'
       input_schema({
         type:       'object',
@@ -116,6 +119,7 @@ module OodApi
 
     class CreateDirectoryTool < MCP::Tool
       tool_name 'create_directory'
+      annotations(read_only_hint: false, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'Create a new directory'
       input_schema({
         type:       'object',
@@ -142,6 +146,7 @@ module OodApi
 
     class DeleteFileTool < MCP::Tool
       tool_name 'delete_file'
+      annotations(read_only_hint: false, destructive_hint: true, idempotent_hint: true, open_world_hint: false)
       description 'Delete a file or directory'
       input_schema({
         type:       'object',
