@@ -8,6 +8,7 @@ module OodApi
   module Tools
     class ListEnvTool < MCP::Tool
       tool_name 'list_env'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'List allowed environment variables, optionally filtered by prefix'
       input_schema({
         type:       'object',
@@ -35,6 +36,7 @@ module OodApi
 
     class GetEnvTool < MCP::Tool
       tool_name 'get_env'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'Get the value of a specific environment variable'
       input_schema({
         type:       'object',

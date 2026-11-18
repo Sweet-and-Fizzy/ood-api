@@ -74,7 +74,10 @@ All of this, reads plus the destructive operations above, is reachable by an
 LLM through the MCP endpoint, not just a person clicking through the dashboard.
 It is constrained by an allowlist of path roots, a deny-list covering `~/.ssh`,
 shell init files, and the app's own token store, an environment-variable
-allowlist, and audit logging of every operation. Two gaps have no fix inside
+allowlist, and audit logging of every operation. Every MCP tool declares
+whether it is read-only or destructive, so a client can ask the user before
+cancelling, overwriting, or deleting, but the app itself never asks for
+confirmation. Two gaps have no fix inside
 the app. **No rate limiting** means a looping agent can saturate a scheduler
 your other users share. **No read-only mode** means you cannot offer the read
 surface without also offering write, delete, and job submission.

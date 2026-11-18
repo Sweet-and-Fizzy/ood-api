@@ -8,6 +8,7 @@ module OodApi
   module Tools
     class ListJobsTool < MCP::Tool
       tool_name 'list_jobs'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'List jobs on a cluster for the current user'
       input_schema({
         type:       'object',
@@ -44,6 +45,7 @@ module OodApi
 
     class GetJobTool < MCP::Tool
       tool_name 'get_job'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'Get details for a specific job on a cluster'
       input_schema({
         type:       'object',
@@ -85,6 +87,7 @@ module OodApi
 
     class ListHistoricJobsTool < MCP::Tool
       tool_name 'list_historic_jobs'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'List historic (completed) jobs on a cluster'
       input_schema({
         type:       'object',
@@ -122,6 +125,7 @@ module OodApi
 
     class SubmitJobTool < MCP::Tool
       tool_name 'submit_job'
+      annotations(read_only_hint: false, destructive_hint: false, idempotent_hint: false, open_world_hint: false)
       description 'Submit a batch job to a cluster'
       input_schema({
         type:       'object',
@@ -196,6 +200,7 @@ module OodApi
 
     class CancelJobTool < MCP::Tool
       tool_name 'cancel_job'
+      annotations(read_only_hint: false, destructive_hint: true, idempotent_hint: true, open_world_hint: false)
       description 'Cancel a running or queued job on a cluster'
       input_schema({
         type:       'object',
@@ -227,6 +232,7 @@ module OodApi
 
     class HoldJobTool < MCP::Tool
       tool_name 'hold_job'
+      annotations(read_only_hint: false, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'Put a queued job on hold'
       input_schema({
         type:       'object',
@@ -251,6 +257,7 @@ module OodApi
 
     class ReleaseJobTool < MCP::Tool
       tool_name 'release_job'
+      annotations(read_only_hint: false, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'Release a held job back to the queue'
       input_schema({
         type:       'object',

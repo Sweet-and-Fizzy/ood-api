@@ -79,6 +79,51 @@ class McpServerTest < Minitest::Test
     assert_includes tool_names, 'list_clusters'
   end
 
+  # Clients use these hints to decide what needs a human confirmation step.
+  # The SDK defaults an unannotated tool to destructive and open-world, so
+  # every tool must state its hints explicitly. Values are
+  # [readOnlyHint, destructiveHint, idempotentHint].
+  EXPECTED_ANNOTATIONS = {
+    'list_clusters'      => [true,  false, true],
+    'get_cluster'        => [true,  false, true],
+    'list_accounts'      => [true,  false, true],
+    'list_queues'        => [true,  false, true],
+    'get_cluster_info'   => [true,  false, true],
+    'list_jobs'          => [true,  false, true],
+    'get_job'            => [true,  false, true],
+    'list_historic_jobs' => [true,  false, true],
+    'list_files'         => [true,  false, true],
+    'read_file'          => [true,  false, true],
+    'list_env'           => [true,  false, true],
+    'get_env'            => [true,  false, true],
+    'submit_job'         => [false, false, false],
+    'hold_job'           => [false, false, true],
+    'release_job'        => [false, false, true],
+    'create_directory'   => [false, false, true],
+    'write_file'         => [false, true,  false],
+    'cancel_job'         => [false, true,  true],
+    'delete_file'        => [false, true,  true]
+  }.freeze
+
+  def test_every_tool_declares_annotations
+    server = OodApi.build_mcp_server
+    request = JSON.generate(jsonrpc: '2.0', id: 4, method: 'tools/list', params: {})
+    tools = JSON.parse(server.handle_json(request)).dig('result', 'tools')
+
+    assert_equal EXPECTED_ANNOTATIONS.keys.sort, tools.map { |t| t['name'] }.sort,
+                 'a new tool needs an entry in EXPECTED_ANNOTATIONS'
+
+    tools.each do |tool|
+      read_only, destructive, idempotent = EXPECTED_ANNOTATIONS.fetch(tool['name'])
+      hints = tool['annotations']
+      refute_nil hints, "#{tool['name']} has no annotations"
+      assert_equal read_only, hints['readOnlyHint'], "#{tool['name']} readOnlyHint"
+      assert_equal destructive, hints['destructiveHint'], "#{tool['name']} destructiveHint"
+      assert_equal idempotent, hints['idempotentHint'], "#{tool['name']} idempotentHint"
+      assert_equal false, hints['openWorldHint'], "#{tool['name']} openWorldHint"
+    end
+  end
+
   # --- app-token enforcement on /mcp ---
   #
   # /mcp is mounted as a sibling Rack app in config.ru, outside the Sinatra

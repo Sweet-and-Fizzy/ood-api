@@ -257,6 +257,12 @@ Four tools depend on your scheduler (`list_accounts`, `list_queues`,
 they often return "not supported by the … adapter", that's your scheduler,
 not a broken install.
 
+Each tool tells the client whether it only reads, whether it can destroy or
+overwrite data, and whether repeating it is harmless. Clients that honor these
+hints can skip confirmation for reads and ask before `cancel_job`,
+`write_file`, or `delete_file`. Whether a client asks is up to the client, so
+check yours before trusting it with write access.
+
 **Clusters**
 
 | Tool | Parameters | Does |
