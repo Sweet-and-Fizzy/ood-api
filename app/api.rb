@@ -203,10 +203,10 @@ module OodApi
 
     # Default status for every handler error, so a route that omits a rescue
     # degrades to the right code instead of an unexplained 500. Routes keep
-    # their own rescues where they need a different status than the default
-    # (PayloadTooLargeError is 400 on a read, since there the client asked for
-    # too much rather than sent too much), and a route-level rescue always
-    # wins over these.
+    # their own rescues only where they need a different status than the
+    # default (PayloadTooLargeError is 400 on a read, since there the client
+    # asked for too much rather than sent too much; a scheduler refusing a job
+    # is 422), and a route-level rescue always wins over these.
     #
     # The rescue lists had drifted apart per route: PUT /files 500'd on
     # NotFoundError, POST /files on StorageError, GET /files on
@@ -254,8 +254,6 @@ module OodApi
         Handlers::Clusters.get(clusters: self.class.clusters, id: params[:id])
       end
       { data: cluster_json(cluster) }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     end
 
     # ============ Accounts ============
@@ -268,10 +266,6 @@ module OodApi
         Handlers::Clusters.accounts(clusters: self.class.clusters, id: params[:cluster])
       end
       { data: accounts.map(&:to_h) }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::AdapterError => e
-      halt_service_unavailable(e.message)
     end
 
     # ============ Queues ============
@@ -283,10 +277,6 @@ module OodApi
         Handlers::Clusters.queues(clusters: self.class.clusters, id: params[:cluster])
       end
       { data: queues.map(&:to_h) }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::AdapterError => e
-      halt_service_unavailable(e.message)
     end
 
     # ============ Cluster Info ============
@@ -298,10 +288,6 @@ module OodApi
         Handlers::Clusters.info(clusters: self.class.clusters, id: params[:cluster])
       end
       { data: info.to_h }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::AdapterError => e
-      halt_service_unavailable(e.message)
     end
 
     # ============ Jobs ============
@@ -318,10 +304,6 @@ module OodApi
         )
       end
       { data: jobs.map { |j| job_json(j, cluster) } }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::AdapterError => e
-      halt_service_unavailable(e.message)
     end
 
     get '/api/v1/jobs/historic' do
@@ -336,10 +318,6 @@ module OodApi
         )
       end
       { data: jobs.map { |j| job_json(j, cluster) } }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::AdapterError => e
-      halt_service_unavailable(e.message)
     end
 
     get '/api/v1/jobs/:id' do
@@ -354,8 +332,6 @@ module OodApi
         )
       end
       { data: job_json(job, cluster) }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     end
 
     post '/api/v1/jobs' do
@@ -400,10 +376,6 @@ module OodApi
       { data: job_json(job_info, cluster) }.to_json
     rescue JSON::ParserError
       halt_bad_request('Invalid JSON in request body')
-    rescue Handlers::ValidationError => e
-      halt_bad_request(e.message)
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     rescue Handlers::SchedulerUnavailableError => e
       halt_service_unavailable(e.message)
     rescue Handlers::AdapterError => e
@@ -422,8 +394,6 @@ module OodApi
         )
       end
       { data: result }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     rescue Handlers::SchedulerUnavailableError => e
       halt_service_unavailable(e.message)
     rescue Handlers::AdapterError => e
@@ -438,8 +408,6 @@ module OodApi
         Handlers::Jobs.hold(clusters: self.class.clusters, cluster_id: params[:cluster], job_id: params[:id])
       end
       { data: result }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     rescue Handlers::SchedulerUnavailableError => e
       halt_service_unavailable(e.message)
     rescue Handlers::AdapterError => e
@@ -454,8 +422,6 @@ module OodApi
         Handlers::Jobs.release(clusters: self.class.clusters, cluster_id: params[:cluster], job_id: params[:id])
       end
       { data: result }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     rescue Handlers::SchedulerUnavailableError => e
       halt_service_unavailable(e.message)
     rescue Handlers::AdapterError => e
@@ -477,10 +443,6 @@ module OodApi
       else
         { data: file_json(result) }.to_json
       end
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::ForbiddenError => e
-      halt_forbidden(e.message)
     end
 
     # Read file contents
@@ -502,12 +464,6 @@ module OodApi
       # GET /api/v1/files returns the correct body for the same conditions.
       content_type 'application/octet-stream'
       body
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::ValidationError => e
-      halt_bad_request(e.message)
-    rescue Handlers::ForbiddenError => e
-      halt_forbidden(e.message)
     rescue Handlers::PayloadTooLargeError => e
       halt_bad_request(e.message)
     end
@@ -529,10 +485,6 @@ module OodApi
 
       status 201
       { data: file_json(result) }.to_json
-    rescue Handlers::ValidationError => e
-      halt_bad_request(e.message)
-    rescue Handlers::ForbiddenError => e
-      halt_forbidden(e.message)
     end
 
     # Write file contents
@@ -552,18 +504,6 @@ module OodApi
         Handlers::Files.write(path: path, content: content, append: append)
       end
       { data: file_json(result) }.to_json
-    rescue Handlers::ValidationError => e
-      halt_bad_request(e.message)
-    rescue Handlers::ForbiddenError => e
-      halt_forbidden(e.message)
-    rescue Handlers::StorageError => e
-      # Pass the message through. Hardcoding "No space left on device" here
-      # discarded out_of_space_message's wording, so EDQUOT — a per-user home
-      # quota, the case files.rb calls out as the one that actually bites on
-      # HPC sites — was reported as a full filesystem. POST /files already
-      # falls through to the central map and gets this right; the two write
-      # endpoints disagreed on the same condition.
-      halt_error(507, 'insufficient_storage', e.message)
     end
 
     # Delete file or directory
@@ -574,12 +514,6 @@ module OodApi
         Handlers::Files.delete(path: path, recursive: params[:recursive] == 'true')
       end
       { data: result }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::ValidationError => e
-      halt_bad_request(e.message)
-    rescue Handlers::ForbiddenError => e
-      halt_forbidden(e.message)
     end
 
     # ============ Environment Variables ============
@@ -597,10 +531,6 @@ module OodApi
         Handlers::Env.get(name: params[:name])
       end
       { data: result }.to_json
-    rescue Handlers::ForbiddenError => e
-      halt_forbidden(e.message)
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     end
 
     # ============ Context ============
@@ -790,10 +720,6 @@ module OodApi
       halt_error(400, 'bad_request', message)
     end
 
-    def halt_not_found(message)
-      halt_error(404, 'not_found', message)
-    end
-
     def halt_unauthorized
       halt_error(401, 'unauthorized', 'Invalid or missing API token')
     end
@@ -804,10 +730,6 @@ module OodApi
 
     def halt_service_unavailable(message)
       halt_error(503, 'service_unavailable', message)
-    end
-
-    def halt_forbidden(message)
-      halt_error(403, 'forbidden', message)
     end
 
     def file_json(path)

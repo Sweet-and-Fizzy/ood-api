@@ -1,12 +1,11 @@
 # frozen_string_literal: true
 
-require 'mcp'
-require_relative '../handlers/audit'
+require_relative 'base'
 require_relative '../handlers/env'
 
 module OodApi
   module Tools
-    class ListEnvTool < MCP::Tool
+    class ListEnvTool < Base
       tool_name 'list_env'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'List allowed environment variables, optionally filtered by prefix'
@@ -17,9 +16,8 @@ module OodApi
         }
       })
 
-      def self.call(server_context:, prefix: nil, **_params)
-        user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
-        vars = Handlers::Audit.log(op: 'list_env', user: user, source: 'mcp') do
+      def self.run(prefix: nil, **_params)
+        vars = audited('list_env') do
           Handlers::Env.list(prefix: prefix)
         end
         if vars.empty?
@@ -28,13 +26,11 @@ module OodApi
           lines = vars.map { |name, value| "  #{name}=#{value}" }
           text = "Environment variables (#{vars.size}):\n#{lines.join("\n")}"
         end
-        MCP::Tool::Response.new([{ type: 'text', text: text }])
-      rescue Handlers::ForbiddenError => e
-        MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
+        text_response(text)
       end
     end
 
-    class GetEnvTool < MCP::Tool
+    class GetEnvTool < Base
       tool_name 'get_env'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'Get the value of a specific environment variable'
@@ -46,15 +42,12 @@ module OodApi
         required:   ['name']
       })
 
-      def self.call(server_context:, name:, **_params)
-        user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
-        result = Handlers::Audit.log(op: 'get_env', user: user, source: 'mcp') do
+      def self.run(name:, **_params)
+        result = audited('get_env') do
           Handlers::Env.get(name: name)
         end
         text = "#{result[:name]}=#{result[:value]}"
-        MCP::Tool::Response.new([{ type: 'text', text: text }])
-      rescue Handlers::NotFoundError, Handlers::ForbiddenError => e
-        MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
+        text_response(text)
       end
     end
   end
