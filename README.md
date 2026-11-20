@@ -270,7 +270,7 @@ the code, see [Contributing](CONTRIBUTING.md) and
 
 ## Known Limitations
 
-- Application tokens are a second factor and never stand alone — a request must also satisfy Apache, with either a JWT or a session cookie
+- Application tokens never stand alone — a request must also satisfy Apache, with either a JWT or a session cookie. They are revocable per client, not an independent second factor
 - PUN cleanup cron runs every 2 hours by default — long-running API workflows may need this adjusted
 - Dashboard plugin requires OOD 4.0+
 - MCP transport runs in stateless mode — server-initiated notifications are not supported (tool list is static, so this has no practical impact)

@@ -12,9 +12,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP tools now declare annotations (`readOnlyHint`, `destructiveHint`,
   `idempotentHint`, `openWorldHint`) in `tools/list`. Twelve tools are
   read-only. `cancel_job`, `write_file`, and `delete_file` are marked
-  destructive, and `submit_job` is marked non-idempotent, so clients can put a
-  confirmation step in front of them. Before this, the MCP SDK reported every
-  tool as destructive by default.
+  destructive, and `submit_job` is marked destructive, non-idempotent and
+  open-world, so clients can put a confirmation step in front of them. Before
+  this, the MCP SDK reported every tool as destructive by default.
+- Audit records carry the id of the application token that made the request,
+  and job submissions record the SHA-256 digest and size of the script.
+- `OOD_API_ALLOWED_ORIGINS` lists extra origins whose browser requests are
+  accepted.
+
+### Security
+
+- Application tokens are stored as SHA-256 digests. Existing tokens keep
+  working and are converted the first time each is used. A `tokens.json`
+  written by hand should now carry `token_digest` in place of `token`.
+- State-changing REST requests and all MCP requests are refused when the
+  browser reports another site as their source (`Origin` or `Sec-Fetch-Site`).
+- Reads and writes verify the opened file against the validated path, so a
+  path swapped for a symlink between the check and the open is refused.
+  Writing to a FIFO or device is refused; it used to block the worker.
+- On Slurm an error path is always supplied, so `#SBATCH --error=` in a script
+  cannot redirect stderr to an unvalidated path.
+- Request bodies are read with a bound even when no `Content-Length` is sent.
+- `SECURITY.md` now states that job submission is code execution as the user
+  and is not covered by the file controls, and corrects the description of
+  application tokens and `Host` validation.
+
+### Changed
+
+- `last_used_at` on a token is refreshed at most every five minutes, not on
+  every request.
+
+### Fixed
+
+- A path starting with `~` and an unknown user name returns 400, not 500.
+- Deleting a symlink removes the link, including one that points at a
+  directory or at nothing.
 
 ## [0.4.2] - 2026-08-04
 

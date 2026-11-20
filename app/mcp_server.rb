@@ -5,7 +5,9 @@
 
 require 'mcp'
 require 'json'
+require 'stringio'
 require_relative '../lib/app_auth'
+require_relative '../lib/origin_check'
 require_relative 'mcp_tools/clusters'
 require_relative 'mcp_tools/jobs'
 require_relative 'mcp_tools/files'
@@ -79,6 +81,21 @@ module OodApi
     server
   end
 
+  # Body cap for /mcp.
+  #
+  # The transport defaults to a 4 MiB body cap, but write_file advertises
+  # MAX_FILE_WRITE (50 MB by default), so the default would reject a
+  # legitimate write before the handler ever saw it. Keep the two limits
+  # equal, and let a site that raises OOD_API_MAX_FILE_WRITE raise both.
+  #
+  # Some headroom on top: the body is a JSON envelope around the content, so
+  # escaping (\n, \", non-ASCII) makes the encoded form larger than the file
+  # it carries. Without it a file just under the limit could still be
+  # refused.
+  def self.max_request_bytes
+    (Handlers::Files::MAX_FILE_WRITE * 1.5).to_i
+  end
+
   def self.build_mcp_transport(server = build_mcp_server)
     # Stateless mode: each request is independent, no in-memory sessions.
     # Required because OOD's PUN recycles idle Passenger processes
@@ -86,16 +103,6 @@ module OodApi
     # Stateless supports all tool calls and resource reads; the only
     # thing lost is server-initiated notifications (tools/list changed),
     # which we don't use since our tool list is static.
-    # The transport defaults to a 4 MiB body cap, but write_file advertises
-    # MAX_FILE_WRITE (50 MB by default), so the default would reject a
-    # legitimate write before the handler ever saw it. Keep the two limits
-    # equal, and let a site that raises OOD_API_MAX_FILE_WRITE raise both.
-    #
-    # Some headroom on top: the body is a JSON envelope around the content, so
-    # escaping (\n, \", non-ASCII) makes the encoded form larger than the file
-    # it carries. Without it a file just under the limit could still be
-    # refused.
-    max_bytes = (Handlers::Files::MAX_FILE_WRITE * 1.5).to_i
 
     # DNS-rebinding protection off, deliberately. mcp 1.0.0 added it defaulting
     # to on with an allowlist of loopback only, which 403s every request whose
@@ -109,11 +116,12 @@ module OodApi
     MCP::Server::Transports::StreamableHTTPTransport.new(
       server,
       stateless:                true,
-      max_request_bytes:        max_bytes,
+      max_request_bytes:        max_request_bytes,
       dns_rebinding_protection: false
     )
   end
 
+  JSONRPC_INVALID_REQUEST = -32_600
   JSONRPC_INTERNAL_ERROR = -32_603
   JSONRPC_INVALID_PARAMS = -32_602
   JSONRPC_METHOD_NOT_FOUND = -32_601
@@ -204,14 +212,30 @@ module OodApi
     parsed.is_a?(Hash) && UNSUPPORTED_METHODS.include?(parsed['method'])
   end
 
+  # Bounded read, before any parse: the transport enforces the same limit, but
+  # only after the pre-check had already read and parsed the whole body.
+  # Returns nil when the body is over the limit.
+  def self.read_bounded_body(request)
+    body = request.body.read(max_request_bytes + 1) || ''
+    return nil if body.bytesize > max_request_bytes
+
+    # Hand the transport the bytes already read. Rack 3 does not promise a
+    # rewindable input, so rewinding the original is not safe.
+    request.env['rack.input'] = StringIO.new(body)
+    body
+  end
+
   # Caller-input shapes that crash the mcp gem one layer below its dispatch,
   # surfacing as -32603 internal errors (or, for a non-object params, an
   # unrescued TypeError → HTTP 500). Catch them here, on the parsed body, and
   # return the JSON-RPC error the lambda should send — or nil to let the
   # request through to the transport.
   def self.precheck_request_body(request)
-    body = request.body&.read or return nil
-    request.body.rewind
+    return nil unless request.body
+
+    body = read_bounded_body(request)
+    return jsonrpc_error(413, 'Request body too large', JSONRPC_INVALID_REQUEST) if body.nil?
+
     parsed = begin
       JSON.parse(body)
     rescue JSON::ParserError
@@ -239,21 +263,42 @@ module OodApi
         error: { code: code, message: message } }.to_json]]
   end
 
+  def self.refusal(status, error, message)
+    [status, { 'Content-Type' => 'application/json' }, [{ error: error, message: message }.to_json]]
+  end
+
+  # The checks the REST app runs in its `before` filters. Returns a Rack
+  # response to send, or nil to let the request through.
+  def self.refuse_request(env)
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    Handlers::Audit.context = nil
+    token = OodApi::AppAuth.authenticate(env)
+    if token == false
+      # Recorded for the same reason as the REST filter: this is the surface
+      # an agent drives, so a refused token must leave a trace. The token
+      # value is never logged.
+      Handlers::Audit.emit_event(op: 'authenticate', user: user, source: 'mcp',
+                                 status: 'denied', path: env['PATH_INFO'].to_s)
+      return refusal(401, 'unauthorized', 'Invalid or missing API token')
+    end
+    Handlers::Audit.context = { token_id: token.id } if token
+
+    # See OodApi::OriginCheck. Every MCP call is a POST, so all are checked.
+    return nil unless OodApi::OriginCheck.cross_site?(env)
+
+    Handlers::Audit.emit_event(op: 'origin_check', user: user, source: 'mcp', status: 'denied',
+                               origin: env['HTTP_ORIGIN'])
+    refusal(403, 'forbidden', 'Cross-site requests are not allowed')
+  end
+
   def self.mcp_rack_app(transport = build_mcp_transport)
     # /mcp is mounted as a sibling Rack app in config.ru, outside the Sinatra
     # app and therefore outside its `before` filters. Without this the MCP
     # surface would serve the full toolset with no app-token check while
     # /api/v1/* enforced one — the same capabilities behind weaker auth.
     lambda do |env|
-      if OodApi::AppAuth.authenticate(env) == false
-        # Recorded for the same reason as the REST filter: this is the surface
-        # an agent drives, so a refused token must leave a trace. The token
-        # value is never logged.
-        Handlers::Audit.emit_event(op: 'authenticate', user: ENV['USER'] || ENV['LOGNAME'] || 'unknown', source: 'mcp',
-                                   status: 'denied', path: env['PATH_INFO'].to_s)
-        return [401,
-                { 'Content-Type' => 'application/json' },
-                [{ error: 'unauthorized', message: 'Invalid or missing API token' }.to_json]]
+      if (refused = refuse_request(env))
+        return refused
       end
 
       request = Rack::Request.new(env)

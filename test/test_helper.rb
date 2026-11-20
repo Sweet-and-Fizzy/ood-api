@@ -70,7 +70,10 @@ module TestHelpers
   end
 
   def create_test_token(name = 'Test Token')
-    token, _plain = OodApi::ApiToken.create(name: name)
+    token, plain = OodApi::ApiToken.create(name: name)
+    # The store keeps only a digest, so the plaintext rides along on the test
+    # object for building request headers.
+    token.define_singleton_method(:token) { plain }
     token
   end
 

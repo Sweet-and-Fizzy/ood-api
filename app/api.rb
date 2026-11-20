@@ -12,6 +12,7 @@ require 'fileutils'
 require 'ood_core'
 require_relative '../lib/api_token'
 require_relative '../lib/app_auth'
+require_relative '../lib/origin_check'
 require_relative 'handlers/audit'
 require_relative 'handlers/clusters'
 require_relative 'handlers/jobs'
@@ -68,12 +69,25 @@ module OodApi
     # without protecting anything. If a site ever fronts this API with a
     # cross-origin SPA, add an explicit, origin-scoped allow-list then.
 
-    # Authentication runs first so an unauthenticated caller learns nothing —
-    # not even the configured size limits. `authenticate!` reads only
-    # request.env, never `params`, so it does not trigger the body parse the
-    # next filter exists to prevent.
+    # Authentication is the first filter, so an unauthenticated caller does not
+    # learn the configured size limits. `authenticate!` reads only request.env,
+    # never `params`, so it does not trigger the body parse the size filter
+    # exists to prevent. One exception: Sinatra parses the body before any
+    # filter runs, so a body Rack cannot parse is rejected before auth. See the
+    # Rack::BadRequest handlers below.
     before '/api/v1/*' do
       authenticate!
+    end
+
+    # See OodApi::OriginCheck. Applied to state-changing requests; a
+    # cross-site GET cannot read its response and changes nothing.
+    before '/api/v1/*' do
+      next unless ['POST', 'PUT', 'PATCH', 'DELETE'].include?(request.request_method)
+      next unless OodApi::OriginCheck.cross_site?(request.env)
+
+      Handlers::Audit.emit_event(op: 'origin_check', user: current_user, source: 'rest', status: 'denied',
+                                 path: request.path_info, origin: request.env['HTTP_ORIGIN'])
+      halt_error(403, 'forbidden', 'Cross-site requests are not allowed')
     end
 
     # CSRF defense for state-changing requests.
@@ -138,10 +152,9 @@ module OodApi
     # Malformed bodies Rack rejects while parsing.
     #
     # Sinatra's dispatch! merges @request.params before it runs `before`
-    # filters, so the body parse happens upstream of authenticate! — the
-    # comment above about an unauthenticated caller learning nothing does not
-    # hold for a body Rack cannot parse. A multipart body with too many parts
-    # escaped as a bare 500 to a caller who had not authenticated.
+    # filters, so the body parse happens upstream of authenticate!. A
+    # multipart body with too many parts escaped as a bare 500 to a caller
+    # who had not authenticated.
     #
     # Rack::BadRequest is the marker these share, but it is a module mixed
     # into classes with unrelated superclasses (EmptyContentError < EOFError)
@@ -346,7 +359,7 @@ module OodApi
     end
 
     post '/api/v1/jobs' do
-      body = parse_json_object(request.body.read)
+      body = parse_json_object(read_body!)
       halt_bad_request('Missing cluster in request body') if body['cluster'].to_s.strip.empty?
       # `script` and `options` are indexed with dig below, which raises TypeError
       # on a String and NoMethodError on a scalar. Valid JSON of the wrong shape
@@ -363,7 +376,8 @@ module OodApi
                                               output_path: body.dig('options', 'output_path'),
                                               error_path: body.dig('options', 'error_path'),
                                               workdir: body.dig('script', 'workdir'),
-                                              native: audit_native(body.dig('options', 'native'))) do
+                                              native: audit_native(body.dig('options', 'native')),
+                                              **Handlers::Jobs.script_audit(body.dig('script', 'content'))) do
         Handlers::Jobs.submit(
           clusters:       self.class.clusters,
           cluster_id:     body['cluster'],
@@ -608,6 +622,7 @@ module OodApi
     # See OodApi::AppAuth. The same rule guards the MCP transport, so both
     # surfaces enforce app tokens identically.
     def authenticate!
+      Handlers::Audit.context = nil
       result = OodApi::AppAuth.authenticate(request.env)
       if result == false
         # Every other refusal in this app leaves a record; a rejected token did
@@ -621,7 +636,7 @@ module OodApi
         halt_unauthorized
       end
 
-      @current_token = result
+      Handlers::Audit.context = { token_id: result.id } if result
     end
 
     def current_user
@@ -683,8 +698,6 @@ module OodApi
       value.valid_encoding? ? value : value.scrub('?')
     end
 
-    # Returns nil when absent (meaning "no caller-supplied limit"), otherwise a
-    # positive Integer. Halts 400 on anything else.
     # `native` reaches the route as whatever JSON the caller sent. Calling
     # join on a String or Hash raised, so a client error surfaced as a 500 —
     # and Handlers::Jobs.validate_native_paths! tolerates a non-Array, so the
@@ -694,6 +707,8 @@ module OodApi
       value.is_a?(Array) ? value.join(' ') : value
     end
 
+    # Returns nil when absent (meaning "no caller-supplied limit"), otherwise a
+    # positive Integer. Halts 400 on anything else.
     def parse_max_size(raw)
       return nil if raw.nil? || raw.to_s.empty?
 
@@ -713,6 +728,14 @@ module OodApi
 
     def halt_error(status_code, error_type, message)
       halt status_code, { error: error_type, message: message }.to_json
+    end
+
+    # Bounded read. The Content-Length filter cannot see a chunked body, which
+    # carries no length, so the read itself has to stop at the limit.
+    def read_body!(limit = Handlers::Files::MAX_FILE_WRITE)
+      raw = request.body.read(limit + 1) || ''
+      halt_error(413, 'payload_too_large', "Request body too large (max #{limit} bytes)") if raw.bytesize > limit
+      raw
     end
 
     # JSON.parse happily returns an Array, String, Integer or nil for a

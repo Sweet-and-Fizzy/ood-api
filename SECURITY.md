@@ -12,13 +12,24 @@ script, a log, or a webpage can be talked into acting on content that did not
 come from the user. That is the case the controls below are built for: not a
 malicious user, who needs none of this, but an agent acting on injected input.
 
-The specific thing they prevent is **access that outlives the session**. An
-agent can be induced to do something unwanted right now; it should not be able
-to leave itself a way back in. No SSH key it can add, no shell init file it can
-write, no token it can mint, no command it can put on your `PATH`.
+The file tools are built to prevent **access that outlives the session**. An
+agent can be induced to do something unwanted right now; through the file tools
+it should not be able to leave itself a way back in by adding an SSH key,
+writing a shell init file, or reading the token store.
 
-Everything below follows from that. Where a control looks over-cautious for a
-user who has a shell anyway, this is why.
+**Job submission is outside that guarantee.** A job script is arbitrary code
+that the scheduler runs as the user, on a node that at most sites mounts the
+same home directory. A submitted script can write `~/.ssh/authorized_keys`, or
+anything else the user can, and none of the path controls below apply to what a
+running job does. While job submission is available to an agent, treat the
+agent as able to run code as the user. What stands between injected input and a
+submitted job is the client's approval step: `submit_job` is annotated as
+destructive and open-world so that MCP clients ask before calling it, and the
+audit log records a SHA-256 digest of every submitted script. There is not yet
+a way to turn job submission off; see the limitations below.
+
+Where a file control looks over-cautious for a user who has a shell anyway,
+the first paragraph is why.
 
 ## What the app can do
 
@@ -30,9 +41,10 @@ directories; submits, cancels, holds and releases scheduler jobs through
 site policy fragments from `/etc/ood/config/agents.d`. The same operations are
 available over REST and as 19 MCP tools.
 
-It makes no outbound network calls, spawns no background processes, loads no
-code dynamically, and runs no shell — scheduler interaction goes through
+The app itself makes no outbound network calls, spawns no background processes,
+loads no code dynamically, and runs no shell. Scheduler interaction goes through
 `ood_core`'s adapters, which use argv-form process spawning rather than a shell.
+The jobs it submits are shell scripts and are not constrained by any of this.
 
 ## The controls, and how to check them
 
@@ -45,6 +57,11 @@ would fail if the control were removed.
 `~/.local/bin`, `~/.gitconfig` and `~/.config/git`, `~/.netrc`, `~/.forward`,
 `~/.pam_environment`, `~/.config/autostart`, `~/.config/systemd/user`, and the
 app's own token store.
+
+The list covers the common persistence paths and is not exhaustive. Other
+files can run code at login or hold credentials (`~/bin`, `~/.bashrc.d`,
+`~/.k5login`, `~/.aws/credentials`, application config directories), and a list
+of names cannot keep up with them. It is a backstop, not a boundary.
 
 It is enforced against the requested path, its resolved form, and the
 destination a symlink chain actually reaches — following the chain to its end
@@ -61,10 +78,29 @@ aimed at it — dangling symlinks, symlinked parent directories, multi-hop
 chains, case variants, hardlink aliases, and traversal. Each of those tests was
 written against a specific bypass and verified to fail without its fix.
 
+Reads and writes are also checked after the file is opened. In a shared
+directory such as `/tmp`, another user can replace part of a path with a
+symlink between the check and the open. The open file must be a regular file,
+and must be the file the validated path resolved to, before anything is read,
+written or truncated. FIFOs and device nodes are refused, since opening one can
+block a worker indefinitely.
+
 **Authentication.** Apache authenticates every request before it reaches the
 PUN; the app trusts that and identifies the user from the OS, not from anything
 in the request. Sites may additionally require a per-client application token
-(`OOD_API_APP_TOKENS=true`), compared in constant time and stored `0600`.
+(`OOD_API_APP_TOKENS=true`). Only a SHA-256 digest of each token is stored, in a
+`0600` file, and digests are compared in constant time, so a copy of the token
+file does not yield a working token.
+
+An application token is a per-client credential that can be revoked on its
+own. It is not an independent second factor: anyone who holds the user's
+session cookie or JWT can open the Dashboard and create one.
+
+State-changing REST requests and all MCP requests are refused when the browser
+reports another site as their source (`Origin` or `Sec-Fetch-Site`). REST writes
+must also be `application/json`, which an HTML form cannot send. Clients that
+are not browsers send neither header and are unaffected. A site that serves a
+front end from another origin lists it in `OOD_API_ALLOWED_ORIGINS`.
 
 The MCP endpoint is mounted as a sibling Rack app, outside the REST filters, so
 it enforces the token itself — `lib/app_auth.rb` is the single point both
@@ -73,9 +109,10 @@ a missing, invalid, empty, or wrong-header token.
 
 **Scheduler interaction.** A job's `output_path`, `error_path` and `workdir` are
 validated exactly like any other write, because the scheduler creates those
-files as the user. An output path is always supplied, so a `#SBATCH --output=`
-directive inside a submitted script cannot redirect the job's output past that
-check.
+files as the user. An output path is always supplied, and on Slurm an error
+path too, so a `#SBATCH --output=` or `--error=` directive inside a submitted
+script cannot redirect the scheduler's own output past that check. This
+constrains where the scheduler writes, not what the script does when it runs.
 
 `options.native` — raw scheduler arguments — is **disabled** unless a site sets
 `OOD_API_ALLOW_NATIVE=true`. It can express flags that override the paths this
@@ -98,9 +135,11 @@ backstop, not the primary control: if it ever fires, the allowlist is too wide,
 and the app logs the name so an operator can narrow it.
 
 **Audit trail.** Every operation on both surfaces is logged with the user, the
-operation and the paths involved, including refused authentication attempts.
-Values are escaped so a caller-supplied path cannot forge or split a record.
-Token values are never logged.
+operation and the paths involved, including refused authentication attempts
+and refused cross-site requests. When application tokens are on, each record
+carries the id of the token that made the request. A job submission records the
+SHA-256 digest and size of its script. Values are escaped so a caller-supplied
+path cannot forge or split a record. Token values are never logged.
 
 ## What this app does not defend against
 
@@ -110,8 +149,14 @@ than one you know is missing.
 - **No rate limiting.** A looping client can saturate a shared scheduler.
   Apache fronts every request, so a request-rate module there covers the whole
   portal; scheduler-side limits such as `MaxJobCount` bound the damage.
-- **No read-only mode.** The read surface cannot be offered without the write,
-  delete and job-submission surfaces.
+- **No read-only mode, and no way to disable job submission.** The read surface
+  cannot be offered without the write, delete and job-submission surfaces, and
+  job submission is code execution as the user (see the top of this document).
+- **Credentials elsewhere in `$HOME` are readable.** The deny-list names a
+  fixed set of paths. Files such as `~/.aws/credentials` or `~/.kube/config`
+  can be read by an agent and end up in a model's context.
+- **The site's `OOD_ALLOWLIST_PATH` is not consulted.** File roots are fixed at
+  `$HOME`, `/tmp` and `Dir.tmpdir`, whatever the Dashboard file browser allows.
 - **No per-user or per-group enablement.** As a `sys` app it is available to
   everyone who can log into the portal.
 - **Application tokens do not expire.** Revocation is the only control.
@@ -125,10 +170,12 @@ than one you know is missing.
 Some protections come from the environment rather than from this code. If your
 deployment differs from a stock OOD portal, re-check these.
 
-- **`Host` validation.** OOD's generated Apache config sets one `ServerName`
-  with no alias, so a request carrying any other host is canonicalised before
-  it reaches the PUN. The app does not re-check it. A site that adds a
-  `ServerAlias`, or fronts the PUN with a different proxy, loses that.
+- **`Host` validation.** When `servername` is set in `ood_portal.yml`, OOD's
+  generated Apache config redirects any other host to it before the request
+  reaches the PUN. With `servername` unset, which is the default, or with
+  `server_aliases`, it does not. The app does not check `Host` itself. Every
+  request still needs a credential for the portal, so a rebinding attack gains
+  nothing, but set `servername` if you rely on this.
 - **Authentication itself.** The app has no login. It trusts Apache entirely.
 - **Job output paths, if you need a hard guarantee.** Slurm's `job_submit.lua`
   can rewrite `std_out` server-side and applies to every submission path, not

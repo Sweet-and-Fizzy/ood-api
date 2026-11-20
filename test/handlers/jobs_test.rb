@@ -395,6 +395,34 @@ class HandlersJobsTest < Minitest::Test
 
   # submit
 
+  # `#SBATCH --error=` in the script body wins unless -e is on the command
+  # line, and ood_core only emits -e when error_path is set.
+  def test_error_path_is_always_supplied_on_slurm
+    with_fake_home do |home|
+      captured = nil
+      @adapter.expects(:submit).with do |script|
+        captured = script
+        true
+      end.returns('789')
+      @adapter.expects(:info).with('789').returns(mock_job_info(id: '789'))
+
+      Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1',
+                            script_content: "#!/bin/bash\n#SBATCH --error=/tmp/evil\n",
+                            workdir: home)
+
+      refute_nil captured.error_path, 'submit must supply an error_path on Slurm'
+      assert_equal captured.output_path, captured.error_path
+    end
+  end
+
+  def test_script_audit_records_digest_and_size_not_content
+    fields = Handlers::Jobs.script_audit("#!/bin/bash\necho hi\n")
+
+    assert_equal Digest::SHA256.hexdigest("#!/bin/bash\necho hi\n"), fields[:script_sha256]
+    assert_equal 20, fields[:script_bytes]
+    assert_equal({}, Handlers::Jobs.script_audit(nil))
+  end
+
   def test_submit_returns_job_info_and_cluster
     @adapter.expects(:submit).returns('789')
     @adapter.expects(:info).with('789').returns(mock_job_info(id: '789'))

@@ -1461,6 +1461,7 @@ Tokens are stored in the user's home directory at `~/.config/ondemand/tokens.jso
 
 - Unique ID
 - User-defined name
+- SHA-256 digest of the token (the token itself is not stored)
 - Creation timestamp
 - Last used timestamp
 
@@ -1480,9 +1481,10 @@ deploying.
 
 API-specific details not covered there:
 
-- Application tokens are 64-character hex strings (256 bits of entropy), stored
-  at `~/.config/ondemand/tokens.json` with mode `600`, and compared in
-  constant time.
+- Application tokens are 64-character hex strings (256 bits of entropy). Only
+  their SHA-256 digests are stored, at `~/.config/ondemand/tokens.json` with
+  mode `600`, and compared in constant time. A token is shown once, when it is
+  created.
 - A token carries no scope: it authenticates the user, and the request then has
   everything that user has. Revoke through **Settings > API Tokens**.
 - Use HTTPS. Bearer credentials in a URL query string are never accepted; they

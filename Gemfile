@@ -7,7 +7,7 @@ source 'https://rubygems.org'
 # installable on Ruby 3.0. Revisit them if the OOD 3.0/3.1 floor is dropped.
 
 gem 'json'
-gem 'mcp'
+gem 'mcp', '~> 1.10'
 # Transitive dependency of fog-json. 1.20.0+ requires Ruby 3.2, which would
 # drop OOD 3.x sites still on Ruby 3.0 — the floor CI enforces. Lift this pin
 # only when that floor moves.

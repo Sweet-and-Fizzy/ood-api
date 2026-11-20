@@ -112,6 +112,60 @@ class ApiTest < Minitest::Test
     refute_nil updated.last_used_at
   end
 
+  # Cross-site requests. The JSON-only rule stops forms; this stops a scripted
+  # request if a site ever adds permissive CORS headers at Apache.
+
+  def test_cross_site_state_change_is_refused
+    token = create_test_token
+    hdrs = auth_header(token).merge('CONTENT_TYPE' => 'application/json', 'HTTP_HOST' => 'ood.example.edu')
+
+    post '/api/v1/jobs', { cluster: 'cluster1', script: { content: 'x' } }.to_json,
+         hdrs.merge('HTTP_ORIGIN' => 'https://evil.example')
+    assert_equal 403, last_response.status
+
+    delete '/api/v1/jobs/1?cluster=cluster1', nil, hdrs.merge('HTTP_SEC_FETCH_SITE' => 'cross-site')
+    assert_equal 403, last_response.status
+  end
+
+  def test_same_origin_and_cross_site_reads_are_not_refused
+    token = create_test_token
+    hdrs = auth_header(token).merge('HTTP_HOST' => 'ood.example.edu')
+
+    get '/api/v1/clusters', {}, hdrs.merge('HTTP_ORIGIN' => 'https://evil.example')
+    assert last_response.ok?
+
+    post '/api/v1/jobs', '{}', hdrs.merge('CONTENT_TYPE' => 'application/json',
+                                          'HTTP_ORIGIN'  => 'https://ood.example.edu')
+    assert_equal 400, last_response.status
+  end
+
+  # A chunked request has no Content-Length for the size filter to check.
+  def test_job_body_without_content_length_is_still_bounded
+    token = create_test_token
+    big = StringIO.new(%({"pad":"#{'a' * (Handlers::Files::MAX_FILE_WRITE + 10)}"}))
+    env = Rack::MockRequest.env_for('/api/v1/jobs', method: 'POST', input: big)
+    env.delete('CONTENT_LENGTH')
+    env.merge!(auth_header(token)).merge!('CONTENT_TYPE' => 'application/json')
+
+    status, = app.call(env)
+
+    assert_equal 413, status
+  end
+
+  def test_audit_records_name_the_app_token_used
+    token = create_test_token
+    original = $stderr
+    $stderr = StringIO.new
+    get '/api/v1/clusters', {}, auth_header(token)
+    logged = $stderr.string
+    $stderr = original
+
+    assert_includes logged, "token_id=#{token.id}"
+    refute_includes logged, token.token
+  ensure
+    $stderr = original if original
+  end
+
   # Clusters API
 
   def test_get_clusters_returns_list

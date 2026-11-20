@@ -125,8 +125,12 @@ module OodApi
 
     class SubmitJobTool < MCP::Tool
       tool_name 'submit_job'
-      annotations(read_only_hint: false, destructive_hint: false, idempotent_hint: false, open_world_hint: false)
-      description 'Submit a batch job to a cluster'
+      # A job script is arbitrary code run as the user on a compute node: it
+      # can delete data and reach the network. Clients use these hints to
+      # decide what needs approval, so it is marked accordingly.
+      annotations(read_only_hint: false, destructive_hint: true, idempotent_hint: false, open_world_hint: true)
+      description 'Submit a batch job to a cluster. The script runs as the user with full access to ' \
+                  'their files and the cluster network, so confirm it with the user before submitting.'
       input_schema({
         type:       'object',
         properties: {
@@ -156,8 +160,9 @@ module OodApi
       # Same fields as the REST twin: the scheduler writes these paths as the
       # user, so an audit record that omits them names nothing that was
       # written. Extracted to keep `call` within the method-length limit.
-      def self.audit_fields(cluster_id, output_path, error_path, workdir, native)
-        { cluster:     cluster_id,
+      def self.audit_fields(cluster_id, output_path, error_path, workdir, native, script_content)
+        { **Handlers::Jobs.script_audit(script_content),
+          cluster:     cluster_id,
           output_path: output_path,
           error_path:  error_path,
           workdir:     workdir,
@@ -169,7 +174,7 @@ module OodApi
                     wall_time: nil, output_path: nil, error_path: nil,
                     native: nil, after: nil, afterok: nil, afternotok: nil, afterany: nil, **_params)
         user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
-        audit = audit_fields(cluster_id, output_path, error_path, workdir, native)
+        audit = audit_fields(cluster_id, output_path, error_path, workdir, native, script_content)
         job_info, cluster = Handlers::Audit.log(op: 'submit_job', user: user, source: 'mcp', **audit) do
           Handlers::Jobs.submit(
             clusters:       OodApi::App.clusters,

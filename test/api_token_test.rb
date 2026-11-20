@@ -46,9 +46,9 @@ class ApiTokenTest < Minitest::Test
     assert_kind_of OodApi::ApiToken, token
     refute_nil token.id
     assert_equal 'Test Token', token.name
-    refute_nil token.token
-    assert_equal 64, token.token.length
-    assert_equal plain_token, token.token
+    assert_equal 64, plain_token.length
+    assert_equal OodApi::ApiToken.digest(plain_token), token.token_digest
+    refute_respond_to token, :token
     refute_nil token.created_at
   end
 
@@ -68,8 +68,8 @@ class ApiTokenTest < Minitest::Test
   end
 
   def test_find_by_token_returns_matching_token
-    created, _plain = OodApi::ApiToken.create(name: 'Test Token')
-    found = OodApi::ApiToken.find_by_token(created.token)
+    created, plain = OodApi::ApiToken.create(name: 'Test Token')
+    found = OodApi::ApiToken.find_by_token(plain)
 
     refute_nil found
     assert_equal created.id, found.id
@@ -99,28 +99,28 @@ class ApiTokenTest < Minitest::Test
   end
 
   def test_touch_updates_last_used_at
-    token, _plain = OodApi::ApiToken.create(name: 'Test Token')
+    token, plain = OodApi::ApiToken.create(name: 'Test Token')
     assert_nil token.last_used_at
 
     OodApi::ApiToken.touch(token)
 
-    updated = OodApi::ApiToken.find_by_token(token.token)
+    updated = OodApi::ApiToken.find_by_token(plain)
     refute_nil updated.last_used_at
   end
 
   def test_multiple_tokens_management
-    token1, = OodApi::ApiToken.create(name: 'Token 1')
-    token2, = OodApi::ApiToken.create(name: 'Token 2')
-    token3, = OodApi::ApiToken.create(name: 'Token 3')
+    _token1, plain1 = OodApi::ApiToken.create(name: 'Token 1')
+    token2, plain2 = OodApi::ApiToken.create(name: 'Token 2')
+    _token3, plain3 = OodApi::ApiToken.create(name: 'Token 3')
 
     assert_equal 3, OodApi::ApiToken.all.size
 
     OodApi::ApiToken.destroy(token2.id)
 
     assert_equal 2, OodApi::ApiToken.all.size
-    assert_nil OodApi::ApiToken.find_by_token(token2.token)
-    refute_nil OodApi::ApiToken.find_by_token(token1.token)
-    refute_nil OodApi::ApiToken.find_by_token(token3.token)
+    assert_nil OodApi::ApiToken.find_by_token(plain2)
+    refute_nil OodApi::ApiToken.find_by_token(plain1)
+    refute_nil OodApi::ApiToken.find_by_token(plain3)
   end
 
   def test_handles_malformed_json_gracefully
@@ -135,7 +135,9 @@ class ApiTokenTest < Minitest::Test
   # rescues JSON::ParserError to [], which would silently invalidate every
   # token. Writes now go to a temp file and rename(2) into place.
   def test_concurrent_reads_never_observe_a_partial_file
-    token, = OodApi::ApiToken.create(name: 'Concurrent')
+    # Every touch must write for this to exercise the race.
+    OodApi::ApiToken.stubs(:recently_touched?).returns(false)
+    token, plain = OodApi::ApiToken.create(name: 'Concurrent')
 
     writers = 4.times.map do
       Thread.new { 40.times { OodApi::ApiToken.touch(token) } }
@@ -149,7 +151,7 @@ class ApiTokenTest < Minitest::Test
     (writers + readers).each(&:join)
 
     assert_equal 0, corrupt, 'a reader observed an empty/torn token file'
-    refute_nil OodApi::ApiToken.find_by_token(token.token)
+    refute_nil OodApi::ApiToken.find_by_token(plain)
   end
 
   def test_save_leaves_no_temp_files_behind
@@ -183,6 +185,8 @@ class ApiTokenTest < Minitest::Test
   # sides load the whole array and write their own copy back, so the revoked
   # token came back and kept authenticating while the UI reported success.
   def test_revoked_token_stays_revoked_under_concurrent_touch
+    # Every touch must write for this to exercise the race.
+    OodApi::ApiToken.stubs(:recently_touched?).returns(false)
     victim, plain = OodApi::ApiToken.create(name: 'victim')
     others = 5.times.map { |i| OodApi::ApiToken.create(name: "other#{i}").first }
 
@@ -202,6 +206,8 @@ class ApiTokenTest < Minitest::Test
   # A torn read does not raise, it parses as [] — which reads as "no tokens",
   # 401s the user, and then gets written back, destroying the store.
   def test_concurrent_touch_never_yields_a_torn_read
+    # Every touch must write for this to exercise the race.
+    OodApi::ApiToken.stubs(:recently_touched?).returns(false)
     tokens = 20.times.map { |i| OodApi::ApiToken.create(name: "tok#{i}") }
     all = tokens.map(&:first)
     plain = tokens.first.last
@@ -219,5 +225,45 @@ class ApiTokenTest < Minitest::Test
 
     assert_equal 0, misses, 'a valid token failed to resolve, indicating a torn read'
     assert_equal 20, OodApi::ApiToken.all.size, 'tokens were lost'
+  end
+
+  def test_plaintext_token_is_never_written_to_disk
+    _token, plain = OodApi::ApiToken.create(name: 'Hashed')
+
+    on_disk = File.read(@test_token_file)
+    refute_includes on_disk, plain
+    assert_includes on_disk, OodApi::ApiToken.digest(plain)
+  end
+
+  # Files written before hashing, or by hand from the old installation guide,
+  # carry a plaintext `token`. They must keep working and be hashed on first use.
+  def test_legacy_plaintext_entry_authenticates_and_is_hashed_on_first_use
+    FileUtils.mkdir_p(@test_token_dir)
+    legacy = 'a' * 64
+    File.write(@test_token_file, JSON.generate([{ id: 'legacy-1', name: 'Old', token: legacy }]))
+
+    found = OodApi::ApiToken.find_by_token(legacy)
+    refute_nil found
+    OodApi::ApiToken.touch(found)
+
+    on_disk = File.read(@test_token_file)
+    refute_includes on_disk, legacy
+    refute_nil OodApi::ApiToken.find_by_token(legacy)
+  end
+
+  def test_stored_digest_is_not_itself_a_credential
+    token, _plain = OodApi::ApiToken.create(name: 'Digest')
+
+    assert_nil OodApi::ApiToken.find_by_token(token.token_digest)
+  end
+
+  def test_touch_skips_the_write_inside_the_interval
+    token, _plain = OodApi::ApiToken.create(name: 'Throttled')
+    OodApi::ApiToken.touch(token)
+    before = File.stat(@test_token_file).ino
+
+    OodApi::ApiToken.touch(token)
+
+    assert_equal before, File.stat(@test_token_file).ino, 'token file was rewritten inside the touch interval'
   end
 end

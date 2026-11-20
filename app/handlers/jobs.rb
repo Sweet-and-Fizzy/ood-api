@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'digest'
 require 'pathname'
 require 'ood_core'
 require_relative 'errors'
@@ -133,6 +134,15 @@ module Handlers
       NATIVE_LONG_PATH_FLAGS.any? { |known| known.start_with?(flag) }
     end
 
+    # What the audit log records about a job script. The script is the one
+    # input here that can do anything the user can, so the record carries a
+    # digest that ties a log line to an exact script without storing it.
+    def self.script_audit(content)
+      return {} unless content.is_a?(String)
+
+      { script_sha256: Digest::SHA256.hexdigest(content), script_bytes: content.bytesize }
+    end
+
     # %j is Slurm's job-id token. Other schedulers use different tokens, but
     # they all treat an unrecognised one as a literal, so the file still lands
     # inside the validated workdir — the property that matters here.
@@ -167,16 +177,6 @@ module Handlers
       validate_native_paths!(native)
     end
 
-    # Path checking for sites that have opted in.
-    #
-    # Adapters append `native` AFTER the options this handler validated —
-    # ood_core's Slurm adapter builds `-o script.output_path` at slurm.rb:644
-    # and concatenates native at :671 — and sbatch honours the last occurrence
-    # of a repeated flag. So an unchecked `--output=` here silently overrides
-    # the path job_path! just approved.
-    #
-    # Only path-bearing flags are inspected; `--nodes=4` and site-specific
-    # flags pass through untouched.
     # Anything other than a flat array of scalars is refused rather than
     # skipped. Skipping meant a String or Hash `native` bypassed path
     # validation entirely, leaving whatever ood_core made of it to decide the
@@ -198,12 +198,18 @@ module Handlers
       raise ValidationError, 'options.native contains a value that is not valid UTF-8'
     end
 
+    # Path checking for sites that have opted in.
+    #
+    # Adapters append `native` AFTER the options this handler validated —
+    # ood_core's Slurm adapter builds `-o script.output_path` at slurm.rb:644
+    # and concatenates native at :671 — and sbatch honours the last occurrence
+    # of a repeated flag. So an unchecked `--output=` here silently overrides
+    # the path job_path! just approved.
+    #
+    # Only path-bearing flags are inspected; `--nodes=4` and site-specific
+    # flags pass through untouched. The shape is checked first; see
+    # validate_native_shape!.
     def self.validate_native_paths!(native)
-      # Anything other than a flat array of scalars is refused rather than
-      # skipped. Returning early here meant a String or Hash `native` bypassed
-      # path validation entirely, leaving whatever ood_core made of it to
-      # decide the outcome — and a nested array flattens to argv on the way to
-      # the scheduler, so its contents are argv too.
       return if native.nil?
 
       validate_native_shape!(native)
@@ -300,6 +306,14 @@ module Handlers
       # The default matches what Slurm would have done anyway: slurm-<jobid>.out
       # in the working directory, which job_path! has already validated.
       options = options.merge(output_path: default_output_path(workdir)) if options[:output_path].nil?
+      # Same reasoning for stderr: ood_core emits `-e` only when error_path is
+      # set, so `#SBATCH --error=<path>` in the script body was honoured when
+      # the caller omitted it. Sending stderr to the output file is what Slurm
+      # does by default. Slurm only: other schedulers do not all accept one
+      # file for both streams.
+      if options[:error_path].nil? && cluster.job_config[:adapter].to_s == 'slurm'
+        options = options.merge(error_path: options[:output_path])
+      end
 
       script = build_script(script_content, workdir, options)
       deps = [:after, :afterok, :afternotok, :afterany].each_with_object({}) do |k, h|

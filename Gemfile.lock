@@ -121,7 +121,7 @@ PLATFORMS
 DEPENDENCIES
   excon (< 1.2.6)
   json
-  mcp
+  mcp (~> 1.10)
   minitest (< 5.26.2)
   mocha
   multi_json (= 1.19.1)

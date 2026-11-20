@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'timeout'
 require_relative '../test_helper'
 require_relative '../../app/handlers/files'
 
@@ -774,5 +775,97 @@ class HandlersFilesTest < Minitest::Test
 
     assert_equal 'con', Handlers::Files.read(path: path, max_size: 3)
     assert_equal 'content', Handlers::Files.read(path: path)
+  end
+
+  # write had no type check at all: a PUT to a FIFO blocked the worker for good.
+  def test_write_refuses_a_fifo_instead_of_blocking
+    fifo = File.join(@test_dir, 'pipe')
+    begin
+      File.mkfifo(fifo)
+    rescue NotImplementedError, Errno::EPERM
+      skip 'mkfifo unavailable'
+    end
+
+    Timeout.timeout(5) do
+      err = assert_raises(Handlers::ValidationError) { Handlers::Files.write(path: fifo, content: 'x') }
+      assert_match(/regular file/i, err.message)
+    end
+  end
+
+  # The path is validated as a string and then opened, which resolves it again.
+  # Simulates another user swapping the leaf for a symlink between the two: the
+  # destination recorded at validation no longer matches what the open reached.
+  def test_write_refuses_and_does_not_truncate_when_the_path_is_swapped_after_validation
+    victim = File.join(@test_dir, 'victim.txt')
+    File.write(victim, 'keep')
+    shared = File.join(@test_dir, 'shared')
+    FileUtils.mkdir_p(shared)
+    out = File.join(shared, 'out')
+    validated_as = Pathname.new(shared).realpath.join('out')
+    File.symlink(victim, out)
+    Handlers::Files.stubs(:expected_destination).returns(validated_as)
+
+    assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: out, content: 'overwritten') }
+    assert_equal 'keep', File.read(victim)
+  end
+
+  def test_read_refuses_when_the_path_is_swapped_after_validation
+    secret = File.join(@test_dir, 'secret.txt')
+    File.write(secret, 'secret')
+    out = File.join(@test_dir, 'out')
+    validated_as = Pathname.new(@test_dir).realpath.join('out')
+    File.symlink(secret, out)
+    Handlers::Files.stubs(:expected_destination).returns(validated_as)
+
+    assert_raises(Handlers::ForbiddenError) { Handlers::Files.read(path: out) }
+  end
+
+  def test_write_through_a_symlink_to_an_allowed_file_still_works
+    target = File.join(@test_dir, 'target.txt')
+    File.write(target, 'old')
+    link = File.join(@test_dir, 'link')
+    File.symlink(target, link)
+
+    Handlers::Files.write(path: link, content: 'new')
+
+    assert_equal 'new', File.read(target)
+    assert File.symlink?(link)
+  end
+
+  def test_append_and_overwrite_semantics_are_unchanged
+    f = File.join(@test_dir, 'log.txt')
+    Handlers::Files.write(path: f, content: 'a much longer first line')
+    Handlers::Files.write(path: f, content: 'short')
+    assert_equal 'short', File.read(f)
+
+    Handlers::Files.write(path: f, content: '+more', append: true)
+    assert_equal 'short+more', File.read(f)
+  end
+
+  def test_unknown_tilde_user_is_a_client_error
+    assert_raises(Handlers::ValidationError) { Handlers::Files.list(path: '~no_such_user_xyz/x') }
+  end
+
+  # `directory?` follows links, so this used to reach rmdir and raise ENOTDIR.
+  def test_delete_removes_a_symlink_to_a_directory_without_touching_the_directory
+    dir = File.join(@test_dir, 'real')
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, 'keep.txt'), 'keep')
+    link = File.join(@test_dir, 'link')
+    File.symlink(dir, link)
+
+    Handlers::Files.delete(path: link)
+
+    refute File.symlink?(link)
+    assert_equal 'keep', File.read(File.join(dir, 'keep.txt'))
+  end
+
+  def test_delete_removes_a_dangling_symlink
+    link = File.join(@test_dir, 'dangling')
+    File.symlink(File.join(@test_dir, 'gone'), link)
+
+    Handlers::Files.delete(path: link)
+
+    refute File.symlink?(link)
   end
 end

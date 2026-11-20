@@ -81,11 +81,15 @@ module Handlers
       readable_file!(p)
 
       effective_limit = max_size ? [max_size, MAX_FILE_READ].min : MAX_FILE_READ
-      if !max_size && (p.size > effective_limit)
-        raise PayloadTooLargeError, "File too large (max #{effective_limit} bytes)"
-      end
+      expected = expected_destination(p)
+      File.open(p.to_s, File::RDONLY | File::NONBLOCK) do |f|
+        verify_open_file!(f, p, expected)
+        if !max_size && (f.stat.size > effective_limit)
+          raise PayloadTooLargeError, "File too large (max #{effective_limit} bytes)"
+        end
 
-      max_size ? File.read(p.to_s, effective_limit) : p.read
+        f.read(effective_limit) || ''
+      end
     rescue Errno::ENOENT
       raise NotFoundError, 'File not found'
     rescue Errno::EACCES
@@ -111,18 +115,55 @@ module Handlers
       raise PayloadTooLargeError, "Content too large (max #{MAX_FILE_WRITE} bytes)" if content.bytesize > MAX_FILE_WRITE
 
       p.parent.mkpath unless p.parent.exist?
-      if append
-        File.open(p, 'a') { |f| f.write(content) }
-      else
-        p.write(content)
+      expected = expected_destination(p)
+      # No O_TRUNC: nothing is destroyed until the open file has been checked.
+      flags = File::WRONLY | File::CREAT | File::NONBLOCK | (append ? File::APPEND : 0)
+      File.open(p.to_s, flags) do |f|
+        verify_open_file!(f, p, expected)
+        f.truncate(0) unless append
+        f.write(content)
       end
       p
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
+    rescue Errno::ENXIO
+      # A FIFO with no reader. With one, the open succeeds and the type check
+      # in verify_open_file! refuses it.
+      raise ValidationError, 'Not a regular file'
+    rescue Errno::ENOENT
+      raise NotFoundError, 'Path not found'
     rescue *OUT_OF_SPACE_ERRORS => e
       raise StorageError, out_of_space_message(e)
     rescue *BAD_PATH_ERRORS => e
       raise ValidationError, e.message.sub(/ @ .*/, '')
+    end
+
+    # Where an open of `path` should land, worked out before the open.
+    def self.expected_destination(path)
+      return path.realpath if path.exist?
+
+      target = path.symlink? ? resolve_link_chain(path) : path
+      target.parent.realpath.join(target.basename)
+    end
+
+    # validate_path! judges a path string, and the open that follows resolves
+    # it again. In a shared directory such as /tmp, another user who owns a
+    # parent directory can swap a component for a symlink between the two, so
+    # the open lands on a file the check never saw. This runs on the open
+    # descriptor: it must be a regular file (a FIFO or device would block or
+    # never end), the path must still resolve to where it did when it was
+    # validated, and the descriptor must be that same file.
+    def self.verify_open_file!(file, path, expected)
+      stat = file.stat
+      raise ValidationError, 'Not a regular file' unless stat.file?
+
+      actual = Pathname.new(File.realpath(path.to_s))
+      on_disk = actual.stat
+      return if actual == expected && on_disk.dev == stat.dev && on_disk.ino == stat.ino
+
+      raise ForbiddenError, 'Access denied: path changed during the operation'
+    rescue Errno::ENOENT
+      raise ForbiddenError, 'Access denied: path changed during the operation'
     end
 
     def self.mkdir(path:)
@@ -159,22 +200,22 @@ module Handlers
     def self.delete(path:, recursive: false)
       p = normalize_path(path)
       validate_path!(p)
-      raise NotFoundError, 'Path not found' unless p.exist?
+      raise NotFoundError, 'Path not found' unless p.exist? || p.symlink?
 
-      if p.directory?
-        if recursive
-          # validate_path! only checked the target. Recursion would sweep any
-          # denied path beneath it — deleting ~/.config takes ~/.config/ondemand
-          # (the token store) with it, and deleting ~ takes ~/.ssh.
-          deny_recursive!(p)
-          FileUtils.rm_rf(p)
-        else
-          raise ValidationError, 'Directory not empty' unless p.children.empty?
-
-          p.rmdir
-        end
-      else
+      # A symlink is removed as a link, whatever it points at. `directory?`
+      # follows links, so a link to a directory used to reach rmdir and fail.
+      if p.symlink? || !p.directory?
         p.delete
+      elsif recursive
+        # validate_path! only checked the target. Recursion would sweep any
+        # denied path beneath it — deleting ~/.config takes ~/.config/ondemand
+        # (the token store) with it, and deleting ~ takes ~/.ssh.
+        deny_recursive!(p)
+        FileUtils.rm_rf(p)
+      else
+        raise ValidationError, 'Directory not empty' unless p.children.empty?
+
+        p.rmdir
       end
 
       { path: p.to_s, deleted: true }
@@ -186,7 +227,7 @@ module Handlers
       raise ValidationError, 'Directory not empty'
     end
 
-    # --- exposed helpers (used by routes for param handling) ---
+    # --- path validation ---
 
     # Single chokepoint for every file operation, so path-shape rejections
     # belong here rather than in each caller.
@@ -203,6 +244,9 @@ module Handlers
       raise ValidationError, 'path is not valid UTF-8' unless raw.valid_encoding?
 
       Pathname.new(File.expand_path(raw))
+    rescue ArgumentError
+      # File.expand_path raises for `~name` when there is no such user.
+      raise ValidationError, 'path could not be expanded'
     end
 
     def self.validate_path!(path)
@@ -232,25 +276,6 @@ module Handlers
       deny_by_inode!(path)
     end
 
-    # A symlink whose target does not exist yet defeats every other check here.
-    # `exist?` follows the link, so a dangling one is "missing": validate_path!
-    # takes find_real_parent, which ascends the LINK's own path and reports the
-    # link's directory rather than the target's. A link at /tmp/x -> ~/.bashrc
-    # therefore resolves to /tmp, passes the allowed-roots test, and reaches
-    # deny_sensitive! as the pair (/tmp/x, /tmp) — neither is under $HOME, so
-    # the deny-list never fires. deny_by_inode! then returns early for the same
-    # reason. The subsequent write follows the link and creates the file at the
-    # target.
-    #
-    # That is the persistence case the deny-list exists to stop, and absent
-    # files are exactly the ones worth planting: .bashrc and .zshrc are missing
-    # on plenty of HPC accounts, and ~/.ssh/authorized_keys on any account that
-    # has never used key auth.
-    #
-    # readlink is resolved lexically against the link's directory rather than
-    # with realpath, because realpath on a dangling link raises ENOENT — the
-    # very case this guards. Relative targets ("../../.bashrc") resolve
-    # correctly through expand_path.
     # Follow a symlink chain to its end, lexically. realpath cannot do this
     # when the final target does not exist, which is the whole case this
     # guards. A single readlink is not enough either: with a -> b -> denied,
@@ -270,6 +295,25 @@ module Handlers
       raise ForbiddenError, 'Access denied: symbolic link could not be resolved'
     end
 
+    # A symlink whose target does not exist yet defeats every other check here.
+    # `exist?` follows the link, so a dangling one is "missing": validate_path!
+    # takes find_real_parent, which ascends the LINK's own path and reports the
+    # link's directory rather than the target's. A link at /tmp/x -> ~/.bashrc
+    # therefore resolves to /tmp, passes the allowed-roots test, and reaches
+    # deny_sensitive! as the pair (/tmp/x, /tmp) — neither is under $HOME, so
+    # the deny-list never fires. deny_by_inode! then returns early for the same
+    # reason. The subsequent write follows the link and creates the file at the
+    # target.
+    #
+    # That is the persistence case the deny-list exists to stop, and absent
+    # files are exactly the ones worth planting: .bashrc and .zshrc are missing
+    # on plenty of HPC accounts, and ~/.ssh/authorized_keys on any account that
+    # has never used key auth.
+    #
+    # readlink is resolved lexically against the link's directory rather than
+    # with realpath, because realpath on a dangling link raises ENOENT — the
+    # very case this guards. Relative targets ("../../.bashrc") resolve
+    # correctly through expand_path.
     def self.deny_dangling_symlink!(path)
       return unless path.symlink?
 

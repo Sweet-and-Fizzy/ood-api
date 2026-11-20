@@ -82,8 +82,9 @@ ln -s /var/www/ood/apps/sys/ood-api/dashboard-plugin /etc/ood/config/plugins/ood
 ```
 
 Every request to `/api/v1/*` and `/mcp` must then carry `X-OOD-API-Token:
-<token>` **in addition to** whatever Apache accepts — the token is a second
-factor, never a credential on its own. Its own header is what lets it coexist
+<token>` **in addition to** whatever Apache accepts. The token is never a
+credential on its own, and it can be revoked per client. It is not an
+independent second factor, since anyone signed in as the user can create one. Its own header is what lets it coexist
 with the JWT in `Authorization`. Restart the PUN; token management appears at
 `/settings/api_tokens`.
 
@@ -107,7 +108,7 @@ Tokens can also be created manually:
 mkdir -p ~/.config/ondemand
 TOKEN=$(python -c "import secrets; print(secrets.token_hex(32))")
 cat > ~/.config/ondemand/tokens.json << EOF
-[{"id": "$(uuidgen)", "name": "My Token", "token": "$TOKEN", "created_at": "$(date -Iseconds)"}]
+[{"id": "$(uuidgen)", "name": "My Token", "token_digest": "$(printf %s "$TOKEN" | sha256sum | cut -d' ' -f1)", "created_at": "$(date -Iseconds)"}]
 EOF
 chmod 600 ~/.config/ondemand/tokens.json
 echo "Your token: $TOKEN"
@@ -199,6 +200,7 @@ page** titled "App has not been initialized" means step 3 has not been done.
 | `OOD_API_MAX_CONTEXT_BYTES` | No | `262144` (256 KB) | Per-file cap on agent context fragments. A larger file is replaced with a note rather than served. |
 | `OOD_API_MAX_CONTEXT_TOTAL_BYTES` | No | `1048576` (1 MB) | Cap across all context fragments together. The per-file cap alone bounds nothing when there are many files. |
 | `OOD_API_ALLOW_NATIVE` | No | unset | Set to `true` to accept `options.native` on job submission. It is raw scheduler argv and can override the paths this API validates, so it is off by default — see [the note in the API guide](api.md#submit-job). |
+| `OOD_API_ALLOWED_ORIGINS` | No | unset | Comma-separated origins (for example `https://portal.example.edu`) whose browser requests are accepted in addition to the portal's own. Only needed if a front end on another origin calls this API. |
 
 ## Troubleshooting
 
