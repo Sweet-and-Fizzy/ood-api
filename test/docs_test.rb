@@ -218,10 +218,10 @@ class DocsTest < Minitest::Test
     calls
   end
 
-  # SECURITY.md says the excon advisory is unreachable because this app makes
-  # no outbound HTTP request. Excon IS loaded — it arrives with ood_core — so
-  # the claim rests entirely on nothing ever opening a connection, which is a
-  # property of the code rather than of the dependency tree.
+  # SECURITY.md says this app makes no outbound network calls. Excon IS
+  # loaded — it arrives with ood_core — so the claim rests entirely on nothing
+  # ever opening a connection, which is a property of the code rather than of
+  # the dependency tree.
   #
   # Trip-wire on TCPSocket.open and Excon::Connection#request: exercise the
   # surface and assert neither fires. A future handler that calls out breaks

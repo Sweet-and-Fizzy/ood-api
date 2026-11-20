@@ -123,8 +123,9 @@ on top of that.
 
 ## Requirements
 
-- **Open OnDemand 3.x or 4.x**, verified through 4.2.3 (Ruby 3.3.10). The
-  optional Dashboard plugin needs 4.0+.
+- **Open OnDemand 4.x**, verified through 4.2.3 (Ruby 3.3.10), or 3.x where
+  the PUN runs Ruby 3.1 or newer. Ruby 3.0 is no longer supported; use the
+  0.4 releases there. The optional Dashboard plugin needs 4.0+.
 - **An OIDC identity provider that issues JWT access tokens**, with a JWKS
   endpoint Apache can reach. This is the part most likely to constrain you.
   CILogon issues opaque access tokens unless it has configured a token handler

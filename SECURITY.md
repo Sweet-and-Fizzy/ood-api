@@ -193,19 +193,3 @@ reading of the code — several findings in this project's history looked real i
 source and were not, and several looked minor until exercised.
 
 Fixes go to the latest release. There are no long-term support branches.
-
-## Known unpatched advisory
-
-`excon` carries [GHSA-48rx-c7pg-q66r](https://github.com/advisories/GHSA-48rx-c7pg-q66r)
-(medium) — it does not redact some sensitive headers when following redirects.
-The fix lands in 1.5.0, which requires Ruby 3.1, and this app supports Ruby 3.0
-so that OOD 3.x sites can run it. The advisory stays open until that floor
-moves.
-
-It is not reachable here. `excon` arrives transitively through `fog-core` and is
-loaded into the process when `ood_core` is required, so it is present — but
-nothing in this app constructs an `Excon` connection or makes any outbound HTTP
-request, so there is no redirect for the flaw to apply to. `test/docs_test.rb`
-holds a socket trip-wire over the request surface, so a handler that starts
-calling out fails the suite. A site using `ood_core`'s Coder cloud-VM
-adapter, which does make such calls, should weigh it differently.
