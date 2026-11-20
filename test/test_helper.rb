@@ -21,6 +21,10 @@ end
 require 'minitest/autorun'
 require 'rack/test'
 require 'mocha/minitest'
+
+# Never read a real site's settings: this suite may run on an OOD host.
+ENV['OOD_CONFIG_D_DIRECTORY'] = File.join(Dir.tmpdir, 'ood-api-no-such-config')
+['OOD_ALLOWLIST_PATH', 'WHITELIST_PATH'].each { |k| ENV.delete(k) }
 require 'json'
 require 'fileutils'
 require 'securerandom'

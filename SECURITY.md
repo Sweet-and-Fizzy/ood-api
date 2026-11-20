@@ -51,17 +51,31 @@ The jobs it submits are shell scripts and are not constrained by any of this.
 Each of these is a claim you can verify. The test files named are the ones that
 would fail if the control were removed.
 
-**Path confinement.** File access is confined to `$HOME`, `/tmp` and
-`Dir.tmpdir`. Within those, a deny-list refuses shell init files (`.bashrc`,
-`.zshrc`, `.profile` and their variants, including `.bash_aliases`), `~/.ssh`,
-`~/.local/bin`, `~/.gitconfig` and `~/.config/git`, `~/.netrc`, `~/.forward`,
-`~/.pam_environment`, `~/.config/autostart`, `~/.config/systemd/user`, and the
-app's own token store.
+**Path confinement.** If the site sets a file allowlist for the Dashboard
+(`OOD_ALLOWLIST_PATH`, or `allowlist_path` in `ondemand.d`), file access is
+confined to exactly those paths, so the API and the file browser follow one
+policy. With no allowlist it is confined to `$HOME`, `/tmp` and `Dir.tmpdir`.
 
-The list covers the common persistence paths and is not exhaustive. Other
-files can run code at login or hold credentials (`~/bin`, `~/.bashrc.d`,
-`~/.k5login`, `~/.aws/credentials`, application config directories), and a list
-of names cannot keep up with them. It is a backstop, not a boundary.
+Within `$HOME`, a deny-list refuses:
+
+- shell init and logout files (`.bashrc`, `.zshrc`, `.profile` and their
+  variants, `.bash_aliases`, `.bashrc.d`, `.config/fish`,
+  `.config/environment.d`), and X session files;
+- `~/.ssh`, `~/.k5login`, `~/.rhosts`, `~/.forward`, `~/.pam_environment`;
+- directories on the default `PATH` (`~/bin`, `~/.local/bin`);
+- `~/.gitconfig`, `~/.config/git`, and the `hooks` directory and `config`
+  file of any git repository;
+- startup files for Python (`usercustomize.py`), R (`.Rprofile`), Jupyter and
+  VNC, plus `~/.config/autostart` and `~/.config/systemd/user`;
+- credential stores (`.netrc`, `.git-credentials`, `.pgpass`, `.my.cnf`,
+  `.aws`, `.azure`, `.config/gcloud`, `.kube`, `.docker`, `.gnupg`,
+  `.config/gh`, `.config/rclone`);
+- the app's own token store.
+
+The list covers the common persistence and credential paths and is not
+exhaustive. Other files can run code or hold secrets (editor and application
+config, `~/ondemand/dev`, shell history), and a list of names cannot keep up
+with them. It is a backstop, not a boundary.
 
 It is enforced against the requested path, its resolved form, and the
 destination a symlink chain actually reaches — following the chain to its end
@@ -152,11 +166,9 @@ than one you know is missing.
 - **No read-only mode, and no way to disable job submission.** The read surface
   cannot be offered without the write, delete and job-submission surfaces, and
   job submission is code execution as the user (see the top of this document).
-- **Credentials elsewhere in `$HOME` are readable.** The deny-list names a
-  fixed set of paths. Files such as `~/.aws/credentials` or `~/.kube/config`
-  can be read by an agent and end up in a model's context.
-- **The site's `OOD_ALLOWLIST_PATH` is not consulted.** File roots are fixed at
-  `$HOME`, `/tmp` and `Dir.tmpdir`, whatever the Dashboard file browser allows.
+- **Secrets outside the deny-list are readable.** The list names a fixed set
+  of paths. A credential kept anywhere else in an allowed directory can be
+  read by an agent and end up in a model's context.
 - **No per-user or per-group enablement.** As a `sys` app it is available to
   everyone who can log into the portal.
 - **Application tokens do not expire.** Revocation is the only control.

@@ -282,7 +282,8 @@ module Handlers
       raise ValidationError, 'script.content must be a string' unless script_content.is_a?(String)
       raise ValidationError, 'script.content cannot be empty' if script_content.strip.empty?
 
-      workdir ||= '/tmp'
+      # /tmp unless the site's file allowlist excludes it.
+      workdir ||= Files.path_allowed?('/tmp') ? '/tmp' : Dir.home
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
 
       # The scheduler writes to these paths as the user, so they are subject to

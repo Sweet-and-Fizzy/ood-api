@@ -190,9 +190,11 @@ everything it can do, the user could already do from a shell. What changes is
 *who can drive it*: submit and cancel jobs, and read, write, and recursively
 delete files, all reachable by an LLM through the MCP endpoint.
 
-**Constraints.** File access is confined to `$HOME`, `/tmp` and `Dir.tmpdir`,
-with a deny-list refusing shell init files, `~/.ssh`, `~/.local/bin`, the token
-store and other paths an agent could use to leave itself a way back in —
+**Constraints.** File access is confined to the site's Dashboard file
+allowlist if it has one, and otherwise to `$HOME`, `/tmp` and `Dir.tmpdir`,
+with a deny-list refusing shell init files, `~/.ssh`, `~/.local/bin`,
+credential stores, the token store and other paths an agent could use to leave
+itself a way back in —
 enforced through symlinks, hardlinks and case variants alike. Environment
 variables are allowlisted with credential-shaped names refused. Scheduler job
 paths are validated like any other write. Every operation is audit-logged.

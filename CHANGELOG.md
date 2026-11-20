@@ -22,6 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- File access follows the site's Dashboard allowlist (`OOD_ALLOWLIST_PATH`, or
+  `allowlist_path` in `ondemand.d`) when one is set. Sites without one are
+  unchanged. When the allowlist excludes `/tmp`, a job submitted without a
+  working directory runs in the home directory.
+- More paths under `$HOME` are refused: `~/bin`, `.bashrc.d`, `.k5login`,
+  `.rhosts`, fish, environment.d, VNC and Jupyter startup files,
+  `usercustomize.py`, `.Rprofile`, git hooks and repository config, and the
+  credential stores of common cloud, cluster and registry clients. A client
+  that reads or writes any of these through the API will now get a 403.
 - Application tokens are stored as SHA-256 digests. Existing tokens keep
   working and are converted the first time each is used. A `tokens.json`
   written by hand should now carry `token_digest` in place of `token`.

@@ -5,6 +5,7 @@ require 'fileutils'
 require 'etc'
 require 'tmpdir'
 require_relative 'errors'
+require_relative '../../lib/site_config'
 
 module Handlers
   module Files
@@ -421,7 +422,15 @@ module Handlers
       # Run at login by MTAs that honour it; "|command" is code execution.
       '.forward',
       # Read by PAM at session start on distributions that enable it.
-      '.pam_environment'
+      '.pam_environment',
+      # Grant login to other Kerberos principals or other hosts.
+      '.k5login', '.rhosts', '.shosts',
+      # Run at logout or at the start of a graphical session.
+      '.zlogout', '.logout', '.xsession', '.xinitrc', '.xprofile',
+      # Run by every R session.
+      '.Rprofile',
+      # Credentials in plaintext.
+      '.git-credentials', '.pgpass', '.my.cnf'
     ].freeze
 
     DENIED_DIRS = [
@@ -434,7 +443,25 @@ module Handlers
       # Same reasoning as .gitconfig — this is git's XDG location.
       '.config/git',
       # Launched on graphical login under the XDG autostart spec.
-      '.config/autostart'
+      '.config/autostart',
+      # On PATH by default on RHEL-family systems, like .local/bin.
+      'bin',
+      # Sourced by the stock RHEL 9 and Fedora .bashrc, and by systemd and fish
+      # at session start.
+      '.bashrc.d', '.config/environment.d', '.config/fish',
+      # Run when a VNC or Jupyter session starts.
+      '.vnc', '.jupyter', '.ipython/profile_default/startup',
+      # Credential stores for cloud, cluster and registry clients.
+      '.aws', '.azure', '.config/gcloud', '.kube', '.docker', '.gnupg',
+      '.config/gh', '.config/rclone'
+    ].freeze
+
+    # Denied wherever they appear under $HOME, not at one fixed location.
+    DENIED_PATTERNS = [
+      # Imported by every Python process the user starts.
+      %r{\A\.local/lib/python[^/]+/site-packages/(user|site)customize\.py\z},
+      # Hooks and config are run or read by every git command in that repo.
+      %r{(\A|/)\.git/(hooks(/|\z)|config\z)}
     ].freeze
 
     def self.deny_sensitive!(requested, resolved)
@@ -467,7 +494,7 @@ module Handlers
           raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
         end
 
-        if DENIED_EXACT.any? { |name| folded == name.downcase }
+        if DENIED_EXACT.any? { |name| folded == name.downcase } || DENIED_PATTERNS.any? { |re| re.match?(folded) }
           raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
         end
       end
@@ -483,17 +510,22 @@ module Handlers
 
     # --- internal helpers ---
 
+    # Where file operations are allowed. A site that sets an allowlist for the
+    # Dashboard file browser (OOD_ALLOWLIST_PATH, or allowlist_path in
+    # ondemand.d) gets exactly those paths here too, so there is one policy.
+    # With no allowlist the Dashboard allows everything; this app is narrower
+    # and keeps to the home and temp directories.
     def self.allowed_path_roots
-      roots = []
-      home = Pathname.new(Dir.home)
-      roots << (home.exist? ? home.realpath : home)
+      configured = OodApi::SiteConfig.allowlist_paths
+      roots = configured.empty? ? [Pathname.new(Dir.home), Pathname.new('/tmp'), Pathname.new(Dir.tmpdir)] : configured
 
-      ['/tmp', Dir.tmpdir].each do |tmp|
-        tmp_path = Pathname.new(tmp)
-        roots << (tmp_path.exist? ? tmp_path.realpath : tmp_path)
-      end
+      roots.map { |root| root.exist? ? root.realpath : root }.uniq
+    end
 
-      roots.uniq
+    def self.path_allowed?(path)
+      real = Pathname.new(path.to_s).expand_path
+      real = real.realpath if real.exist?
+      allowed_path_roots.any? { |root| path_under?(real, root) }
     end
 
     def self.path_under?(child, parent)

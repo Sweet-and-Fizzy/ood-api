@@ -868,4 +868,69 @@ class HandlersFilesTest < Minitest::Test
 
     refute File.symlink?(link)
   end
+
+  # --- site allowlist ---
+
+  def with_site_allowlist(*paths)
+    ENV['OOD_ALLOWLIST_PATH'] = paths.join(':')
+    yield
+  ensure
+    ENV.delete('OOD_ALLOWLIST_PATH')
+  end
+
+  # A site that restricts the Dashboard file browser gets the same limits here.
+  def test_site_allowlist_replaces_the_default_roots
+    scratch = File.join(@test_dir, 'scratch')
+    other = File.join(@test_dir, 'other')
+    FileUtils.mkdir_p([scratch, other])
+    File.write(File.join(other, 'f.txt'), 'x')
+
+    with_site_allowlist(scratch) do
+      Handlers::Files.write(path: File.join(scratch, 'ok.txt'), content: 'ok')
+      assert_raises(Handlers::ForbiddenError) { Handlers::Files.read(path: File.join(other, 'f.txt')) }
+    end
+  end
+
+  def test_site_allowlist_can_exclude_home_and_tmp
+    scratch = File.join(@test_dir, 'scratch')
+    FileUtils.mkdir_p(scratch)
+
+    with_site_allowlist(scratch) do
+      with_fake_home do |home|
+        assert_raises(Handlers::ForbiddenError) { Handlers::Files.list(path: home) }
+      end
+      refute Handlers::Files.path_allowed?('/tmp')
+    end
+  end
+
+  def test_denied_paths_stay_denied_under_a_site_allowlist
+    with_fake_home do |home|
+      with_site_allowlist(home) do
+        path = Handlers::Files.normalize_path(File.join(home, '.ssh', 'authorized_keys'))
+        assert_raises(Handlers::ForbiddenError) { Handlers::Files.validate_path!(path) }
+      end
+    end
+  end
+
+  # --- deny-list additions ---
+
+  def test_login_and_startup_paths_found_writable_by_the_audit_are_denied
+    ['bin/ls', '.bashrc.d/x.sh', '.k5login', '.rhosts', '.zlogout', '.config/environment.d/x.conf',
+     '.config/fish/config.fish', '.vnc/xstartup', '.jupyter/jupyter_notebook_config.py',
+     '.local/lib/python3.11/site-packages/usercustomize.py', '.Rprofile',
+     'code/repo/.git/hooks/pre-commit', 'code/repo/.git/config'].each { |rel| assert_denied(rel) }
+  end
+
+  def test_credential_stores_are_denied
+    ['.aws/credentials', '.kube/config', '.docker/config.json', '.git-credentials', '.pgpass',
+     '.config/gh/hosts.yml', '.config/rclone/rclone.conf', '.gnupg/private-keys-v1.d/k'].each do |rel|
+      assert_denied(rel)
+    end
+  end
+
+  def test_ordinary_paths_near_the_denied_ones_are_still_allowed
+    ['binaries/tool', 'code/repo/.git/HEAD', 'code/repo/.github/workflows/ci.yml',
+     '.local/lib/python3.11/site-packages/mypkg/__init__.py', '.config/app/settings.json',
+     'notes/.aws-notes.txt'].each { |rel| assert_allowed(rel) }
+  end
 end
