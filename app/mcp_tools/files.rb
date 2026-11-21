@@ -22,6 +22,7 @@ module OodApi
       end
     end
 
+    # MCP tool: list a directory or describe a file.
     class ListFilesTool < Base
       tool_name 'list_files'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
@@ -53,6 +54,7 @@ module OodApi
       end
     end
 
+    # MCP tool: read a file's contents.
     class ReadFileTool < Base
       tool_name 'read_file'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
@@ -76,6 +78,7 @@ module OodApi
       end
     end
 
+    # MCP tool: write or append to a file.
     class WriteFileTool < Base
       tool_name 'write_file'
       annotations(read_only_hint: false, destructive_hint: true, idempotent_hint: false, open_world_hint: false)
@@ -101,6 +104,7 @@ module OodApi
       end
     end
 
+    # MCP tool: create a directory.
     class CreateDirectoryTool < Base
       tool_name 'create_directory'
       annotations(read_only_hint: false, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
@@ -124,6 +128,7 @@ module OodApi
       end
     end
 
+    # MCP tool: delete a file or directory.
     class DeleteFileTool < Base
       tool_name 'delete_file'
       annotations(read_only_hint: false, destructive_hint: true, idempotent_hint: true, open_world_hint: false)

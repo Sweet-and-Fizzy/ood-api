@@ -126,22 +126,27 @@ class DocsTest < Minitest::Test
   # returned 415 as written, because they are bodyless and the filter exempts
   # only the DELETE *method*. The prose describing that rule drifted at the
   # same time, so the docs were self-consistently wrong.
+  # Each curl invocation in `lines`, joined across backslash continuations,
+  # with the number of the line it starts on.
+  def curl_commands(lines)
+    lines.each_with_index.filter_map do |line, i|
+      next unless line.match?(/curl\b/)
+
+      block = [line]
+      j = i
+      block << lines[j += 1] while lines[j]&.rstrip&.end_with?('\\') && lines[j + 1]
+      [block.join, i + 1]
+    end
+  end
+
   def test_documented_write_examples_send_the_required_content_type
     broken = []
     all_docs.each do |path|
-      lines = read_utf8(path).lines
-      lines.each_with_index do |line, i|
-        next unless line.match?(/curl\b/)
-
-        # A curl invocation continues while lines end in a backslash.
-        block = [line]
-        j = i
-        block << lines[j += 1] while lines[j]&.rstrip&.end_with?('\\') && lines[j + 1]
-        text = block.join
+      curl_commands(read_utf8(path).lines).each do |text, line_number|
         next unless text.match?(/-X\s+(POST|PUT|PATCH)\b/)
         next if text.match?(%r{application/json}i)
 
-        broken << "#{File.basename(path)}:#{i + 1}"
+        broken << "#{File.basename(path)}:#{line_number}"
       end
     end
 
