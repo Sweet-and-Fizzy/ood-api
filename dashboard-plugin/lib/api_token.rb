@@ -15,13 +15,15 @@ require 'digest'
 class ApiToken
   include ActiveModel::Model
 
-  # No expiry field here on purpose. An earlier version carried `expires_at`
-  # and an `active?` helper, but nothing enforced either — ood-api's
-  # AppAuth.authenticate accepts any token whose value matches. Since
-  # docs/installation.md tells operators they may hand-write tokens.json, a
-  # visible-but-unenforced expiry field invites someone to add an expiry and
-  # believe the credential dies on its own. Revocation is the real control.
-  attr_reader :id, :name, :token_digest, :created_at, :last_used_at
+  # Every token has an expiry unless the site allows tokens that never
+  # expire. ood-api enforces it (OodApi::AppAuth); this model records it and
+  # offers the choices. The settings and their defaults mirror
+  # OodApi::TokenPolicy in lib/token_policy.rb, so keep the two in step.
+  LIFETIMES = [30, 90, 365].freeze
+  DEFAULT_LIFETIME = 90
+  DEFAULT_MAX_DAYS = 365
+  NEVER = 'never'
+  attr_reader :id, :name, :token_digest, :created_at, :last_used_at, :expires_at
 
   TOKEN_DIR = Pathname.new('~/.config/ondemand').expand_path
   TOKEN_FILE = TOKEN_DIR.join('tokens.json')
@@ -52,15 +54,50 @@ class ApiToken
       Digest::SHA256.hexdigest(plain_token.to_s)
     end
 
+    # @return [Integer] the longest lifetime a token may be given, in days
+    def max_days
+      days = Integer(setting('OOD_API_TOKEN_MAX_DAYS', :token_max_days) || DEFAULT_MAX_DAYS)
+      days.positive? ? days : DEFAULT_MAX_DAYS
+    rescue ArgumentError, TypeError
+      DEFAULT_MAX_DAYS
+    end
+
+    def allow_never?
+      ['true', '1', 'yes', 'on'].include?(setting('OOD_API_TOKEN_ALLOW_NEVER', :token_allow_never).to_s.strip.downcase)
+    end
+
+    # The lifetimes the form offers: the standard ones the site maximum
+    # allows, the maximum itself, and "never" where the site allows it.
+    #
+    # @return [Array<String>] day counts as strings, and possibly NEVER
+    def lifetime_options
+      days = (LIFETIMES.select { |lifetime| lifetime <= max_days } | [max_days]).sort
+      days.map(&:to_s) + (allow_never? ? [NEVER] : [])
+    end
+
+    def default_lifetime
+      [DEFAULT_LIFETIME, max_days].min.to_s
+    end
+
+    # @param lifetime [String] one of lifetime_options
+    # @return [String, nil] an ISO 8601 time, or nil for a token that never expires
+    def expiry_for(lifetime)
+      return nil if lifetime == NEVER && allow_never?
+
+      days = lifetime_options.include?(lifetime) && lifetime != NEVER ? lifetime.to_i : max_days
+      (Time.current + days.days).iso8601
+    end
+
     # Returns [ApiToken, plain_token]. The plaintext exists only in this return
     # value, for the one page render that shows it to the user.
-    def generate(name:)
+    def generate(name:, lifetime: default_lifetime)
       plain_token = SecureRandom.hex(32)
       token_attrs = {
         id:           SecureRandom.uuid,
         name:         name,
         token_digest: digest(plain_token),
-        created_at:   Time.current.iso8601
+        created_at:   Time.current.iso8601,
+        expires_at:   expiry_for(lifetime)
       }
 
       with_lock do
@@ -143,7 +180,33 @@ class ApiToken
       legacy.is_a?(String) && legacy.present? ? digest(legacy) : nil
     end
 
+    # No expiry recorded, a "never" the site does not allow, or a date beyond
+    # the site maximum. Matches OodApi::TokenPolicy.needs_expiry?.
+    def needs_expiry?(attrs)
+      return true unless attrs.key?(:expires_at)
+      return !allow_never? if attrs[:expires_at].nil?
+
+      Time.iso8601(attrs[:expires_at].to_s) > Time.current + max_days.days
+    rescue ArgumentError
+      false
+    end
+
+    # The environment first, then the `ood_api` block the Dashboard has
+    # already read from ondemand.d.
+    def setting(env_name, key)
+      ENV.fetch(env_name) do
+        settings = ::Configuration.send(:config)[:ood_api]
+        settings.is_a?(Hash) ? settings[key] : nil
+      end
+    rescue StandardError
+      nil
+    end
+
+    # Brings a stored entry up to date on its way back to disk: a plaintext
+    # token becomes its digest, and an entry with no expiry gets the site
+    # maximum, matching lib/api_token.rb.
     def harden(attrs)
+      attrs = attrs.merge(expires_at: (Time.current + max_days.days).iso8601) if needs_expiry?(attrs)
       return attrs unless attrs.key?(:token)
 
       hashed = stored_digest(attrs)
@@ -158,6 +221,7 @@ class ApiToken
     @token_digest = attrs[:token_digest]
     @created_at   = attrs[:created_at]
     @last_used_at = attrs[:last_used_at]
+    @expires_at   = attrs[:expires_at]
   end
 
   # Timestamps for display. The store is a plain JSON file the installation
@@ -171,6 +235,20 @@ class ApiToken
 
   def last_used_at_display(fallback)
     format_timestamp(last_used_at, fallback)
+  end
+
+  # @param never [String] what to show for a token that does not expire
+  def expires_at_display(never)
+    format_timestamp(expires_at, never)
+  end
+
+  # True once the expiry has passed, and for a value that is not a time.
+  def expired?
+    return false if expires_at.nil?
+
+    Time.iso8601(expires_at.to_s) <= Time.current
+  rescue ArgumentError
+    true
   end
 
   def destroy

@@ -1467,6 +1467,7 @@ Tokens are stored in the user's home directory at `~/.config/ondemand/tokens.jso
 - Unique ID
 - User-defined name
 - SHA-256 digest of the token (the token itself is not stored)
+- Expiry timestamp
 - Creation timestamp
 - Last used timestamp
 
@@ -1493,5 +1494,8 @@ API-specific details not covered there:
   created.
 - A token carries no scope: it authenticates the user, and the request then has
   everything that user has. Revoke through **Settings > API Tokens**.
+- A token expires. The lifetime is chosen when it is created (30, 90 or 365
+  days, within the site's maximum), and a request with an expired token gets
+  the same 401 as an unknown one. The token page shows each token's expiry.
 - Use HTTPS. Bearer credentials in a URL query string are never accepted; they
   belong in headers.

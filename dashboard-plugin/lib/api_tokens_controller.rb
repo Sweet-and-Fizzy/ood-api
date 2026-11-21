@@ -18,19 +18,12 @@ class ApiTokensController < ApplicationController
   # Renders the index directly with @new_token set to avoid storing
   # the sensitive token in the session/flash.
   def create
-    name = sanitize_name(params.require(:api_token).permit(:name)[:name])
+    permitted = params.require(:api_token).permit(:name, :lifetime)
+    name = sanitize_name(permitted[:name])
+    problem = name_problem(name)
+    return redirect_to(api_tokens_path, alert: problem) if problem
 
-    if name.blank?
-      redirect_to api_tokens_path, alert: t('dashboard.api_tokens.name_required')
-      return
-    end
-
-    if name.length > MAX_NAME_LENGTH
-      redirect_to api_tokens_path, alert: t('dashboard.api_tokens.name_too_long', max: MAX_NAME_LENGTH)
-      return
-    end
-
-    token, @new_token = ApiToken.generate(name: name)
+    token, @new_token = ApiToken.generate(name: name, lifetime: chosen_lifetime(permitted[:lifetime]))
     @tokens = ApiToken.all
     flash.now[:notice] = t('dashboard.api_tokens.created_notice', name: token.name)
     render :index
@@ -56,6 +49,18 @@ class ApiTokensController < ApplicationController
   end
 
   private
+
+  # @return [String, nil] what is wrong with the name, if anything
+  def name_problem(name)
+    return t('dashboard.api_tokens.name_required') if name.blank?
+
+    t('dashboard.api_tokens.name_too_long', max: MAX_NAME_LENGTH) if name.length > MAX_NAME_LENGTH
+  end
+
+  # Only a lifetime the form offered is accepted; anything else gets the default.
+  def chosen_lifetime(value)
+    ApiToken.lifetime_options.include?(value.to_s) ? value.to_s : ApiToken.default_lifetime
+  end
 
   # Control characters would round-trip through JSON intact and render as
   # invisible or line-breaking text in the token list.

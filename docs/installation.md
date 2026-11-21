@@ -128,7 +128,7 @@ Tokens can also be created manually:
 mkdir -p ~/.config/ondemand
 TOKEN=$(python -c "import secrets; print(secrets.token_hex(32))")
 cat > ~/.config/ondemand/tokens.json << EOF
-[{"id": "$(uuidgen)", "name": "My Token", "token_digest": "$(printf %s "$TOKEN" | sha256sum | cut -d' ' -f1)", "created_at": "$(date -Iseconds)"}]
+[{"id": "$(uuidgen)", "name": "My Token", "token_digest": "$(printf %s "$TOKEN" | sha256sum | cut -d' ' -f1)", "created_at": "$(date -Iseconds)", "expires_at": "$(date -Iseconds -d '+90 days')"}]
 EOF
 chmod 600 ~/.config/ondemand/tokens.json
 echo "Your token: $TOKEN"
@@ -253,6 +253,8 @@ Restart the PUN after changing any of these.
 |----------|----------|---------|-------------|
 | `OOD_CLUSTERS` | No | `/etc/ood/config/clusters.d` | Path to cluster config directory |
 | `OOD_API_APP_TOKENS` | No | unset | Set to `true` to require a per-client `X-OOD-API-Token` header in addition to Apache's auth. See [application tokens](#optional-application-tokens). |
+| `OOD_API_TOKEN_MAX_DAYS` | No | `365` | The longest lifetime an application token may be given, in days. Also `token_max_days` under `ood_api` in `ondemand.d`. A stored expiry beyond it, such as one written into the token file by hand, is pulled back to it the next time the token is used, and tokens created before expiry existed get it the same way. Lowering it shortens existing tokens. |
+| `OOD_API_TOKEN_ALLOW_NEVER` | No | unset | Set to `true` to let users create tokens that never expire. Also `token_allow_never` under `ood_api`. |
 | `OOD_API_MAX_FILE_READ` | No | `10485760` (10 MB) | Maximum file read size in bytes (REST and MCP `read_file`) |
 | `OOD_API_MAX_FILE_WRITE` | No | `52428800` (50 MB) | Maximum request body size in bytes for **every** `/api/v1/*` request, not only file writes — job submission and the MCP envelope are bounded by it too. Lowering it to restrict uploads also caps how large a job script may be. |
 | `OOD_API_ENV_ALLOWLIST` | No | See [docs/api.md](api.md#environment-variable-allowlist) | Comma-separated allowlist for env vars endpoint. Entries ending in `*` are prefix matches. |
