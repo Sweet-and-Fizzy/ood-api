@@ -51,6 +51,7 @@ GEM
       ood_support (~> 0.0.2)
       rexml (~> 3.2)
     ood_support (0.0.5)
+    ostruct (0.6.3)
     parallel (1.28.0)
     parser (3.3.13.0)
       ast (~> 2.4.1)
@@ -125,6 +126,7 @@ DEPENDENCIES
   mocha
   multi_json (= 1.19.1)
   ood_core (~> 0.24)
+  ostruct
   parallel (< 2.0)
   public_suffix (< 7)
   puma
@@ -164,6 +166,7 @@ CHECKSUMS
   nio4r (2.7.5) sha256=6c90168e48fb5f8e768419c93abb94ba2b892a1d0602cb06eef16d8b7df1dca1
   ood_core (0.31.1) sha256=1ac19b0fc8ff35cdbd0ada9f3ad4e6f7b76d5a3ed1e222416a83c5fd1b23126f
   ood_support (0.0.5) sha256=49eeeb623825678968adf89ea0f771870612f12c7169799efb88953de7e95a26
+  ostruct (0.6.3) sha256=95a2ed4a4bd1d190784e666b47b2d3f078e4a9efda2fccf18f84ddc6538ed912
   parallel (1.28.0) sha256=33e6de1484baf2524792d178b0913fc8eb94c628d6cfe45599ad4458c638c970
   parser (3.3.13.0) sha256=e02f9b63c2fe05b0c68f692ba4df89b3cb113b663964f75d988fbebfd6c3deca
   prism (2.1.0) sha256=1c0a7c6dea0e93183390fb123f007564dbe663198e2f86ad87204151147601f3

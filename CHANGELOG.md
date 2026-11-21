@@ -77,6 +77,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   be removed with `disable`, and `rest: false` or `mcp: false` switches a
   whole surface off. See
   [what to enable](docs/installation.md#what-to-enable).
+- `ostruct` is now a declared dependency. `ood_core` requires it, and Ruby
+  4.0 no longer ships it by default, so the app did not load there.
 - Ruby 3.0 is no longer supported. The floor is 3.1 and CI covers 3.1 to 4.0,
   matching Open OnDemand's own test matrix. This lifts the `excon` pin, so the
   previously unpatched advisory GHSA-48rx-c7pg-q66r is resolved.
