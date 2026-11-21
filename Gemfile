@@ -10,7 +10,7 @@ gem 'json'
 gem 'mcp', '~> 1.10'
 # Transitive dependency of fog-json. 1.20.0+ requires Ruby 3.2.
 gem 'multi_json', '1.19.1'
-gem 'ood_core', '~> 0.24'
+gem 'ood_core', '~> 0.31'
 # ood_core requires ostruct, which stopped being a default gem in Ruby 4.0.
 gem 'ostruct'
 gem 'puma'
