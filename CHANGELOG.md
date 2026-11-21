@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   destructive, and `submit_job` is marked destructive, non-idempotent and
   open-world, so clients can put a confirmation step in front of them. Before
   this, the MCP SDK reported every tool as destructive by default.
+- Application tokens expire. The token page offers 30, 90 or 365 days (90 by
+  default) and shows each token's expiry. `token_max_days` sets the site
+  maximum and `token_allow_never` permits tokens with no expiry; both go
+  under `ood_api` in `ondemand.d` or in `OOD_API_TOKEN_MAX_DAYS` and
+  `OOD_API_TOKEN_ALLOW_NEVER`. An expired token gets a 401 and an audit line
+  naming it. Existing tokens are given the site maximum, counted from their
+  first use after the upgrade.
 - Audit records carry the id of the application token that made the request,
   and job submissions record the SHA-256 digest and size of the script.
 - `OOD_API_ALLOWED_ORIGINS` lists extra origins whose browser requests are

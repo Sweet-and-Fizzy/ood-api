@@ -101,6 +101,18 @@ class ApiTest < Minitest::Test
     assert_equal 401, last_response.status
   end
 
+  def test_app_token_mode_expired_token_returns_401_on_both_surfaces
+    _token, plain = OodApi::ApiToken.create(name: 'Expired', expires_at: (Time.now - 60).iso8601)
+
+    get '/api/v1/clusters', {}, { 'HTTP_X_OOD_API_TOKEN' => plain }
+    assert_equal 401, last_response.status
+
+    env = Rack::MockRequest.env_for('/', method: 'POST', input: '{}')
+    env['HTTP_X_OOD_API_TOKEN'] = plain
+    status, = OodApi.mcp_rack_app.call(env)
+    assert_equal 401, status
+  end
+
   def test_app_token_mode_valid_token_updates_last_used_at
     token = create_test_token
     assert_nil token.last_used_at

@@ -36,6 +36,12 @@ module OodApi
       value.nil? || value.empty? ? nil : value
     end
 
+    # An expired token is refused like an unknown one, but the log says which
+    # token it was, so its owner can tell why a client stopped working.
+    def log_expired(token)
+      warn "ood_api_audit op=authenticate status=expired token_id=#{token.id}"
+    end
+
     # Returns the ApiToken when authentication passes (or when app tokens are
     # disabled, in which case nil is a pass, not a failure). Returns false when
     # a token is required and the presented one is missing or invalid.
@@ -47,6 +53,11 @@ module OodApi
 
       token = ApiToken.find_by_token(value)
       return false unless token
+
+      if token.expired?
+        log_expired(token)
+        return false
+      end
 
       ApiToken.touch(token)
       token

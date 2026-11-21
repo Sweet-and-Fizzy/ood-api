@@ -266,4 +266,87 @@ class ApiTokenTest < Minitest::Test
 
     assert_equal before, File.stat(@test_token_file).ino, 'token file was rewritten inside the touch interval'
   end
+
+  # --- expiry ---
+
+  def with_token_settings(max_days: nil, allow_never: nil)
+    ENV['OOD_API_TOKEN_MAX_DAYS'] = max_days.to_s if max_days
+    ENV['OOD_API_TOKEN_ALLOW_NEVER'] = allow_never.to_s unless allow_never.nil?
+    yield
+  ensure
+    ENV.delete('OOD_API_TOKEN_MAX_DAYS')
+    ENV.delete('OOD_API_TOKEN_ALLOW_NEVER')
+  end
+
+  def stored_entries
+    JSON.parse(File.read(@test_token_file), symbolize_names: true)
+  end
+
+  def test_a_new_token_expires_at_the_site_maximum_by_default
+    token, = OodApi::ApiToken.create(name: 'Default')
+
+    expires = Time.iso8601(token.expires_at)
+    assert_in_delta Time.now + (365 * 86_400), expires, 60
+    refute token.expired?
+  end
+
+  def test_the_site_can_shorten_the_maximum
+    with_token_settings(max_days: 30) do
+      token, = OodApi::ApiToken.create(name: 'Short')
+
+      assert_in_delta Time.now + (30 * 86_400), Time.iso8601(token.expires_at), 60
+    end
+  end
+
+  def test_an_expired_token_is_found_but_reports_expired
+    _token, plain = OodApi::ApiToken.create(name: 'Old', expires_at: (Time.now - 60).iso8601)
+
+    found = OodApi::ApiToken.find_by_token(plain)
+
+    assert found.expired?
+  end
+
+  def test_an_unreadable_expiry_counts_as_expired
+    _token, plain = OodApi::ApiToken.create(name: 'Bad', expires_at: 'next tuesday')
+
+    assert OodApi::ApiToken.find_by_token(plain).expired?
+  end
+
+  # A token created before expiry existed keeps working, and gets the site
+  # maximum, counted from the first time the store is rewritten.
+  def test_a_token_with_no_expiry_recorded_is_given_one_on_first_use
+    FileUtils.mkdir_p(@test_token_dir)
+    plain = 'c' * 64
+    File.write(@test_token_file,
+               JSON.generate([{ id: 'old-1', name: 'Old', token_digest: OodApi::ApiToken.digest(plain) }]))
+
+    found = OodApi::ApiToken.find_by_token(plain)
+    refute found.expired?
+    OodApi::ApiToken.touch(found)
+
+    stamped = stored_entries.first[:expires_at]
+    assert_in_delta Time.now + (365 * 86_400), Time.iso8601(stamped), 60
+  end
+
+  def test_never_is_kept_only_where_the_site_allows_it
+    FileUtils.mkdir_p(@test_token_dir)
+    plain = 'd' * 64
+    entry = { id: 'never-1', name: 'Never', token_digest: OodApi::ApiToken.digest(plain), expires_at: nil }
+    File.write(@test_token_file, JSON.generate([entry]))
+
+    with_token_settings(allow_never: true) do
+      OodApi::ApiToken.touch(OodApi::ApiToken.find_by_token(plain))
+      assert_nil stored_entries.first[:expires_at]
+    end
+
+    OodApi::ApiToken.stubs(:recently_touched?).returns(false)
+    OodApi::ApiToken.touch(OodApi::ApiToken.find_by_token(plain))
+    refute_nil stored_entries.first[:expires_at], 'a site that does not allow never gives the token an expiry'
+  end
+
+  def test_bad_settings_fall_back_to_the_default_maximum
+    with_token_settings(max_days: 'forever') { assert_equal 365, OodApi::TokenPolicy.max_days }
+    with_token_settings(max_days: -5) { assert_equal 365, OodApi::TokenPolicy.max_days }
+    refute OodApi::TokenPolicy.allow_never?
+  end
 end

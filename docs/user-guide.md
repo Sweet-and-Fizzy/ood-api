@@ -193,9 +193,10 @@ curl -H "Cookie: mod_auth_openidc_session=<your-session-cookie>" \
      https://<your-ood-host>/pun/sys/ood-api/api/v1/clusters
 ```
 
-The token itself doesn't expire on its own (it lives until you revoke it in the
-Dashboard), but if you're pairing it with a browser session cookie, that cookie
-lasts only as long as your OIDC session — log in again to refresh it.
+The token expires after the lifetime you chose when you created it (90 days
+unless you picked another), and the token page shows the date. Create a new
+one before then. If you're pairing it with a browser session cookie, that
+cookie lasts only as long as your OIDC session — log in again to refresh it.
 
 An app token always accompanies something Apache accepts; it never replaces it.
 MCP clients can use one if they can set two headers (`Authorization: Bearer
