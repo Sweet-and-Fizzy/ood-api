@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'set'
+require 'time'
 require_relative 'site_config'
 
 module OodApi
@@ -32,7 +33,7 @@ module OodApi
     ALL_TOOLS = GROUPS.values.flatten.freeze
     DEFAULT_GROUPS = ['read'].freeze
 
-    SETTINGS = [:capabilities, :disable, :rest, :mcp, :app_tokens, :token_max_days, :token_allow_never].freeze
+    SETTINGS = SiteConfig::OWN_NAMES
     ON = ['true', '1', 'yes', 'on'].freeze
     OFF = ['false', '0', 'no', 'off'].freeze
 
@@ -73,7 +74,8 @@ module OodApi
       found = problems
       found.each { |problem| warn "ood_api_audit op=capabilities status=error error=\"#{problem.tr('"', "'")}\"" }
       note = found.empty? ? '' : ' error="settings could not be understood; nothing is served until they are fixed"'
-      warn "ood_api_audit op=capabilities status=#{found.empty? ? 'ok' : 'error'} #{summary}#{note}"
+      warn "ood_api_audit ts=#{Time.now.utc.iso8601(3)} op=capabilities " \
+           "status=#{found.empty? ? 'ok' : 'error'} #{summary}#{note}"
     end
 
     # Settings that cannot be understood turn everything off. A name that is
@@ -92,6 +94,13 @@ module OodApi
       groups = GROUPS.keys if groups.include?('all')
       tools = (['read'] | groups).flat_map { |group| GROUPS.fetch(group) } - disabled - off_in_dashboard
       { tools: Set.new(tools), rest: rest, mcp: mcp, problems: [] }
+    end
+
+    # The settings held by an environment variable. One of these cannot be
+    # changed from ondemand.d, which matters when a site reaches for the off
+    # switch there.
+    def from_environment
+      SiteConfig::KNOWN_VARIABLES.reject { |name| ENV.fetch(name, '').strip.empty? }.sort
     end
 
     # What is wrong outside the lists and the two surface switches.

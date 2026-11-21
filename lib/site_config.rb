@@ -11,6 +11,8 @@ module OodApi
   module SiteConfig
     ALLOWLIST_KEYS = ['OOD_ALLOWLIST_PATH', 'WHITELIST_PATH'].freeze
     REFRESH_SECONDS = 1
+    # The settings this app reads from its block in ondemand.d.
+    OWN_NAMES = [:capabilities, :disable, :rest, :mcp, :app_tokens, :token_max_days, :token_allow_never].freeze
     # A file that mentions one of these holds settings this app acts on.
     OWN_SETTINGS = /ood[_-]?api|allowlist[_-]?path/i
     # This app's block used as a key, however it is spelt or nested.
@@ -115,10 +117,11 @@ module OodApi
       file = Pathname.new(file)
       @env_problems = []
       return unless file.exist?
+      raise ArgumentError, 'not owned by root, or writable by everyone' unless trusted?(file)
 
       parse_env(file.read(encoding: 'UTF-8')).each { |key, value| ENV[key] ||= value }
     rescue StandardError => e
-      @env_problems = ["#{file} could not be read (#{e.class})"]
+      @env_problems = ["#{file} could not be used (#{e.message.scrub[0, 80]})"]
       warn "ood_api_audit op=site_config status=error file=#{file.basename} error=#{e.class}"
     end
 
@@ -223,14 +226,14 @@ module OodApi
 
     # @return [Hash, nil] the file's settings, or nil when it is skipped
     def load_file(file)
-      return skipped(file, 'is not owned by root') unless trusted?(file)
+      return skipped(file, 'is not owned by root, or is writable by everyone') unless trusted?(file)
 
       raw = file.binread.force_encoding('UTF-8')
       return skipped(file, 'is not valid UTF-8', ours: true) unless raw.valid_encoding? && !raw.include?("\0")
 
       content = ERB.new(raw, trim_mode: '-').result
       parsed = YAML.safe_load(content, aliases: true, symbolize_names: true)
-      fault = own_settings_fault(content, parsed)
+      fault = own_settings_fault(content, parsed) || unwrapped_settings(file, parsed)
       return skipped(file, fault, ours: true) if fault
 
       parsed.is_a?(Hash) ? parsed : nil
@@ -251,6 +254,15 @@ module OodApi
       return 'names ood_api, but not as a top-level setting' unless parsed.is_a?(Hash) && parsed.key?(:ood_api)
 
       repeated_setting(stream.children.first.root)
+    end
+
+    # A file named for this app whose settings were written without the
+    # `ood_api:` line above them. They would otherwise be ignored.
+    def unwrapped_settings(file, parsed)
+      return nil unless file.basename.to_s.match?(/ood[_-]?api/i) && parsed.is_a?(Hash) && !parsed.key?(:ood_api)
+
+      stray = parsed.keys & OWN_NAMES
+      "sets #{stray.first} at the top level; it belongs under ood_api" unless stray.empty?
     end
 
     # @return [String, nil] what is set twice, in the file or in the block
@@ -279,7 +291,10 @@ module OodApi
     def trusted?(file)
       return true unless (ENV['RAILS_ENV'] || ENV.fetch('RACK_ENV', nil)) == 'production'
 
-      file.stat.uid.zero?
+      # Root's, and not writable by everyone: anything else could have been
+      # put there, or changed, by a user.
+      stat = file.stat
+      stat.uid.zero? && !stat.world_writable?
     end
 
     # @return [nil]

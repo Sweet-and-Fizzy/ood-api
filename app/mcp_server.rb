@@ -274,7 +274,23 @@ module OodApi
     return jsonrpc_error(400, 'Method not found', JSONRPC_METHOD_NOT_FOUND) if unsupported_method?(parsed)
 
     problem = BODY_CHECKS.find { |check, _| send(check, parsed) }&.last
-    jsonrpc_error(400, "Invalid params: #{problem}", JSONRPC_INVALID_PARAMS) if problem
+    return jsonrpc_error(400, "Invalid params: #{problem}", JSONRPC_INVALID_PARAMS) if problem
+
+    record_disabled_tool_call(parsed)
+    nil
+  end
+
+  # A tool the site has switched off is not in the server at all, so the
+  # server answers "Tool not found" without the tool ever running. The call
+  # is recorded here, as the REST API records a refused route.
+  def self.record_disabled_tool_call(parsed)
+    return unless parsed.is_a?(Hash) && parsed['method'] == 'tools/call' && parsed['params'].is_a?(Hash)
+
+    name = parsed['params']['name'].to_s
+    return unless Capabilities::ALL_TOOLS.include?(name) && !Capabilities.enabled?(name)
+
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    Handlers::Audit.emit_event(op: name, user: user, source: 'mcp', status: 'disabled')
   end
 
   # Each check that refuses a parsed body, with what to tell the client. The

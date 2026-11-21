@@ -190,6 +190,11 @@ Add these to your `oidc_settings` and `custom_vhost_directives` in
 `/etc/ood/config/ood_portal.yml` (in addition to the core setup). Replace
 `https://ondemand.example.edu` with your portal's URL in the last line.
 
+If `ood_portal.yml` already has an `oidc_settings` block, add these lines to
+it. A second block with the same name replaces the first, which silently
+drops `OIDCOAuthVerifyJwksUri` and `OIDCOAuthRemoteUserClaim`; afterwards
+`grep OIDCOAuth /etc/httpd/conf.d/ood-portal.conf` should still show both.
+
 ```yaml
 oidc_settings:
   # ... existing settings from core setup ...
@@ -277,6 +282,10 @@ auth:
 ```
 
 Apache accepts a request that satisfies any one of the `Require` lines.
+
+`auth` applies to the whole portal, so a client listed here can present its
+token to the Dashboard, the Shell and every other app, not only to the MCP
+endpoint. List only clients you would trust with that.
 
 On Keycloak write these as `azp:` lines (`Require claim
 azp:YOUR_OOD_CLIENT_ID`, `Require claim azp:YOUR_MCP_CLIENT_ID`), or give the

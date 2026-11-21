@@ -111,6 +111,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Over MCP, a tool the site switches off stops working at once and leaves
   the tool list, without a PUN restart. A call to a tool that is off is
   refused and recorded in the audit log.
+- A settings or env file must be owned by root and not writable by
+  everyone. Settings written in a file named for the app without the
+  `ood_api:` line above them are reported, not ignored. `/health` lists the
+  settings held by environment variables under `from_environment`.
+- Cluster definitions are read again when they change, so hiding or removing
+  a cluster takes effect without a PUN restart.
 - A directory listing describes each entry itself. A symlink has
   `"symlink": true` and `"directory": false` and carries the link's own size
   and dates, where the listing used to describe the link's target, including

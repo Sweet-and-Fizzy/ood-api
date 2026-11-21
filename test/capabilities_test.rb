@@ -188,7 +188,7 @@ class CapabilitiesTest < Minitest::Test
     saved = ENV.fetch('RACK_ENV', nil)
     ENV['RACK_ENV'] = 'production'
 
-    assert_equal ['ood_api.yml is not owned by root'], caps.problems
+    assert_equal ['ood_api.yml is not owned by root, or is writable by everyone'], caps.problems
     refute caps.rest?
   ensure
     ENV['RACK_ENV'] = saved
@@ -333,7 +333,7 @@ class CapabilitiesTest < Minitest::Test
     File.binwrite(file, "OOD_API_APP_TOKENS=true\nX=\xFF\n")
     OodApi::SiteConfig.load_app_env!(file)
 
-    assert_match(/env could not be read/, caps.problems.join)
+    assert_match(/env could not be used/, caps.problems.join)
     refute caps.rest?
   ensure
     OodApi::SiteConfig.load_app_env!(File.join(@dir, 'absent'))
@@ -411,6 +411,31 @@ class CapabilitiesTest < Minitest::Test
     assert response.error?
     assert_match(/not enabled/, response.content.first[:text])
     refute File.exist?('/tmp/nope.txt')
+  end
+
+  # The guide names this file for the app, so a slip like this is likely.
+  def test_settings_written_without_the_ood_api_line_are_a_problem
+    File.write(File.join(@dir, 'ood_api.yml'), "mcp: false\nrest: false\n")
+
+    assert_equal ['ood_api.yml sets mcp at the top level; it belongs under ood_api'], caps.problems
+    refute caps.rest?
+  end
+
+  def test_health_names_the_settings_held_by_the_environment
+    ENV['OOD_API_MCP'] = 'true'
+
+    get '/health'
+
+    assert_equal ['OOD_API_MCP'], JSON.parse(last_response.body)['from_environment']
+  end
+
+  def test_a_call_to_a_tool_that_is_off_is_recorded_over_mcp
+    app = OodApi.mcp_rack_app
+    _out, err = capture_io do
+      mcp_call(app, 'tools/call', name: 'write_file', arguments: { path: '/tmp/x', content: 'x' })
+    end
+
+    assert_match(/op=write_file user=\S+ source=mcp status=disabled/, err)
   end
 
   # The switch an admin reaches for: no PUN restart.

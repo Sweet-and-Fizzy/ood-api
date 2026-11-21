@@ -87,8 +87,27 @@ module OodApi
     # Configuration via environment variables
     CLUSTERS_PATH = ENV.fetch('OOD_CLUSTERS', '/etc/ood/config/clusters.d')
 
+    # Read again when the files change, so a cluster the site hides or
+    # removes stops being offered without a PUN restart.
     def self.clusters
+      stamp = clusters_stamp
+      @clusters = nil unless stamp == @clusters_stamp
+      @clusters_stamp = stamp
       @clusters ||= OodCore::Clusters.load_file(CLUSTERS_PATH)
+    end
+
+    # Looked at no more than once a second.
+    def self.clusters_stamp
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      return @clusters_stamp if @clusters_checked && now - @clusters_checked < 1
+
+      @clusters_checked = now
+      Dir.glob(File.join(CLUSTERS_PATH, '*')).map do |file|
+        stat = File.stat(file)
+        [file, stat.mtime.to_f, stat.ctime.to_f, stat.size]
+      rescue SystemCallError
+        [file]
+      end
     end
 
     # JSON content type for all responses
@@ -315,7 +334,8 @@ module OodApi
       status 503 if problems.any?
       { status: state, rest: Capabilities.rest?, mcp: Capabilities.mcp?,
         tools: Capabilities.enabled_tools.to_a.sort, app_tokens: AppAuth.enabled?,
-        file_access: Handlers::Files.access_mode, problems: problems }.to_json
+        file_access: Handlers::Files.access_mode, from_environment: Capabilities.from_environment,
+        problems: problems }.to_json
     end
 
     # ============ Clusters ============

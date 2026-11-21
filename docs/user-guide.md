@@ -151,7 +151,8 @@ curl -H "Authorization: Bearer <your-jwt>" \
      https://<your-ood-host>/pun/sys/ood-api/api/v1/clusters
 ```
 
-JWTs expire (typically in minutes to an hour), so a long-running script will start
+JWTs expire (after minutes to a day, depending on your site's identity
+provider), so a long-running script will start
 getting `401` responses and must fetch a fresh token; `oidc-agent` will refresh
 one for you on demand. MCP clients using OAuth discovery (§3.1) handle this
 refresh automatically.

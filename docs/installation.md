@@ -60,7 +60,8 @@ with the `azp:` line the portal client's token is accepted, another client's
 token gets a 401, and browser login still works.
 
 Whatever the IdP, check the result by presenting a token issued to another
-client: it must get a 401.
+client: it must get a 401. With the bundled Dex, a second client for that
+check is one entry under `dex: static_clients:` in `ood_portal.yml`.
 
 ```bash
 sudo /opt/ood/ood-portal-generator/sbin/update_ood_portal
@@ -156,8 +157,9 @@ ruby -rjson -rsecurerandom -rdigest -rtime -rfileutils -e '
 ### 3. Register the app with NGINX
 
 OOD normally stages an app the first time someone opens it in the browser.
-ood-api is `hidden: true`, so there is no tile to click and an API client gets
-the "App has not been initialized" page as a 404 instead. Stage it once:
+ood-api has no page of its own to open, so nobody stages it by visiting it, and
+an API client gets the "App has not been initialized" page as a 404 instead.
+Stage it once:
 
 ```bash
 sudo /opt/ood/nginx_stage/sbin/nginx_stage app \
@@ -266,6 +268,11 @@ What the site has switched off in the Dashboard stays off here, whatever
 | `upload_enabled: false` | `write_file` is off |
 | A cluster with `hidden: true` in its metadata | The cluster is not listed and cannot be used |
 
+`download_enabled` and `upload_enabled` are the Dashboard's own settings: a
+top-level key in any `ondemand.d` file, or `OOD_DOWNLOAD_ENABLED` and
+`OOD_UPLOAD_ENABLED` in the Dashboard's env file. All four take effect on
+running PUNs within a couple of seconds.
+
 `jobs` deserves thought before you enable it. A job script is code that runs
 as the user, so an assistant that can submit jobs can do anything the user
 can. See [SECURITY.md](../SECURITY.md).
@@ -288,7 +295,13 @@ ood_api:
   mcp: false
 ```
 
-Every running PUN stops serving on its next request. Each PUN logs the
+Every running PUN stops serving on its next request. The exception is a
+setting also given as an environment variable, which wins over the file and
+is read only when the PUN starts: if `OOD_API_REST` or `OOD_API_MCP` is set to
+`true` anywhere, this switch does nothing until that is removed and the PUNs
+restart. `/health` lists the settings held by the environment under
+`from_environment`, so check it is empty of those two before relying on the
+switch. Each PUN logs the
 settings in force when it starts and again whenever they change:
 
 ```
@@ -307,10 +320,15 @@ OOD_API_MAX_FILE_READ=1048576
 ```
 
 `pun_custom_env` in `/etc/ood/config/nginx_stage.yml` also works but applies
-to every app in the PUN. A variable wins over the same setting in
-`ondemand.d`, so a setting given both ways cannot be switched off from the
-file. Unlike `ondemand.d`, environment variables are read once, when the PUN
-starts.
+to every app in the PUN, and wins over the app's env file when both set the
+same variable. A variable wins over the same setting in `ondemand.d`, so a
+setting given both ways cannot be switched off from the file. Unlike
+`ondemand.d`, environment variables are read once, when the PUN starts. The
+env file must be owned by root and not writable by others, or the app
+answers 503. The Dashboard's token page reads the token settings when its
+own PUN starts, so restart PUNs after changing `token_max_days` or
+`token_allow_never`; until then the page may offer a lifetime the API will
+shorten on first use.
 
 ### Restarting PUNs
 
@@ -323,7 +341,8 @@ sudo /opt/ood/nginx_stage/sbin/nginx_stage nginx_clean --force
 
 Without `--force` the command leaves a PUN with active connections running.
 With it, each user's Dashboard and other apps restart too and reload on their
-next request; interactive sessions and jobs are not affected.
+next request; interactive sessions and jobs are not affected. A request in
+the first second after a restart can get a 502 while the PUN starts.
 
 ### Authentication
 
@@ -362,6 +381,33 @@ next request; interactive sessions and jobs are not affected.
 | `OOD_API_ALLOWED_ORIGINS` | No | unset | Comma-separated origins (for example `https://portal.example.edu`) whose browser requests are accepted in addition to the portal's own. Only needed if a front end on another origin calls this API. |
 | `OOD_ALLOWLIST_PATH` | No | unset | Open OnDemand's own file allowlist. It is read from the PUN environment, from the Dashboard's env file (`/etc/ood/config/apps/dashboard/env`), and from `allowlist_path` in `/etc/ood/config/ondemand.d`, in that order. The Dashboard in Open OnDemand 4.2 and earlier does not read `allowlist_path` from `ondemand.d`, so on those releases set the allowlist in the Dashboard's env file, which confines both. When set, file access through this API is confined to the same colon-separated paths as the Dashboard file browser. Unset, it is confined to the home and temp directories. |
 
+## Audit log
+
+Every operation writes one line to the PUN's log,
+`/var/log/ondemand-nginx/<user>/error.log`, which is owned by root and rotated
+by Open OnDemand's own logrotate rule. Each line begins `ood_api_audit ts=`,
+so a log shipper can select on that:
+
+```
+ood_api_audit ts=2026-11-21T15:25:15.624Z op=list_files user=alice source=rest status=ok duration=0.0097 path=/home/alice token_id=3f6d...
+```
+
+| Field | Meaning |
+|---|---|
+| `ts` | UTC time of the record |
+| `op` | The tool name, or `authenticate`, `capabilities`, `site_config`, `file_access`, `mcp_initialize`, `unhandled_error` |
+| `user` | The user the PUN runs as |
+| `source` | `rest` or `mcp` |
+| `status` | `ok`; `error` (the operation failed or was refused by the path rules, with the reason in `error`); `disabled` (the tool is switched off at this site); `denied` (no valid application token); `expired` (an expired application token) |
+| `duration` | Seconds, for operations that ran |
+| `path`, `cluster`, `job_id` | What the operation was about |
+| `script_sha256`, `script_bytes` | On job submission, the digest and size of the script |
+| `token_id` | The application token that made the request, when tokens are on |
+
+Values are quoted and control characters escaped, so a file name cannot
+forge a line. There is no request id or client address; match against
+Apache's access log by time and user.
+
 ## Troubleshooting
 
 ### Health check returns 502 or connection refused
@@ -374,15 +420,28 @@ next request; interactive sessions and jobs are not affected.
 ### 401 Unauthorized with a JWT
 
 1. Verify `OIDCOAuthVerifyJwksUri` is set correctly in `ood_portal.yml`
-2. Confirm the token hasn't expired: `echo '<token>' | cut -d. -f2 | base64 -d | python3 -m json.tool`
+2. Confirm the token hasn't expired: `echo '<token>' | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool` and compare `exp` with `date +%s`
 3. Check that the claim in `OIDCOAuthRemoteUserClaim` matches your IdP's token format
 4. Check the Apache error log for the portal's virtual host, for example `sudo tail /var/log/httpd/<servername>_error.log`
 
 ### 401 Unauthorized with an application token
 
+The request needs both what Apache accepts (a JWT or a session cookie) and the
+`X-OOD-API-Token` header. A missing header, an unknown token and an expired
+one all get 401; an expired token also leaves
+`op=authenticate status=expired token_id=...` in the PUN log.
+
+
 1. Verify `~/.config/ondemand/tokens.json` exists and is valid JSON
 2. Check file permissions: should be `600`
 3. Ensure the PUN is running (requires an active browser session first)
+
+### 503 `misconfigured`, or 404 "not enabled at this site"
+
+503 means the settings could not be understood and the app has switched
+itself off. `/health` lists the reasons under `problems`; fix them and the
+app comes back within a couple of seconds. 404 with "not enabled at this
+site" means `rest` or `mcp` is switched off in the settings.
 
 ### PUN not spawning for API requests
 
@@ -408,30 +467,57 @@ when coming from 0.4:
 
 - Job submission and file writes are now off until you enable them under
   [What to enable](#what-to-enable).
+- Bearer access now needs `Require claim aud:` (or `azp:`) in place of
+  `Require valid-user`; see [step 2](#2-configure-authentication). With
+  `valid-user`, a token your IdP issued to any client is accepted.
+- Existing application tokens now expire. Each is given the site maximum,
+  365 days unless you set `token_max_days`, counted from its first use after
+  the upgrade.
 - Application tokens are converted to a hashed form the first time one is
   used. After that, going back to 0.4 leaves every token listed but unusable,
   and users have to create new ones.
 
 ## Removing the app
 
-```bash
-sudo rm -rf /var/www/ood/apps/sys/ood-api
-sudo rm -f /var/lib/ondemand-nginx/config/apps/sys/ood-api.conf
-sudo rm -f /etc/ood/config/plugins/ood-api          # if the plugin was installed
-sudo rm -f /etc/ood/config/ondemand.d/ood_api.yml
-sudo rm -rf /etc/ood/config/apps/ood-api
-```
+Do it in this order. Deleting the settings file while PUNs are still running
+makes them fall back to the defaults, which would lift any restriction the
+file held, including the application-token requirement.
 
-Then [restart the PUNs](#restarting-puns). A PUN that was already running
-keeps serving the API from memory until it restarts. To stop it at once,
-switch it off in `ood_api.yml` first (see [What to enable](#what-to-enable))
-and remove the files afterwards.
+1. Switch the app off in `/etc/ood/config/ondemand.d/ood_api.yml`. Running
+   PUNs stop serving within a couple of seconds:
+
+   ```yaml
+   ood_api:
+     rest: false
+     mcp: false
+   ```
+
+2. Remove the app and its plugin:
+
+   ```bash
+   sudo rm -rf /var/www/ood/apps/sys/ood-api
+   sudo rm -f /var/lib/ondemand-nginx/config/apps/sys/ood-api.conf
+   sudo rm -f /etc/ood/config/plugins/ood-api          # if the plugin was installed
+   ```
+
+3. [Restart the PUNs](#restarting-puns). A PUN that was already running keeps
+   the app in memory until it does.
+
+4. Only then remove the settings:
+
+   ```bash
+   sudo rm -f /etc/ood/config/ondemand.d/ood_api.yml
+   sudo rm -rf /etc/ood/config/apps/ood-api
+   ```
 
 If you added the `auth` override during
 [step 2](#2-configure-authentication), remove that
 block from `ood_portal.yml`, re-run `update_ood_portal`, and restart `httpd` —
 this reverts the change for the **whole portal**, so check no other app came to
-depend on bearer auth. User token files at `~/.config/ondemand/tokens.json` are
+depend on bearer auth. If you set up OAuth discovery from
+[MCP authentication](mcp-auth.md), remove its `custom_vhost_directives` lines
+and `/etc/ood/config/mcp` as well, or the portal keeps advertising an MCP
+endpoint that is gone. User token files at `~/.config/ondemand/tokens.json` are
 left in place; they are inert once the app is gone.
 
 [portal-yml]: https://osc.github.io/ood-documentation/latest/reference/files/ood-portal-yml.html
