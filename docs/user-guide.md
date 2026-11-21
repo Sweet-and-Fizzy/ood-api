@@ -296,9 +296,10 @@ refused unless your administrator has set `OOD_API_ALLOW_NATIVE=true`.
 > and `options` (`script.content`, `options.job_name`). If you are switching
 > between the two, see [the REST reference](api.md#submit-job).
 
-**Files** (paths must be absolute and within your allowed roots — your home
-directory, `/tmp`, and the directory `$TMPDIR` points at, which on a compute
-node is often per-job scratch)
+**Files** (paths must be absolute and within your allowed roots. If your site
+restricts the Open OnDemand file browser, the same directories apply here.
+Otherwise the roots are your home directory, `/tmp`, and the directory
+`$TMPDIR` points at, which on a compute node is often per-job scratch)
 
 Some paths inside your home are off limits even though you own them. Anything
 that could let an assistant change how you log in or run commands later:

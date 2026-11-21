@@ -487,6 +487,11 @@ POST /api/v1/jobs/:id/hold?cluster=:cluster_id
 }
 ```
 
+`status` is `queued_held` for a job that was waiting. Schedulers also accept a
+hold on a job that has already started; that job keeps running, and `status`
+reports what the scheduler says (for example `running`). Release behaves the
+same way, answering `queued` for a waiting job.
+
 **Example:**
 ```bash
 curl -X POST \
@@ -1461,6 +1466,7 @@ Tokens are stored in the user's home directory at `~/.config/ondemand/tokens.jso
 
 - Unique ID
 - User-defined name
+- SHA-256 digest of the token (the token itself is not stored)
 - Creation timestamp
 - Last used timestamp
 
@@ -1473,16 +1479,18 @@ Tokens can be revoked through the web interface at **Settings > API Tokens**. Re
 Every request runs as the authenticated user inside their PUN, so the API grants
 no privilege the user does not already have. What it *does* constrain — the path
 allowlist, the denied paths inside `$HOME`, size limits, the environment
-allowlist, audit logging — and what it deliberately does not — no rate limiting,
-no read-only mode, no per-user enablement — is documented in the README's
+allowlist, audit logging, the tools a site has enabled — and what it
+deliberately does not — no rate limiting, no per-user enablement — is
+documented in the README's
 **[SECURITY.md](../SECURITY.md)**. Read that before
 deploying.
 
 API-specific details not covered there:
 
-- Application tokens are 64-character hex strings (256 bits of entropy), stored
-  at `~/.config/ondemand/tokens.json` with mode `600`, and compared in
-  constant time.
+- Application tokens are 64-character hex strings (256 bits of entropy). Only
+  their SHA-256 digests are stored, at `~/.config/ondemand/tokens.json` with
+  mode `600`, and compared in constant time. A token is shown once, when it is
+  created.
 - A token carries no scope: it authenticates the user, and the request then has
   everything that user has. Revoke through **Settings > API Tokens**.
 - Use HTTPS. Bearer credentials in a URL query string are never accepted; they

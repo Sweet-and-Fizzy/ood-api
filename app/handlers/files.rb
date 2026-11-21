@@ -5,6 +5,8 @@ require 'fileutils'
 require 'etc'
 require 'tmpdir'
 require_relative 'errors'
+require_relative '../../lib/site_config'
+require_relative 'pinned_dir'
 
 module Handlers
   module Files
@@ -43,20 +45,42 @@ module Handlers
 
     # --- public API ---
 
+    # How file operations are carried out on this host: `:pinned` wherever
+    # PinnedDir works, `:path_checked` on systems that never had /proc/self/fd
+    # (macOS development), and `:unavailable` on a Linux host that is missing
+    # it. That last case is refused outright. The pinned method is what makes
+    # the path rules hold against a swapped symlink, and a control that turns
+    # itself off without a word is worse than one that is plainly absent.
+    def self.access_mode
+      return :pinned if PinnedDir.supported?
+
+      PinnedDir.expected? ? :unavailable : :path_checked
+    end
+
+    def self.require_file_access!
+      return unless access_mode == :unavailable
+
+      raise NotSupportedError,
+            'File access is unavailable on this host: /proc/self/fd is not mounted, ' \
+            'and file operations cannot be done safely without it'
+    end
+
     def self.list(path:)
+      require_file_access!
       p = normalize_path(path)
       validate_path!(p)
       raise NotFoundError, 'Path not found' unless p.exist?
 
-      if p.directory?
-        p.children.select(&:readable?).sort_by { |c| [c.directory? ? 0 : 1, c.basename.to_s.downcase] }
-      else
-        p
-      end
+      return p unless p.directory?
+
+      children = PinnedDir.supported? ? PinnedFiles.children(p).map { |name| p + name } : p.children
+      children.select(&:readable?).sort_by { |c| [c.directory? ? 0 : 1, c.basename.to_s.downcase] }
     rescue Errno::ENOENT
       raise NotFoundError, 'Path not found'
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
+    rescue *BAD_PATH_ERRORS => e
+      raise ValidationError, e.message.sub(/ @ .*/, '')
     end
 
     # True only for a value that converts to a positive integer. Infinity and
@@ -69,6 +93,7 @@ module Handlers
     end
 
     def self.read(path:, max_size: nil)
+      require_file_access!
       # Guard here as well as at the route: MCP passes max_size straight
       # through, and a negative would reach File.read and raise ArgumentError.
       # `to_i` is not safe on its own — JSON's `1e400` parses to
@@ -78,18 +103,25 @@ module Handlers
 
       p = normalize_path(path)
       validate_path!(p)
-      readable_file!(p)
-
       effective_limit = max_size ? [max_size, MAX_FILE_READ].min : MAX_FILE_READ
-      if !max_size && (p.size > effective_limit)
-        raise PayloadTooLargeError, "File too large (max #{effective_limit} bytes)"
-      end
+      return PinnedFiles.read(p, limit: effective_limit, refuse_larger: !max_size) if PinnedDir.supported?
 
-      max_size ? File.read(p.to_s, effective_limit) : p.read
+      readable_file!(p)
+      expected = checked_destination(p)
+      File.open(p.to_s, File::RDONLY | File::NONBLOCK) do |f|
+        verify_open_file!(f, p, expected)
+        if !max_size && (f.stat.size > effective_limit)
+          raise PayloadTooLargeError, "File too large (max #{effective_limit} bytes)"
+        end
+
+        f.read(effective_limit) || ''
+      end
     rescue Errno::ENOENT
       raise NotFoundError, 'File not found'
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
+    rescue *BAD_PATH_ERRORS => e
+      raise ValidationError, e.message.sub(/ @ .*/, '')
     end
 
     def self.readable_file!(path)
@@ -105,32 +137,111 @@ module Handlers
     end
 
     def self.write(path:, content:, append: false)
+      require_file_access!
       p = normalize_path(path)
       validate_path!(p)
       raise ValidationError, 'Cannot write to directory' if p.exist? && p.directory?
       raise PayloadTooLargeError, "Content too large (max #{MAX_FILE_WRITE} bytes)" if content.bytesize > MAX_FILE_WRITE
 
+      if PinnedDir.supported?
+        PinnedFiles.write(p, content, append: append)
+        return p
+      end
+
       p.parent.mkpath unless p.parent.exist?
-      if append
-        File.open(p, 'a') { |f| f.write(content) }
-      else
-        p.write(content)
+      expected = checked_destination(p)
+      # No O_TRUNC: nothing is destroyed until the open file has been checked.
+      flags = File::WRONLY | File::CREAT | File::NONBLOCK | (append ? File::APPEND : 0)
+      File.open(p.to_s, flags) do |f|
+        verify_open_file!(f, p, expected)
+        f.truncate(0) unless append
+        f.write(content)
       end
       p
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
+    rescue Errno::ENXIO
+      # A FIFO with no reader. With one, the open succeeds and the type check
+      # in verify_open_file! refuses it.
+      raise ValidationError, 'Not a regular file'
+    rescue Errno::ENOENT
+      raise NotFoundError, 'Path not found'
     rescue *OUT_OF_SPACE_ERRORS => e
       raise StorageError, out_of_space_message(e)
     rescue *BAD_PATH_ERRORS => e
       raise ValidationError, e.message.sub(/ @ .*/, '')
     end
 
+    # Removing a symlink unlinks the link and never touches its target, so the
+    # policy applies to where the link is, not to where it points. Judging it
+    # by its target made a dangling link, or one pointing outside the allowed
+    # roots, impossible to remove.
+    def self.validate_link_location!(link)
+      location = link.parent.realpath.join(link.basename)
+      unless allowed_path_roots.any? { |root| path_under?(location, root) }
+        raise ForbiddenError, 'Access denied: path not in allowed directories'
+      end
+
+      deny_sensitive!(link, location)
+    end
+
+    # The policy applied to a path the kernel has already resolved, so there
+    # is nothing left in it to re-point: it must be inside an allowed root and
+    # must not be, or be an alias of, anything on the deny-list.
+    def self.validate_real!(real)
+      unless allowed_path_roots.any? { |root| path_under?(real, root) }
+        raise ForbiddenError, 'Access denied: path not in allowed directories'
+      end
+
+      deny_sensitive!(real, real)
+      deny_aliases!(real)
+      deny_by_inode!(real)
+    end
+
+    # Used where PinnedDir is not supported. Resolves the path first and
+    # applies the policy to the result, so the destination the open is later
+    # compared against is one that was itself checked.
+    def self.checked_destination(path)
+      expected = expected_destination(path)
+      validate_real!(expected)
+      expected
+    end
+
+    # Where an open of `path` should land, worked out before the open.
+    def self.expected_destination(path)
+      return path.realpath if path.exist?
+
+      target = path.symlink? ? resolve_link_chain(path) : path
+      target.parent.realpath.join(target.basename)
+    end
+
+    # validate_path! judges a path string, and the open that follows resolves
+    # it again. In a shared directory such as /tmp, another user who owns a
+    # parent directory can swap a component for a symlink between the two, so
+    # the open lands on a file the check never saw. This runs on the open
+    # descriptor: it must be a regular file (a FIFO or device would block or
+    # never end), the path must still resolve to where it did when it was
+    # validated, and the descriptor must be that same file.
+    def self.verify_open_file!(file, path, expected)
+      stat = file.stat
+      raise ValidationError, 'Not a regular file' unless stat.file?
+
+      actual = Pathname.new(File.realpath(path.to_s))
+      on_disk = actual.stat
+      return if actual == expected && on_disk.dev == stat.dev && on_disk.ino == stat.ino
+
+      raise ForbiddenError, 'Access denied: path changed during the operation'
+    rescue Errno::ENOENT
+      raise ForbiddenError, 'Access denied: path changed during the operation'
+    end
+
     def self.mkdir(path:)
+      require_file_access!
       p = normalize_path(path)
       validate_path!(p)
       raise ValidationError, 'Path already exists' if p.exist?
 
-      p.mkpath
+      PinnedDir.supported? ? PinnedFiles.mkdir(p) : p.mkpath
       p
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
@@ -143,11 +254,16 @@ module Handlers
     end
 
     def self.touch(path:)
+      require_file_access!
       p = normalize_path(path)
       validate_path!(p)
 
-      FileUtils.touch(p)
+      PinnedDir.supported? ? PinnedFiles.touch(p) : FileUtils.touch(p)
       p
+    rescue Errno::ENOENT
+      raise NotFoundError, 'Path not found'
+    rescue Errno::ENXIO
+      raise ValidationError, 'Not a regular file'
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
     rescue *OUT_OF_SPACE_ERRORS => e
@@ -157,24 +273,30 @@ module Handlers
     end
 
     def self.delete(path:, recursive: false)
+      require_file_access!
       p = normalize_path(path)
-      validate_path!(p)
-      raise NotFoundError, 'Path not found' unless p.exist?
+      p.symlink? ? validate_link_location!(p) : validate_path!(p)
+      raise NotFoundError, 'Path not found' unless p.exist? || p.symlink?
 
-      if p.directory?
-        if recursive
-          # validate_path! only checked the target. Recursion would sweep any
-          # denied path beneath it — deleting ~/.config takes ~/.config/ondemand
-          # (the token store) with it, and deleting ~ takes ~/.ssh.
-          deny_recursive!(p)
-          FileUtils.rm_rf(p)
-        else
-          raise ValidationError, 'Directory not empty' unless p.children.empty?
+      if PinnedDir.supported?
+        PinnedFiles.delete(p, recursive: recursive)
+        return { path: p.to_s, deleted: true }
+      end
 
-          p.rmdir
-        end
-      else
+      # A symlink is removed as a link, whatever it points at. `directory?`
+      # follows links, so a link to a directory used to reach rmdir and fail.
+      if p.symlink? || !p.directory?
         p.delete
+      elsif recursive
+        # validate_path! only checked the target. Recursion would sweep any
+        # denied path beneath it — deleting ~/.config takes ~/.config/ondemand
+        # (the token store) with it, and deleting ~ takes ~/.ssh.
+        deny_recursive!(p)
+        FileUtils.rm_rf(p)
+      else
+        raise ValidationError, 'Directory not empty' unless p.children.empty?
+
+        p.rmdir
       end
 
       { path: p.to_s, deleted: true }
@@ -184,9 +306,11 @@ module Handlers
       raise ForbiddenError, 'Permission denied'
     rescue Errno::ENOTEMPTY
       raise ValidationError, 'Directory not empty'
+    rescue *BAD_PATH_ERRORS => e
+      raise ValidationError, e.message.sub(/ @ .*/, '')
     end
 
-    # --- exposed helpers (used by routes for param handling) ---
+    # --- path validation ---
 
     # Single chokepoint for every file operation, so path-shape rejections
     # belong here rather than in each caller.
@@ -203,6 +327,9 @@ module Handlers
       raise ValidationError, 'path is not valid UTF-8' unless raw.valid_encoding?
 
       Pathname.new(File.expand_path(raw))
+    rescue ArgumentError
+      # File.expand_path raises for `~name` when there is no such user.
+      raise ValidationError, 'path could not be expanded'
     end
 
     def self.validate_path!(path)
@@ -228,8 +355,28 @@ module Handlers
       # one for that shape must vote first, so do not move the checks above
       # below this line.
       deny_sensitive!(path, destination)
+      deny_aliases!(destination)
       deny_dangling_symlink!(path)
       deny_by_inode!(path)
+    end
+
+    # Follow a symlink chain to its end, lexically. realpath cannot do this
+    # when the final target does not exist, which is the whole case this
+    # guards. A single readlink is not enough either: with a -> b -> denied,
+    # one hop reports `b`, an innocuous name, and the real destination is
+    # never examined — that let a two-hop chain write outside every allowed
+    # root, not just past the deny-list.
+    MAX_SYMLINK_HOPS = 32
+
+    def self.resolve_link_chain(path)
+      current = path
+      MAX_SYMLINK_HOPS.times do
+        return current unless current.symlink?
+
+        current = Pathname.new(File.expand_path(File.readlink(current.to_s), current.dirname.to_s))
+      end
+      # Still a link after the cap: a loop, or nested past anything legitimate.
+      raise ForbiddenError, 'Access denied: symbolic link could not be resolved'
     end
 
     # A symlink whose target does not exist yet defeats every other check here.
@@ -251,25 +398,6 @@ module Handlers
     # with realpath, because realpath on a dangling link raises ENOENT — the
     # very case this guards. Relative targets ("../../.bashrc") resolve
     # correctly through expand_path.
-    # Follow a symlink chain to its end, lexically. realpath cannot do this
-    # when the final target does not exist, which is the whole case this
-    # guards. A single readlink is not enough either: with a -> b -> denied,
-    # one hop reports `b`, an innocuous name, and the real destination is
-    # never examined — that let a two-hop chain write outside every allowed
-    # root, not just past the deny-list.
-    MAX_SYMLINK_HOPS = 32
-
-    def self.resolve_link_chain(path)
-      current = path
-      MAX_SYMLINK_HOPS.times do
-        return current unless current.symlink?
-
-        current = Pathname.new(File.expand_path(File.readlink(current.to_s), current.dirname.to_s))
-      end
-      # Still a link after the cap: a loop, or nested past anything legitimate.
-      raise ForbiddenError, 'Access denied: symbolic link could not be resolved'
-    end
-
     def self.deny_dangling_symlink!(path)
       return unless path.symlink?
 
@@ -377,7 +505,15 @@ module Handlers
       # Run at login by MTAs that honour it; "|command" is code execution.
       '.forward',
       # Read by PAM at session start on distributions that enable it.
-      '.pam_environment'
+      '.pam_environment',
+      # Grant login to other Kerberos principals or other hosts.
+      '.k5login', '.rhosts', '.shosts',
+      # Run at logout or at the start of a graphical session.
+      '.zlogout', '.logout', '.xsession', '.xinitrc', '.xprofile',
+      # Run by every R session.
+      '.Rprofile',
+      # Credentials in plaintext.
+      '.git-credentials', '.pgpass', '.my.cnf'
     ].freeze
 
     DENIED_DIRS = [
@@ -390,10 +526,60 @@ module Handlers
       # Same reasoning as .gitconfig — this is git's XDG location.
       '.config/git',
       # Launched on graphical login under the XDG autostart spec.
-      '.config/autostart'
+      '.config/autostart',
+      # On PATH by default on RHEL-family systems, like .local/bin.
+      'bin',
+      # Sourced by the stock RHEL 9 and Fedora .bashrc, and by systemd and fish
+      # at session start.
+      '.bashrc.d', '.config/environment.d', '.config/fish',
+      # Run when a VNC or Jupyter session starts.
+      '.vnc', '.jupyter', '.ipython/profile_default/startup',
+      # Credential stores for cloud, cluster and registry clients.
+      '.aws', '.azure', '.config/gcloud', '.kube', '.docker', '.gnupg',
+      '.config/gh', '.config/rclone'
     ].freeze
 
+    # Denied wherever they appear under $HOME, not at one fixed location.
+    DENIED_PATTERNS = [
+      # Imported by every Python process the user starts.
+      %r{\A\.local/lib/python[^/]+/site-packages/(user|site)customize\.py\z}
+    ].freeze
+
+    # A denied name can itself be a symlink: `~/.bashrc -> ~/dots/bashrc` is a
+    # common way to keep dotfiles in a repository. The name is refused, but the
+    # file it points at is the one the shell reads, so that is refused too.
+    def self.deny_aliases!(resolved)
+      home = Pathname.new(Dir.home)
+      (DENIED_EXACT + DENIED_DIRS).each do |rel|
+        denied = home + rel
+        next unless denied.symlink?
+
+        target = link_destination(denied)
+        next unless resolved == target || path_under?(resolved, target)
+
+        raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
+      end
+    end
+
+    def self.link_destination(link)
+      link.exist? ? link.realpath : resolved_destination(resolve_link_chain(link))
+    rescue SystemCallError
+      link
+    end
+
+    # Nothing inside a `.git` directory, and no file named `.git`, in any
+    # allowed location. Hooks and config there are run or read by every git
+    # command in the repository, and a `.git` file can point git at a
+    # directory of them anywhere.
+    def self.deny_git_internals!(*paths)
+      return unless paths.any? { |path| path.each_filename.any? { |part| part.casecmp?('.git') } }
+
+      raise ForbiddenError, 'Access denied: git internals are not accessible through this API'
+    end
+
     def self.deny_sensitive!(requested, resolved)
+      deny_git_internals!(requested, resolved)
+
       # Compare against both the literal and resolved home: on systems where
       # home is reached through a symlink (/var -> /private/var on macOS) the
       # requested path and the resolved one sit under different prefixes, and
@@ -423,7 +609,7 @@ module Handlers
           raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
         end
 
-        if DENIED_EXACT.any? { |name| folded == name.downcase }
+        if DENIED_EXACT.any? { |name| folded == name.downcase } || DENIED_PATTERNS.any? { |re| re.match?(folded) }
           raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
         end
       end
@@ -439,17 +625,22 @@ module Handlers
 
     # --- internal helpers ---
 
+    # Where file operations are allowed. A site that sets an allowlist for the
+    # Dashboard file browser (OOD_ALLOWLIST_PATH, or allowlist_path in
+    # ondemand.d) gets exactly those paths here too, so there is one policy.
+    # With no allowlist the Dashboard allows everything; this app is narrower
+    # and keeps to the home and temp directories.
     def self.allowed_path_roots
-      roots = []
-      home = Pathname.new(Dir.home)
-      roots << (home.exist? ? home.realpath : home)
+      configured = OodApi::SiteConfig.allowlist_paths
+      roots = configured.empty? ? [Pathname.new(Dir.home), Pathname.new('/tmp'), Pathname.new(Dir.tmpdir)] : configured
 
-      ['/tmp', Dir.tmpdir].each do |tmp|
-        tmp_path = Pathname.new(tmp)
-        roots << (tmp_path.exist? ? tmp_path.realpath : tmp_path)
-      end
+      roots.map { |root| root.exist? ? root.realpath : root }.uniq
+    end
 
-      roots.uniq
+    def self.path_allowed?(path)
+      real = Pathname.new(path.to_s).expand_path
+      real = real.realpath if real.exist?
+      allowed_path_roots.any? { |root| path_under?(real, root) }
     end
 
     def self.path_under?(child, parent)
@@ -501,7 +692,8 @@ module Handlers
 
     private_class_method :allowed_path_roots, :path_under?, :find_real_parent,
                          :deny_sensitive!, :relative_to_home,
-                         :deny_by_inode!, :denied_inodes, :record_inode, :safe_lstat,
-                         :deny_recursive!
+                         :deny_by_inode!, :denied_inodes, :record_inode, :safe_lstat
   end
 end
+
+require_relative 'pinned_files'

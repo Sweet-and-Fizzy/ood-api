@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'digest'
 require 'pathname'
 require 'ood_core'
 require_relative 'errors'
@@ -98,7 +99,9 @@ module Handlers
               '(no spaces or other punctuation)'
       end
 
-      Files.validate_path!(Files.normalize_path(path))
+      normalized = Files.normalize_path(path)
+      Files.validate_path!(normalized)
+      normalized.to_s
     end
 
     # Flags that name a file or directory the scheduler will write to, across
@@ -131,6 +134,15 @@ module Handlers
       return false unless flag.start_with?('--') && flag.length > 2
 
       NATIVE_LONG_PATH_FLAGS.any? { |known| known.start_with?(flag) }
+    end
+
+    # What the audit log records about a job script. The script is the one
+    # input here that can do anything the user can, so the record carries a
+    # digest that ties a log line to an exact script without storing it.
+    def self.script_audit(content)
+      return {} unless content.is_a?(String)
+
+      { script_sha256: Digest::SHA256.hexdigest(content), script_bytes: content.bytesize }
     end
 
     # %j is Slurm's job-id token. Other schedulers use different tokens, but
@@ -167,16 +179,6 @@ module Handlers
       validate_native_paths!(native)
     end
 
-    # Path checking for sites that have opted in.
-    #
-    # Adapters append `native` AFTER the options this handler validated —
-    # ood_core's Slurm adapter builds `-o script.output_path` at slurm.rb:644
-    # and concatenates native at :671 — and sbatch honours the last occurrence
-    # of a repeated flag. So an unchecked `--output=` here silently overrides
-    # the path job_path! just approved.
-    #
-    # Only path-bearing flags are inspected; `--nodes=4` and site-specific
-    # flags pass through untouched.
     # Anything other than a flat array of scalars is refused rather than
     # skipped. Skipping meant a String or Hash `native` bypassed path
     # validation entirely, leaving whatever ood_core made of it to decide the
@@ -198,12 +200,18 @@ module Handlers
       raise ValidationError, 'options.native contains a value that is not valid UTF-8'
     end
 
+    # Path checking for sites that have opted in.
+    #
+    # Adapters append `native` AFTER the options this handler validated —
+    # ood_core's Slurm adapter builds `-o script.output_path` at slurm.rb:644
+    # and concatenates native at :671 — and sbatch honours the last occurrence
+    # of a repeated flag. So an unchecked `--output=` here silently overrides
+    # the path job_path! just approved.
+    #
+    # Only path-bearing flags are inspected; `--nodes=4` and site-specific
+    # flags pass through untouched. The shape is checked first; see
+    # validate_native_shape!.
     def self.validate_native_paths!(native)
-      # Anything other than a flat array of scalars is refused rather than
-      # skipped. Returning early here meant a String or Hash `native` bypassed
-      # path validation entirely, leaving whatever ood_core made of it to
-      # decide the outcome — and a nested array flattens to argv on the way to
-      # the scheduler, so its contents are argv too.
       return if native.nil?
 
       validate_native_shape!(native)
@@ -276,7 +284,8 @@ module Handlers
       raise ValidationError, 'script.content must be a string' unless script_content.is_a?(String)
       raise ValidationError, 'script.content cannot be empty' if script_content.strip.empty?
 
-      workdir ||= '/tmp'
+      # /tmp unless the site's file allowlist excludes it.
+      workdir ||= Files.path_allowed?('/tmp') ? '/tmp' : Dir.home
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
 
       # The scheduler writes to these paths as the user, so they are subject to
@@ -284,9 +293,13 @@ module Handlers
       # write primitive that ignores the allowed roots and the deny-list — a
       # job redirecting stdout to ~/.ssh/authorized_keys would sail past a
       # check that refuses the identical path via write_file.
-      job_path!(workdir)
-      job_path!(options[:output_path])
-      job_path!(options[:error_path])
+      # The scheduler is given the normalised spelling that was checked, not
+      # the caller's. `dir/link/../x` is `dir/x` to the check but the parent of
+      # the link's target to the kernel, so passing the raw string on would
+      # submit a path the check never saw.
+      workdir = job_path!(workdir)
+      options = options.merge(output_path: job_path!(options[:output_path]),
+                              error_path:  job_path!(options[:error_path]))
       reject_native!(options[:native])
 
       # Always give the adapter an output path, even when the caller omitted
@@ -300,6 +313,14 @@ module Handlers
       # The default matches what Slurm would have done anyway: slurm-<jobid>.out
       # in the working directory, which job_path! has already validated.
       options = options.merge(output_path: default_output_path(workdir)) if options[:output_path].nil?
+      # Same reasoning for stderr: ood_core emits `-e` only when error_path is
+      # set, so `#SBATCH --error=<path>` in the script body was honoured when
+      # the caller omitted it. Sending stderr to the output file is what Slurm
+      # does by default. Slurm only: other schedulers do not all accept one
+      # file for both streams.
+      if options[:error_path].nil? && cluster.job_config[:adapter].to_s == 'slurm'
+        options = options.merge(error_path: options[:output_path])
+      end
 
       script = build_script(script_content, workdir, options)
       deps = [:after, :afterok, :afternotok, :afterany].each_with_object({}) do |k, h|
@@ -357,14 +378,29 @@ module Handlers
       assert_job_exists!(clusters: clusters, cluster_id: cluster_id, job_id: job_id)
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
       Handlers.with_adapter(cluster, 'hold job') { cluster.job_adapter.hold(job_id) }
-      { job_id: job_id, status: 'queued_held' }
+      { job_id: job_id, status: status_after(cluster, job_id, 'queued_held') }
     end
 
     def self.release(clusters:, cluster_id:, job_id:)
       assert_job_exists!(clusters: clusters, cluster_id: cluster_id, job_id: job_id)
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
       Handlers.with_adapter(cluster, 'release job') { cluster.job_adapter.release(job_id) }
-      { job_id: job_id, status: 'queued' }
+      { job_id: job_id, status: status_after(cluster, job_id, 'queued') }
+    end
+
+    WAITING_STATUSES = ['queued', 'queued_held', 'undetermined', ''].freeze
+
+    # The status to report after a hold or release. Schedulers accept both on
+    # a job that has already started (Slurm records the hold for a later
+    # requeue), and the job keeps running, so the answer has to come from the
+    # scheduler. A job still waiting gets `expected`, because adapters do not
+    # all tell a held job from a queued one. If the lookup fails the operation
+    # still succeeded, so `expected` is reported then too.
+    def self.status_after(cluster, job_id, expected)
+      actual = Handlers.with_adapter(cluster, 'get job status') { cluster.job_adapter.info(job_id) }.status.to_s
+      WAITING_STATUSES.include?(actual) ? expected : actual
+    rescue AdapterError, NotSupportedError
+      expected
     end
   end
 end

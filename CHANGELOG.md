@@ -12,9 +12,96 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MCP tools now declare annotations (`readOnlyHint`, `destructiveHint`,
   `idempotentHint`, `openWorldHint`) in `tools/list`. Twelve tools are
   read-only. `cancel_job`, `write_file`, and `delete_file` are marked
-  destructive, and `submit_job` is marked non-idempotent, so clients can put a
-  confirmation step in front of them. Before this, the MCP SDK reported every
-  tool as destructive by default.
+  destructive, and `submit_job` is marked destructive, non-idempotent and
+  open-world, so clients can put a confirmation step in front of them. Before
+  this, the MCP SDK reported every tool as destructive by default.
+- Audit records carry the id of the application token that made the request,
+  and job submissions record the SHA-256 digest and size of the script.
+- `OOD_API_ALLOWED_ORIGINS` lists extra origins whose browser requests are
+  accepted.
+
+### Security
+
+- **Action needed if you enabled bearer tokens.** The install guide's Apache
+  recipe used `Require valid-user`, which accepts a token your IdP issued to
+  any client and logs its owner in to the whole portal. Change it to
+  `Require claim aud:<your OOD client id>` in `ood_portal.yml`, re-run
+  `update_ood_portal` and restart `httpd`. Keycloak sites use `azp:` in
+  place of `aud:`. See
+  [installation step 2](docs/installation.md#2-configure-authentication).
+- File access follows the site's Dashboard allowlist (`OOD_ALLOWLIST_PATH`,
+  including in the Dashboard's env file, or `allowlist_path` in `ondemand.d`)
+  when one is set. Sites without one are
+  unchanged. When the allowlist excludes `/tmp`, a job submitted without a
+  working directory runs in the home directory.
+- More paths under `$HOME` are refused: `~/bin`, `.bashrc.d`, `.k5login`,
+  `.rhosts`, fish, environment.d, VNC and Jupyter startup files,
+  `usercustomize.py`, `.Rprofile`, and the
+  credential stores of common cloud, cluster and registry clients. A client
+  that reads or writes any of these through the API will now get a 403.
+- Application tokens are stored as SHA-256 digests. Existing tokens keep
+  working and are converted the first time each is used. A `tokens.json`
+  written by hand should now carry `token_digest` in place of `token`.
+- State-changing REST requests and all MCP requests are refused when the
+  browser reports another site as their source (`Origin` or `Sec-Fetch-Site`).
+- On Linux, every file operation works relative to a directory it holds open
+  and applies the path rules to where the kernel says that directory is. A
+  path swapped for a symlink between the check and the operation is refused,
+  and nothing is created, written or deleted first. Writing to a FIFO or
+  device is refused; it used to block the worker.
+  On a Linux host without `/proc/self/fd` the file operations are refused,
+  and each start logs which method is in use.
+- Anything inside a `.git` directory, and any file named `.git`, is refused in
+  every allowed location.
+- If a denied name such as `~/.bashrc` is a symlink, its target is refused too.
+- Site settings in `ondemand.d` are read the way the Dashboard reads them, so
+  one unreadable file no longer discards the rest, including the file
+  allowlist.
+- Job working directory, output and error paths are passed to the scheduler
+  in the normalised form that was checked.
+- Multipart request bodies are refused before they are parsed. Rack wrote
+  them to disk ahead of authentication.
+- On Slurm an error path is always supplied, so `#SBATCH --error=` in a script
+  cannot redirect stderr to an unvalidated path.
+- Request bodies are read with a bound even when no `Content-Length` is sent.
+- `SECURITY.md` now states that job submission is code execution as the user
+  and is not covered by the file controls, and corrects the description of
+  application tokens and `Host` validation.
+
+### Changed
+
+- **A fresh install is now read-only.** Job submission and file writes are off
+  until the site enables them. To keep the previous behaviour, add
+  `ood_api: { capabilities: all }` to a file in `/etc/ood/config/ondemand.d`,
+  or set `OOD_API_CAPABILITIES=all` on the PUN. A tool that is off is absent
+  from the MCP tool list and its REST route returns 403. Individual tools can
+  be removed with `disable`, and `rest: false` or `mcp: false` switches a
+  whole surface off. See
+  [what to enable](docs/installation.md#what-to-enable).
+- `ostruct` is now a declared dependency. `ood_core` requires it, and Ruby
+  4.0 no longer ships it by default, so the app did not load there.
+- Ruby 3.0 is no longer supported. The floor is 3.1 and CI covers 3.1 to 4.0,
+  matching Open OnDemand's own test matrix. This lifts the `excon` pin, so the
+  previously unpatched advisory GHSA-48rx-c7pg-q66r is resolved.
+- `last_used_at` on a token is refreshed at most every five minutes, not on
+  every request.
+
+### Fixed
+
+- The OAuth discovery setup in `docs/mcp-auth.md` now follows RFC 9728: the
+  401 carries `resource_metadata`, and the metadata names the MCP endpoint as
+  the resource. The guide no longer has sites host a copy of the IdP's
+  authorization-server metadata, which clients reject, and it explains how
+  to allow the OAuth client that MCP clients use.
+- Hold and release report the job's real status when it has already started.
+  They used to answer `queued_held` and `queued` for a job that was running.
+- A symlink can be deleted when its target is missing or outside the allowed
+  directories. Removing a link never touches its target.
+- Errors are JSON under `/pun/dev` as well. In development mode they were
+  Sinatra's HTML debug page.
+- A path starting with `~` and an unknown user name returns 400, not 500.
+- Deleting a symlink removes the link, including one that points at a
+  directory or at nothing.
 
 ## [0.4.2] - 2026-08-04
 

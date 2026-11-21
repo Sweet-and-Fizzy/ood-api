@@ -112,6 +112,60 @@ class ApiTest < Minitest::Test
     refute_nil updated.last_used_at
   end
 
+  # Cross-site requests. The JSON-only rule stops forms; this stops a scripted
+  # request if a site ever adds permissive CORS headers at Apache.
+
+  def test_cross_site_state_change_is_refused
+    token = create_test_token
+    hdrs = auth_header(token).merge('CONTENT_TYPE' => 'application/json', 'HTTP_HOST' => 'ood.example.edu')
+
+    post '/api/v1/jobs', { cluster: 'cluster1', script: { content: 'x' } }.to_json,
+         hdrs.merge('HTTP_ORIGIN' => 'https://evil.example')
+    assert_equal 403, last_response.status
+
+    delete '/api/v1/jobs/1?cluster=cluster1', nil, hdrs.merge('HTTP_SEC_FETCH_SITE' => 'cross-site')
+    assert_equal 403, last_response.status
+  end
+
+  def test_same_origin_and_cross_site_reads_are_not_refused
+    token = create_test_token
+    hdrs = auth_header(token).merge('HTTP_HOST' => 'ood.example.edu')
+
+    get '/api/v1/clusters', {}, hdrs.merge('HTTP_ORIGIN' => 'https://evil.example')
+    assert last_response.ok?
+
+    post '/api/v1/jobs', '{}', hdrs.merge('CONTENT_TYPE' => 'application/json',
+                                          'HTTP_ORIGIN'  => 'https://ood.example.edu')
+    assert_equal 400, last_response.status
+  end
+
+  # A chunked request has no Content-Length for the size filter to check.
+  def test_job_body_without_content_length_is_still_bounded
+    token = create_test_token
+    big = StringIO.new(%({"pad":"#{'a' * (Handlers::Files::MAX_FILE_WRITE + 10)}"}))
+    env = Rack::MockRequest.env_for('/api/v1/jobs', method: 'POST', input: big)
+    env.delete('CONTENT_LENGTH')
+    env.merge!(auth_header(token)).merge!('CONTENT_TYPE' => 'application/json')
+
+    status, = app.call(env)
+
+    assert_equal 413, status
+  end
+
+  def test_audit_records_name_the_app_token_used
+    token = create_test_token
+    original = $stderr
+    $stderr = StringIO.new
+    get '/api/v1/clusters', {}, auth_header(token)
+    logged = $stderr.string
+    $stderr = original
+
+    assert_includes logged, "token_id=#{token.id}"
+    refute_includes logged, token.token
+  ensure
+    $stderr = original if original
+  end
+
   # Clusters API
 
   def test_get_clusters_returns_list
@@ -629,12 +683,24 @@ options: { job_name: 'api-job' } }.to_json,
       post '/api/v1/files?path=/tmp/x', body,
            { 'CONTENT_TYPE' => 'multipart/form-data; boundary=x' }
 
-      assert_equal 400, last_response.status, "#{label} must be a 400"
+      assert_equal 415, last_response.status, "#{label} must be refused unread"
       assert_includes last_response.headers['content-type'].to_s, 'json',
                       "#{label} must not answer in HTML"
       refute_match(/Rack::|<h1>/, last_response.body,
                    "#{label} must not name an internal class")
     end
+  end
+
+  # Rack spools multipart parts to disk when `params` is first read, which is
+  # before authentication. The body must never reach the parser.
+  def test_multipart_is_refused_before_anything_parses_it
+    Rack::Multipart.expects(:parse_multipart).never
+    get '/api/v1/clusters'
+    assert_equal 401, last_response.status
+
+    post '/api/v1/files?path=/tmp/x', "--x\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nv\r\n--x--\r\n",
+         { 'CONTENT_TYPE' => 'multipart/form-data; boundary=x' }
+    assert_equal 415, last_response.status
   end
 
   def test_reads_are_unaffected_by_the_content_type_requirement

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'timeout'
 require_relative '../test_helper'
 require_relative '../../app/handlers/files'
 
@@ -255,6 +256,41 @@ class HandlersFilesTest < Minitest::Test
   # These paths sit inside the user's own home and the user can edit them by
   # other means; the deny-list exists so an agent driving these tools on
   # injected input cannot establish access that outlives the session.
+
+  # Exercises the path-based implementation used where PinnedDir is not
+  # supported, whatever platform the suite runs on.
+  def without_pinning
+    Handlers::PinnedDir.stubs(:supported?).returns(false)
+    Handlers::PinnedDir.stubs(:expected?).returns(false)
+  end
+
+  # A Linux host with /proc unmounted must not quietly use the weaker method.
+  def test_file_operations_are_refused_on_linux_without_proc
+    Handlers::PinnedDir.stubs(:supported?).returns(false)
+    Handlers::PinnedDir.stubs(:expected?).returns(true)
+    file = File.join(@test_dir, 'f.txt')
+    File.write(file, 'x')
+
+    assert_equal :unavailable, Handlers::Files.access_mode
+    [-> { Handlers::Files.read(path: file) },
+     -> { Handlers::Files.list(path: @test_dir) },
+     -> { Handlers::Files.write(path: file, content: 'y') },
+     -> { Handlers::Files.mkdir(path: File.join(@test_dir, 'd')) },
+     -> { Handlers::Files.touch(path: file) },
+     -> { Handlers::Files.delete(path: file) }].each do |operation|
+      err = assert_raises(Handlers::NotSupportedError) { operation.call }
+      assert_match(%r{/proc/self/fd}, err.message)
+    end
+    assert_equal 'x', File.read(file)
+  end
+
+  def test_access_mode_names_the_method_in_use
+    Handlers::PinnedDir.stubs(:supported?).returns(true)
+    assert_equal :pinned, Handlers::Files.access_mode
+
+    without_pinning
+    assert_equal :path_checked, Handlers::Files.access_mode
+  end
 
   # A fake home under tmpdir, so tests never touch the real one.
   def with_fake_home
@@ -653,6 +689,7 @@ class HandlersFilesTest < Minitest::Test
   def test_touch_maps_out_of_space_to_storage_error
     with_fake_home do |home|
       target = File.join(home, 'f.txt')
+      without_pinning
       FileUtils.stubs(:touch).raises(Errno::ENOSPC)
       assert_raises(Handlers::StorageError) { Handlers::Files.touch(path: target) }
     end
@@ -660,6 +697,7 @@ class HandlersFilesTest < Minitest::Test
 
   def test_mkdir_maps_out_of_space_to_storage_error
     with_fake_home do |home|
+      without_pinning
       Pathname.any_instance.stubs(:mkpath).raises(Errno::ENOSPC)
       assert_raises(Handlers::StorageError) { Handlers::Files.mkdir(path: File.join(home, 'd')) }
     end
@@ -667,6 +705,7 @@ class HandlersFilesTest < Minitest::Test
 
   def test_quota_exceeded_is_reported_distinctly
     with_fake_home do |home|
+      without_pinning
       FileUtils.stubs(:touch).raises(Errno::EDQUOT)
       err = assert_raises(Handlers::StorageError) { Handlers::Files.touch(path: File.join(home, 'f.txt')) }
       assert_match(/quota/i, err.message)
@@ -774,5 +813,219 @@ class HandlersFilesTest < Minitest::Test
 
     assert_equal 'con', Handlers::Files.read(path: path, max_size: 3)
     assert_equal 'content', Handlers::Files.read(path: path)
+  end
+
+  # write had no type check at all: a PUT to a FIFO blocked the worker for good.
+  def test_write_refuses_a_fifo_instead_of_blocking
+    fifo = File.join(@test_dir, 'pipe')
+    begin
+      File.mkfifo(fifo)
+    rescue NotImplementedError, Errno::EPERM
+      skip 'mkfifo unavailable'
+    end
+
+    Timeout.timeout(5) do
+      err = assert_raises(Handlers::ValidationError) { Handlers::Files.write(path: fifo, content: 'x') }
+      assert_match(/regular file/i, err.message)
+    end
+  end
+
+  # The path is validated as a string and then opened, which resolves it again.
+  # Simulates another user swapping the leaf for a symlink between the two: the
+  # destination recorded at validation no longer matches what the open reached.
+  def test_write_refuses_and_does_not_truncate_when_the_path_is_swapped_after_validation
+    victim = File.join(@test_dir, 'victim.txt')
+    File.write(victim, 'keep')
+    shared = File.join(@test_dir, 'shared')
+    FileUtils.mkdir_p(shared)
+    out = File.join(shared, 'out')
+    validated_as = Pathname.new(shared).realpath.join('out')
+    File.symlink(victim, out)
+    without_pinning
+    Handlers::Files.stubs(:expected_destination).returns(validated_as)
+
+    assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: out, content: 'overwritten') }
+    assert_equal 'keep', File.read(victim)
+  end
+
+  def test_read_refuses_when_the_path_is_swapped_after_validation
+    secret = File.join(@test_dir, 'secret.txt')
+    File.write(secret, 'secret')
+    out = File.join(@test_dir, 'out')
+    validated_as = Pathname.new(@test_dir).realpath.join('out')
+    File.symlink(secret, out)
+    without_pinning
+    Handlers::Files.stubs(:expected_destination).returns(validated_as)
+
+    assert_raises(Handlers::ForbiddenError) { Handlers::Files.read(path: out) }
+  end
+
+  def test_write_through_a_symlink_to_an_allowed_file_still_works
+    target = File.join(@test_dir, 'target.txt')
+    File.write(target, 'old')
+    link = File.join(@test_dir, 'link')
+    File.symlink(target, link)
+
+    Handlers::Files.write(path: link, content: 'new')
+
+    assert_equal 'new', File.read(target)
+    assert File.symlink?(link)
+  end
+
+  def test_append_and_overwrite_semantics_are_unchanged
+    f = File.join(@test_dir, 'log.txt')
+    Handlers::Files.write(path: f, content: 'a much longer first line')
+    Handlers::Files.write(path: f, content: 'short')
+    assert_equal 'short', File.read(f)
+
+    Handlers::Files.write(path: f, content: '+more', append: true)
+    assert_equal 'short+more', File.read(f)
+  end
+
+  def test_unknown_tilde_user_is_a_client_error
+    assert_raises(Handlers::ValidationError) { Handlers::Files.list(path: '~no_such_user_xyz/x') }
+  end
+
+  # `directory?` follows links, so this used to reach rmdir and raise ENOTDIR.
+  def test_delete_removes_a_symlink_to_a_directory_without_touching_the_directory
+    dir = File.join(@test_dir, 'real')
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, 'keep.txt'), 'keep')
+    link = File.join(@test_dir, 'link')
+    File.symlink(dir, link)
+
+    Handlers::Files.delete(path: link)
+
+    refute File.symlink?(link)
+    assert_equal 'keep', File.read(File.join(dir, 'keep.txt'))
+  end
+
+  # Unlinking never follows the link, so a target outside the allowed roots
+  # does not stop the link itself from being removed.
+  def test_delete_removes_a_symlink_whose_target_is_outside_the_allowed_roots
+    ['/nonexistent/x', '/etc/passwd'].each do |target|
+      link = File.join(@test_dir, 'outside')
+      File.symlink(target, link)
+
+      Handlers::Files.delete(path: link)
+
+      refute File.symlink?(link)
+    end
+    assert File.exist?('/etc/passwd')
+  end
+
+  def test_delete_still_refuses_a_symlink_at_a_denied_location
+    with_fake_home do |home|
+      link = File.join(home, '.bashrc')
+      File.symlink(File.join(home, 'elsewhere'), link)
+
+      assert_raises(Handlers::ForbiddenError) { Handlers::Files.delete(path: link) }
+      assert File.symlink?(link)
+    end
+  end
+
+  def test_delete_removes_a_dangling_symlink
+    link = File.join(@test_dir, 'dangling')
+    File.symlink(File.join(@test_dir, 'gone'), link)
+
+    Handlers::Files.delete(path: link)
+
+    refute File.symlink?(link)
+  end
+
+  # --- site allowlist ---
+
+  def with_site_allowlist(*paths)
+    ENV['OOD_ALLOWLIST_PATH'] = paths.join(':')
+    yield
+  ensure
+    ENV.delete('OOD_ALLOWLIST_PATH')
+  end
+
+  # A site that restricts the Dashboard file browser gets the same limits here.
+  def test_site_allowlist_replaces_the_default_roots
+    scratch = File.join(@test_dir, 'scratch')
+    other = File.join(@test_dir, 'other')
+    FileUtils.mkdir_p([scratch, other])
+    File.write(File.join(other, 'f.txt'), 'x')
+
+    with_site_allowlist(scratch) do
+      Handlers::Files.write(path: File.join(scratch, 'ok.txt'), content: 'ok')
+      assert_raises(Handlers::ForbiddenError) { Handlers::Files.read(path: File.join(other, 'f.txt')) }
+    end
+  end
+
+  def test_site_allowlist_can_exclude_home_and_tmp
+    scratch = File.join(@test_dir, 'scratch')
+    FileUtils.mkdir_p(scratch)
+
+    with_site_allowlist(scratch) do
+      with_fake_home do |home|
+        assert_raises(Handlers::ForbiddenError) { Handlers::Files.list(path: home) }
+      end
+      refute Handlers::Files.path_allowed?('/tmp')
+    end
+  end
+
+  def test_denied_paths_stay_denied_under_a_site_allowlist
+    with_fake_home do |home|
+      with_site_allowlist(home) do
+        path = Handlers::Files.normalize_path(File.join(home, '.ssh', 'authorized_keys'))
+        assert_raises(Handlers::ForbiddenError) { Handlers::Files.validate_path!(path) }
+      end
+    end
+  end
+
+  # --- deny-list additions ---
+
+  def test_login_and_startup_paths_found_writable_by_the_audit_are_denied
+    ['bin/ls', '.bashrc.d/x.sh', '.k5login', '.rhosts', '.zlogout', '.config/environment.d/x.conf',
+     '.config/fish/config.fish', '.vnc/xstartup', '.jupyter/jupyter_notebook_config.py',
+     '.local/lib/python3.11/site-packages/usercustomize.py', '.Rprofile',
+     'code/repo/.git/hooks/pre-commit', 'code/repo/.git/config', 'code/repo/.git/HEAD',
+     'code/sub/.git'].each { |rel| assert_denied(rel) }
+  end
+
+  def test_credential_stores_are_denied
+    ['.aws/credentials', '.kube/config', '.docker/config.json', '.git-credentials', '.pgpass',
+     '.config/gh/hosts.yml', '.config/rclone/rclone.conf', '.gnupg/private-keys-v1.d/k'].each do |rel|
+      assert_denied(rel)
+    end
+  end
+
+  def test_ordinary_paths_near_the_denied_ones_are_still_allowed
+    ['binaries/tool', 'code/repo/.gitignore', 'code/repo/.github/workflows/ci.yml',
+     '.local/lib/python3.11/site-packages/mypkg/__init__.py', '.config/app/settings.json',
+     'notes/.aws-notes.txt'].each { |rel| assert_allowed(rel) }
+  end
+
+  # Dotfiles kept in a repository and linked into place: the name is denied,
+  # and so is the file the name points at, since that is what the shell reads.
+  def test_the_target_of_a_denied_symlink_is_denied_too
+    with_fake_home do |home|
+      FileUtils.mkdir_p(File.join(home, 'dots', 'ssh'))
+      File.write(File.join(home, 'dots', 'bashrc'), '# mine')
+      File.symlink(File.join(home, 'dots', 'bashrc'), File.join(home, '.bashrc'))
+      File.symlink(File.join(home, 'dots', 'ssh'), File.join(home, '.ssh'))
+
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.write(path: File.join(home, 'dots', 'bashrc'), content: 'evil')
+      end
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.write(path: File.join(home, 'dots', 'ssh', 'authorized_keys'), content: 'evil')
+      end
+      Handlers::Files.write(path: File.join(home, 'dots', 'vimrc'), content: 'fine')
+    end
+  end
+
+  # A `.git` file can point git at a directory of hooks anywhere, and repos
+  # live outside $HOME too.
+  def test_git_internals_are_denied_in_every_allowed_location
+    assert_raises(Handlers::ForbiddenError) do
+      Handlers::Files.write(path: File.join(@test_dir, 'repo', '.git'), content: 'gitdir: /tmp/evil')
+    end
+    assert_raises(Handlers::ForbiddenError) do
+      Handlers::Files.write(path: File.join(@test_dir, 'repo', '.git', 'hooks', 'pre-commit'), content: 'x')
+    end
   end
 end

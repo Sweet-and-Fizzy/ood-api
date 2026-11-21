@@ -11,7 +11,9 @@ module OodApi
   # Authorization header was for Apache's eyes and is opaque to us.
   #
   # Opt-in: OOD_API_APP_TOKENS=true requires a token issued by the Dashboard
-  # plugin on every request, as a second factor on top of Apache.
+  # plugin on every request, on top of Apache. This gives each client a
+  # credential that can be revoked on its own; it is not an independent second
+  # factor, since anyone signed in as the user can issue one.
   module AppAuth
     # App tokens are presented in their own header, never in Authorization.
     #

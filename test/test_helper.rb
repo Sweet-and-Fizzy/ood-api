@@ -21,6 +21,15 @@ end
 require 'minitest/autorun'
 require 'rack/test'
 require 'mocha/minitest'
+
+# Never read a real site's settings: this suite may run on an OOD host.
+ENV['OOD_CONFIG_D_DIRECTORY'] = File.join(Dir.tmpdir, 'ood-api-no-such-config')
+ENV['OOD_DASHBOARD_ENV_FILE'] = File.join(Dir.tmpdir, 'ood-api-no-such-env')
+
+# The suite exercises every tool; the read-only default has its own tests.
+ENV['OOD_API_CAPABILITIES'] = 'all'
+['OOD_API_DISABLE', 'OOD_API_REST', 'OOD_API_MCP'].each { |k| ENV.delete(k) }
+['OOD_ALLOWLIST_PATH', 'WHITELIST_PATH'].each { |k| ENV.delete(k) }
 require 'json'
 require 'fileutils'
 require 'securerandom'
@@ -70,7 +79,10 @@ module TestHelpers
   end
 
   def create_test_token(name = 'Test Token')
-    token, _plain = OodApi::ApiToken.create(name: name)
+    token, plain = OodApi::ApiToken.create(name: name)
+    # The store keeps only a digest, so the plaintext rides along on the test
+    # object for building request headers.
+    token.define_singleton_method(:token) { plain }
     token
   end
 

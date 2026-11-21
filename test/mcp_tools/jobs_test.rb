@@ -221,6 +221,20 @@ class HoldJobToolTest < Minitest::Test
     assert_includes text, 'held'
   end
 
+  # Each tool used to list the handler errors it expected, and the lists had
+  # drifted: hold_job omitted ForbiddenError, so that one error escaped as a
+  # protocol-level internal error. Every handler error is now a tool error.
+  def test_any_handler_error_is_a_tool_error
+    [Handlers::ForbiddenError, Handlers::StorageError, Handlers::PayloadTooLargeError].each do |error|
+      Handlers::Jobs.stubs(:hold).raises(error, 'refused')
+
+      content = HoldJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '123').to_h
+
+      assert content[:isError], "#{error} must be reported as a tool error"
+      assert_equal 'refused', content[:content].first[:text]
+    end
+  end
+
   def test_error_on_missing_cluster
     OodApi::App.stubs(:clusters).returns([])
 

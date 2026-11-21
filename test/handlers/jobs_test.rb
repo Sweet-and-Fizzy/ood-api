@@ -395,6 +395,54 @@ class HandlersJobsTest < Minitest::Test
 
   # submit
 
+  # `#SBATCH --error=` in the script body wins unless -e is on the command
+  # line, and ood_core only emits -e when error_path is set.
+  def test_error_path_is_always_supplied_on_slurm
+    with_fake_home do |home|
+      captured = nil
+      @adapter.expects(:submit).with do |script|
+        captured = script
+        true
+      end.returns('789')
+      @adapter.expects(:info).with('789').returns(mock_job_info(id: '789'))
+
+      Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1',
+                            script_content: "#!/bin/bash\n#SBATCH --error=/tmp/evil\n",
+                            workdir: home)
+
+      refute_nil captured.error_path, 'submit must supply an error_path on Slurm'
+      assert_equal captured.output_path, captured.error_path
+    end
+  end
+
+  # `shared/link/../x` is `shared/x` to the path check but the parent of the
+  # link's target to the kernel. The scheduler must get the checked spelling.
+  def test_scheduler_gets_the_normalised_paths_that_were_validated
+    with_fake_home do |home|
+      FileUtils.mkdir_p(File.join(home, 'shared'))
+      captured = nil
+      @adapter.expects(:submit).with do |script|
+        captured = script
+        true
+      end.returns('789')
+      @adapter.expects(:info).with('789').returns(mock_job_info(id: '789'))
+
+      Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: 'echo hi',
+                            workdir: "#{home}/shared/l/..", output_path: "#{home}/shared/l/../out.log")
+
+      assert_equal File.join(home, 'shared'), captured.workdir.to_s
+      assert_equal File.join(home, 'shared', 'out.log'), captured.output_path.to_s
+    end
+  end
+
+  def test_script_audit_records_digest_and_size_not_content
+    fields = Handlers::Jobs.script_audit("#!/bin/bash\necho hi\n")
+
+    assert_equal Digest::SHA256.hexdigest("#!/bin/bash\necho hi\n"), fields[:script_sha256]
+    assert_equal 20, fields[:script_bytes]
+    assert_equal({}, Handlers::Jobs.script_audit(nil))
+  end
+
   def test_submit_returns_job_info_and_cluster
     @adapter.expects(:submit).returns('789')
     @adapter.expects(:info).with('789').returns(mock_job_info(id: '789'))
@@ -485,8 +533,8 @@ class HandlersJobsTest < Minitest::Test
   # "Invalid job id specified" and returns normally for a job that is not there.
   # Stub `info` accordingly.
 
-  def stub_existing_job(id = '789')
-    @adapter.stubs(:info).with(id).returns(mock_job_info(id: id, job_owner: 'drew'))
+  def stub_existing_job(id = '789', status: :running)
+    @adapter.stubs(:info).with(id).returns(mock_job_info(id: id, job_owner: 'drew', status: status))
   end
 
   # An id the scheduler has never heard of comes back as :completed with no
@@ -540,7 +588,7 @@ class HandlersJobsTest < Minitest::Test
   # hold
 
   def test_hold_calls_hold_on_adapter
-    stub_existing_job
+    stub_existing_job(status: :queued)
     @adapter.expects(:hold).with('789')
     result = Handlers::Jobs.hold(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
     assert_equal '789', result[:job_id]
@@ -557,8 +605,31 @@ class HandlersJobsTest < Minitest::Test
 
   # release
 
+  # Slurm accepts a hold on a job that has already started and the job keeps
+  # running. Seen against a real scheduler: the API answered `queued_held`
+  # while squeue showed RUNNING.
+  def test_hold_and_release_report_the_real_status_of_a_started_job
+    stub_existing_job(status: :running)
+    @adapter.stubs(:hold)
+    @adapter.stubs(:release)
+
+    assert_equal 'running', Handlers::Jobs.hold(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')[:status]
+    assert_equal 'running', Handlers::Jobs.release(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')[:status]
+  end
+
+  # The hold already happened; a failed status lookup must not turn it into
+  # an error.
+  def test_hold_reports_the_expected_status_when_the_lookup_fails
+    @adapter.stubs(:info).with('789').returns(mock_job_info(id: '789', job_owner: 'drew'))
+            .then.raises(OodCore::JobAdapterError, 'scheduler busy')
+    @adapter.stubs(:hold)
+
+    assert_equal 'queued_held',
+                 Handlers::Jobs.hold(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')[:status]
+  end
+
   def test_release_calls_release_on_adapter
-    stub_existing_job
+    stub_existing_job(status: :queued_held)
     @adapter.expects(:release).with('789')
     result = Handlers::Jobs.release(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
     assert_equal '789', result[:job_id]
