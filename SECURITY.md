@@ -52,7 +52,8 @@ Each of these is a claim you can verify. The test files named are the ones that
 would fail if the control were removed.
 
 **Path confinement.** If the site sets a file allowlist for the Dashboard
-(`OOD_ALLOWLIST_PATH`, or `allowlist_path` in `ondemand.d`), file access is
+(`OOD_ALLOWLIST_PATH`, including in the Dashboard's own env file, or
+`allowlist_path` in `ondemand.d`), file access is
 confined to exactly those paths, so the API and the file browser follow one
 policy. With no allowlist it is confined to `$HOME`, `/tmp` and `Dir.tmpdir`.
 

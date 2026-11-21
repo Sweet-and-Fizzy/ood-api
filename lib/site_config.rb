@@ -6,9 +6,11 @@ require 'yaml'
 
 module OodApi
   # Reads the Open OnDemand site settings this app shares with the Dashboard,
-  # from the same places and in the same order the Dashboard reads them: an
-  # environment variable first, then /etc/ood/config/ondemand.d.
+  # from the places the Dashboard reads them: the environment, the Dashboard's
+  # own env file, then /etc/ood/config/ondemand.d.
   module SiteConfig
+    ALLOWLIST_KEYS = ['OOD_ALLOWLIST_PATH', 'WHITELIST_PATH'].freeze
+
     module_function
 
     # @return [Pathname] the directory holding the site's ondemand.d files
@@ -21,10 +23,22 @@ module OodApi
     #
     # @return [Array<Pathname>]
     def allowlist_paths
-      paths = ENV['OOD_ALLOWLIST_PATH'] || ENV['WHITELIST_PATH'] || config.fetch(:allowlist_path, [])
+      paths = ALLOWLIST_KEYS.filter_map { |key| ENV[key] || dashboard_env[key] }.first ||
+              config.fetch(:allowlist_path, [])
       Array(paths).flat_map { |path| path.to_s.strip.split(':') }
                   .reject(&:empty?)
                   .map { |path| Pathname.new(path).expand_path }
+    end
+
+    # Sites usually set the allowlist in the Dashboard's env file, which only
+    # the Dashboard process loads. Reading it here is what makes the two apps
+    # follow one policy on releases that predate allowlist_path in ondemand.d.
+    #
+    # @return [Hash{String => String}] the variables set in that file
+    def dashboard_env
+      @dashboard_env ||= read_env_file(
+        Pathname.new(ENV['OOD_DASHBOARD_ENV_FILE'] || '/etc/ood/config/apps/dashboard/env')
+      )
     end
 
     # @return [Hash] the merged contents of the ondemand.d files
@@ -36,6 +50,21 @@ module OodApi
     # a config change when it restarts.
     def reset!
       @config = nil
+      @dashboard_env = nil
+    end
+
+    # Parses the KEY=value lines of a dotenv file. Quotes around a value are
+    # dropped; comments and anything else are ignored.
+    def read_env_file(file)
+      return {} unless file.file?
+
+      file.each_line(encoding: 'UTF-8').with_object({}) do |line, vars|
+        match = line.match(/\A\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*\z/)
+        vars[match[1]] = match[2].sub(/\A(['"])(.*)\1\z/, '\2') if match
+      end
+    rescue StandardError => e
+      warn "ood_api_audit op=site_config status=error error=#{e.class}"
+      {}
     end
 
     def read_config

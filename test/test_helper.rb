@@ -24,6 +24,7 @@ require 'mocha/minitest'
 
 # Never read a real site's settings: this suite may run on an OOD host.
 ENV['OOD_CONFIG_D_DIRECTORY'] = File.join(Dir.tmpdir, 'ood-api-no-such-config')
+ENV['OOD_DASHBOARD_ENV_FILE'] = File.join(Dir.tmpdir, 'ood-api-no-such-env')
 ['OOD_ALLOWLIST_PATH', 'WHITELIST_PATH'].each { |k| ENV.delete(k) }
 require 'json'
 require 'fileutils'

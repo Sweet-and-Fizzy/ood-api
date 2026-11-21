@@ -6,7 +6,9 @@ require_relative '../lib/site_config'
 class SiteConfigTest < Minitest::Test
   def setup
     @dir = Dir.mktmpdir('ood-api-site-config')
-    @saved = ENV.to_h.slice('OOD_ALLOWLIST_PATH', 'WHITELIST_PATH', 'OOD_CONFIG_D_DIRECTORY')
+    @saved = ENV.to_h.slice('OOD_ALLOWLIST_PATH', 'WHITELIST_PATH', 'OOD_CONFIG_D_DIRECTORY',
+                            'OOD_DASHBOARD_ENV_FILE')
+    ENV['OOD_DASHBOARD_ENV_FILE'] = File.join(@dir, 'dashboard.env')
     ENV.delete('OOD_ALLOWLIST_PATH')
     ENV.delete('WHITELIST_PATH')
     ENV['OOD_CONFIG_D_DIRECTORY'] = @dir
@@ -14,7 +16,8 @@ class SiteConfigTest < Minitest::Test
   end
 
   def teardown
-    ['OOD_ALLOWLIST_PATH', 'WHITELIST_PATH', 'OOD_CONFIG_D_DIRECTORY'].each { |k| ENV.delete(k) }
+    ['OOD_ALLOWLIST_PATH', 'WHITELIST_PATH', 'OOD_CONFIG_D_DIRECTORY',
+     'OOD_DASHBOARD_ENV_FILE'].each { |k| ENV.delete(k) }
     @saved.each { |k, v| ENV[k] = v }
     FileUtils.rm_rf(@dir)
     OodApi::SiteConfig.reset!
@@ -41,6 +44,21 @@ class SiteConfigTest < Minitest::Test
     ENV['OOD_ALLOWLIST_PATH'] = '/from-env'
 
     assert_equal ['/from-env'], OodApi::SiteConfig.allowlist_paths.map(&:to_s)
+  end
+
+  # Where sites set it today: only the Dashboard process loads this file.
+  def test_allowlist_from_the_dashboard_env_file
+    File.write(File.join(@dir, 'dashboard.env'),
+               "# files\nOOD_BRAND=x\nexport OOD_ALLOWLIST_PATH=\"/home:/scratch\"\n")
+
+    assert_equal ['/home', '/scratch'], OodApi::SiteConfig.allowlist_paths.map(&:to_s)
+  end
+
+  def test_dashboard_env_file_wins_over_ondemand_d
+    File.write(File.join(@dir, 'files.yml'), "allowlist_path: /from-file\n")
+    File.write(File.join(@dir, 'dashboard.env'), "OOD_ALLOWLIST_PATH=/from-dashboard-env\n")
+
+    assert_equal ['/from-dashboard-env'], OodApi::SiteConfig.allowlist_paths.map(&:to_s)
   end
 
   def test_erb_files_are_rendered

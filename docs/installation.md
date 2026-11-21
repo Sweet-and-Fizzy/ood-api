@@ -212,7 +212,7 @@ page** titled "App has not been initialized" means step 3 has not been done.
 | `OOD_API_MAX_CONTEXT_TOTAL_BYTES` | No | `1048576` (1 MB) | Cap across all context fragments together. The per-file cap alone bounds nothing when there are many files. |
 | `OOD_API_ALLOW_NATIVE` | No | unset | Set to `true` to accept `options.native` on job submission. It is raw scheduler argv and can override the paths this API validates, so it is off by default — see [the note in the API guide](api.md#submit-job). |
 | `OOD_API_ALLOWED_ORIGINS` | No | unset | Comma-separated origins (for example `https://portal.example.edu`) whose browser requests are accepted in addition to the portal's own. Only needed if a front end on another origin calls this API. |
-| `OOD_ALLOWLIST_PATH` | No | unset | Open OnDemand's own file allowlist, also read from `allowlist_path` in `/etc/ood/config/ondemand.d`. When set, file access through this API is confined to the same colon-separated paths as the Dashboard file browser. Unset, it is confined to the home and temp directories. |
+| `OOD_ALLOWLIST_PATH` | No | unset | Open OnDemand's own file allowlist. It is read from the PUN environment, from the Dashboard's env file (`/etc/ood/config/apps/dashboard/env`), and from `allowlist_path` in `/etc/ood/config/ondemand.d`, in that order. When set, file access through this API is confined to the same colon-separated paths as the Dashboard file browser. Unset, it is confined to the home and temp directories. |
 
 ## Troubleshooting
 
