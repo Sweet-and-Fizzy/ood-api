@@ -253,7 +253,7 @@ Restart the PUN after changing any of these.
 |----------|----------|---------|-------------|
 | `OOD_CLUSTERS` | No | `/etc/ood/config/clusters.d` | Path to cluster config directory |
 | `OOD_API_APP_TOKENS` | No | unset | Set to `true` to require a per-client `X-OOD-API-Token` header in addition to Apache's auth. See [application tokens](#optional-application-tokens). |
-| `OOD_API_TOKEN_MAX_DAYS` | No | `365` | The longest lifetime an application token may be given, in days. Also `token_max_days` under `ood_api` in `ondemand.d`. Tokens created before expiry existed get this lifetime, counted from their first use after the upgrade. |
+| `OOD_API_TOKEN_MAX_DAYS` | No | `365` | The longest lifetime an application token may be given, in days. Also `token_max_days` under `ood_api` in `ondemand.d`. A stored expiry beyond it, such as one written into the token file by hand, is pulled back to it the next time the token is used, and tokens created before expiry existed get it the same way. Lowering it shortens existing tokens. |
 | `OOD_API_TOKEN_ALLOW_NEVER` | No | unset | Set to `true` to let users create tokens that never expire. Also `token_allow_never` under `ood_api`. |
 | `OOD_API_MAX_FILE_READ` | No | `10485760` (10 MB) | Maximum file read size in bytes (REST and MCP `read_file`) |
 | `OOD_API_MAX_FILE_WRITE` | No | `52428800` (50 MB) | Maximum request body size in bytes for **every** `/api/v1/*` request, not only file writes — job submission and the MCP envelope are bounded by it too. Lowering it to restrict uploads also caps how large a job script may be. |

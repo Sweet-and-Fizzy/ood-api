@@ -42,10 +42,25 @@ module OodApi
       (now + (max_days * DAY)).iso8601
     end
 
-    # Whether a stored entry still needs an expiry written to it: it has none
-    # recorded, or it says "never" at a site that does not allow that.
-    def needs_expiry?(attrs)
-      !attrs.key?(:expires_at) || (attrs[:expires_at].nil? && !allow_never?)
+    # Whether a stored entry's expiry has to be rewritten: it has none
+    # recorded, it says "never" at a site that does not allow that, or it is
+    # further away than the site maximum allows.
+    #
+    # The token store is a file its owner can edit, so the maximum is applied
+    # here as well as by the page that creates tokens. A date beyond it is
+    # pulled back to the maximum, counted from now, which also shortens
+    # existing tokens when a site lowers the maximum.
+    def needs_expiry?(attrs, now = Time.now)
+      return true unless attrs.key?(:expires_at)
+      return !allow_never? if attrs[:expires_at].nil?
+
+      beyond_maximum?(attrs[:expires_at], now)
+    end
+
+    def beyond_maximum?(expires_at, now = Time.now)
+      Time.iso8601(expires_at.to_s) > now + (max_days * DAY)
+    rescue ArgumentError
+      false
     end
 
     # @param expires_at [String, nil] the stored expiry; nil means never

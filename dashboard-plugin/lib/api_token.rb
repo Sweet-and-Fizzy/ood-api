@@ -180,8 +180,15 @@ class ApiToken
       legacy.is_a?(String) && legacy.present? ? digest(legacy) : nil
     end
 
+    # No expiry recorded, a "never" the site does not allow, or a date beyond
+    # the site maximum. Matches OodApi::TokenPolicy.needs_expiry?.
     def needs_expiry?(attrs)
-      !attrs.key?(:expires_at) || (attrs[:expires_at].nil? && !allow_never?)
+      return true unless attrs.key?(:expires_at)
+      return !allow_never? if attrs[:expires_at].nil?
+
+      Time.iso8601(attrs[:expires_at].to_s) > Time.current + max_days.days
+    rescue ArgumentError
+      false
     end
 
     # The environment first, then the `ood_api` block the Dashboard has

@@ -344,6 +344,36 @@ class ApiTokenTest < Minitest::Test
     refute_nil stored_entries.first[:expires_at], 'a site that does not allow never gives the token an expiry'
   end
 
+  # The store is the user's own file. A date written by hand beyond the site
+  # maximum is pulled back to it the first time the token is used.
+  def test_an_expiry_beyond_the_site_maximum_is_capped_on_first_use
+    _token, plain = OodApi::ApiToken.create(name: 'Far', expires_at: (Time.now + (10 * 365 * 86_400)).iso8601)
+
+    OodApi::ApiToken.touch(OodApi::ApiToken.find_by_token(plain))
+
+    assert_in_delta Time.now + (365 * 86_400), Time.iso8601(stored_entries.first[:expires_at]), 60
+  end
+
+  def test_lowering_the_maximum_shortens_existing_tokens
+    _token, plain = OodApi::ApiToken.create(name: 'Year')
+    OodApi::ApiToken.stubs(:recently_touched?).returns(true)
+
+    with_token_settings(max_days: 30) do
+      OodApi::ApiToken.touch(OodApi::ApiToken.find_by_token(plain))
+      assert_in_delta Time.now + (30 * 86_400), Time.iso8601(stored_entries.first[:expires_at]), 60
+    end
+  end
+
+  def test_an_expiry_inside_the_maximum_is_left_alone
+    soon = (Time.now + (7 * 86_400)).iso8601
+    _token, plain = OodApi::ApiToken.create(name: 'Week', expires_at: soon)
+    OodApi::ApiToken.stubs(:recently_touched?).returns(false)
+
+    OodApi::ApiToken.touch(OodApi::ApiToken.find_by_token(plain))
+
+    assert_equal soon, stored_entries.first[:expires_at]
+  end
+
   def test_bad_settings_fall_back_to_the_default_maximum
     with_token_settings(max_days: 'forever') { assert_equal 365, OodApi::TokenPolicy.max_days }
     with_token_settings(max_days: -5) { assert_equal 365, OodApi::TokenPolicy.max_days }

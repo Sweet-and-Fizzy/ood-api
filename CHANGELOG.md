@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under `ood_api` in `ondemand.d` or in `OOD_API_TOKEN_MAX_DAYS` and
   `OOD_API_TOKEN_ALLOW_NEVER`. An expired token gets a 401 and an audit line
   naming it. Existing tokens are given the site maximum, counted from their
-  first use after the upgrade.
+  first use after the upgrade. The API applies the maximum as well as the
+  token page: a stored expiry beyond it is pulled back the next time the
+  token is used.
 - Audit records carry the id of the application token that made the request,
   and job submissions record the SHA-256 digest and size of the script.
 - `OOD_API_ALLOWED_ORIGINS` lists extra origins whose browser requests are
