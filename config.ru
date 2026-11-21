@@ -9,6 +9,9 @@ OodApi::Capabilities.problems.each do |problem|
 end
 warn "ood_api_audit op=capabilities status=ok #{OodApi::Capabilities.summary}"
 
+file_access = Handlers::Files.access_mode
+warn "ood_api_audit op=file_access status=#{file_access == :unavailable ? 'error' : 'ok'} mode=#{file_access}"
+
 app = Rack::Builder.new do
   map('/mcp') { run OodApi.mcp_rack_app }
   map('/') { run OodApi::App }

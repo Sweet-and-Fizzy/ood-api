@@ -12,8 +12,10 @@ module Handlers
   # resolution: the kernel reports where the open directory really is, the
   # policy is applied to that, and files are then opened relative to it.
   #
-  # This relies on /proc/self/fd, which Linux provides. Elsewhere `supported?`
-  # is false and callers fall back to checking the path before and after.
+  # This relies on /proc/self/fd, which Linux provides. On a system that
+  # never has it, `supported?` is false and callers fall back to checking the
+  # path before and after. On a Linux host where it is missing, file
+  # operations are refused; see Handlers::Files.access_mode.
   class PinnedDir
     PROC_FD = '/proc/self/fd'
 
@@ -23,6 +25,11 @@ module Handlers
       @supported = File.symlink?("#{PROC_FD}/0")
     rescue SystemCallError
       @supported = false
+    end
+
+    # @return [Boolean] whether this platform normally provides /proc/self/fd
+    def self.expected?
+      RUBY_PLATFORM.include?('linux')
     end
 
     # @param path [Pathname, String] an existing directory

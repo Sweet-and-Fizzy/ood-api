@@ -261,6 +261,35 @@ class HandlersFilesTest < Minitest::Test
   # supported, whatever platform the suite runs on.
   def without_pinning
     Handlers::PinnedDir.stubs(:supported?).returns(false)
+    Handlers::PinnedDir.stubs(:expected?).returns(false)
+  end
+
+  # A Linux host with /proc unmounted must not quietly use the weaker method.
+  def test_file_operations_are_refused_on_linux_without_proc
+    Handlers::PinnedDir.stubs(:supported?).returns(false)
+    Handlers::PinnedDir.stubs(:expected?).returns(true)
+    file = File.join(@test_dir, 'f.txt')
+    File.write(file, 'x')
+
+    assert_equal :unavailable, Handlers::Files.access_mode
+    [-> { Handlers::Files.read(path: file) },
+     -> { Handlers::Files.list(path: @test_dir) },
+     -> { Handlers::Files.write(path: file, content: 'y') },
+     -> { Handlers::Files.mkdir(path: File.join(@test_dir, 'd')) },
+     -> { Handlers::Files.touch(path: file) },
+     -> { Handlers::Files.delete(path: file) }].each do |operation|
+      err = assert_raises(Handlers::NotSupportedError) { operation.call }
+      assert_match(%r{/proc/self/fd}, err.message)
+    end
+    assert_equal 'x', File.read(file)
+  end
+
+  def test_access_mode_names_the_method_in_use
+    Handlers::PinnedDir.stubs(:supported?).returns(true)
+    assert_equal :pinned, Handlers::Files.access_mode
+
+    without_pinning
+    assert_equal :path_checked, Handlers::Files.access_mode
   end
 
   # A fake home under tmpdir, so tests never touch the real one.

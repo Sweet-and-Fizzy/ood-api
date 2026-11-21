@@ -45,7 +45,28 @@ module Handlers
 
     # --- public API ---
 
+    # How file operations are carried out on this host: `:pinned` wherever
+    # PinnedDir works, `:path_checked` on systems that never had /proc/self/fd
+    # (macOS development), and `:unavailable` on a Linux host that is missing
+    # it. That last case is refused outright. The pinned method is what makes
+    # the path rules hold against a swapped symlink, and a control that turns
+    # itself off without a word is worse than one that is plainly absent.
+    def self.access_mode
+      return :pinned if PinnedDir.supported?
+
+      PinnedDir.expected? ? :unavailable : :path_checked
+    end
+
+    def self.require_file_access!
+      return unless access_mode == :unavailable
+
+      raise NotSupportedError,
+            'File access is unavailable on this host: /proc/self/fd is not mounted, ' \
+            'and file operations cannot be done safely without it'
+    end
+
     def self.list(path:)
+      require_file_access!
       p = normalize_path(path)
       validate_path!(p)
       raise NotFoundError, 'Path not found' unless p.exist?
@@ -72,6 +93,7 @@ module Handlers
     end
 
     def self.read(path:, max_size: nil)
+      require_file_access!
       # Guard here as well as at the route: MCP passes max_size straight
       # through, and a negative would reach File.read and raise ArgumentError.
       # `to_i` is not safe on its own — JSON's `1e400` parses to
@@ -115,6 +137,7 @@ module Handlers
     end
 
     def self.write(path:, content:, append: false)
+      require_file_access!
       p = normalize_path(path)
       validate_path!(p)
       raise ValidationError, 'Cannot write to directory' if p.exist? && p.directory?
@@ -213,6 +236,7 @@ module Handlers
     end
 
     def self.mkdir(path:)
+      require_file_access!
       p = normalize_path(path)
       validate_path!(p)
       raise ValidationError, 'Path already exists' if p.exist?
@@ -230,6 +254,7 @@ module Handlers
     end
 
     def self.touch(path:)
+      require_file_access!
       p = normalize_path(path)
       validate_path!(p)
 
@@ -248,6 +273,7 @@ module Handlers
     end
 
     def self.delete(path:, recursive: false)
+      require_file_access!
       p = normalize_path(path)
       p.symlink? ? validate_link_location!(p) : validate_path!(p)
       raise NotFoundError, 'Path not found' unless p.exist? || p.symlink?

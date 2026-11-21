@@ -48,6 +48,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path swapped for a symlink between the check and the operation is refused,
   and nothing is created, written or deleted first. Writing to a FIFO or
   device is refused; it used to block the worker.
+  On a Linux host without `/proc/self/fd` the file operations are refused,
+  and each start logs which method is in use.
 - Anything inside a `.git` directory, and any file named `.git`, is refused in
   every allowed location.
 - If a denied name such as `~/.bashrc` is a symlink, its target is refused too.

@@ -112,11 +112,16 @@ nodes are refused, since opening one can block a worker indefinitely.
 `test/handlers/pinned_files_test.rb` runs these swaps, including a second
 process flipping a symlink as fast as it can.
 
-This depends on `/proc/self/fd`. On other systems, which means development on
-macOS, the app checks the path before and after the open instead, which
-narrows the window but does not close it. Two things remain on Linux as well:
-a recursive delete walks the tree by name, and a directory listing reads each
+This depends on `/proc/self/fd`, which every Linux host normally has. If a
+Linux host is missing it, the file operations are refused with an error that
+says so; the app does not fall back to a weaker method. Each start logs which
+method is in use (`op=file_access mode=pinned`). Two things remain: a
+recursive delete walks the tree by name, and a directory listing reads each
 entry's size and dates by name after the names were read safely.
+
+On systems that never had `/proc/self/fd`, which means development on macOS,
+the app checks the path before and after the open instead. That narrows the
+window without closing it, and is not a deployment configuration.
 
 **What is enabled.** A fresh install serves the read tools only. A site turns
 on job submission (`jobs`) and file writes (`files_write`) as groups, removes
