@@ -141,6 +141,43 @@ class CapabilitiesTest < Minitest::Test
     assert_equal 404, status
   end
 
+  # Sinatra matches percent-encoded letters in a path. A check that matched
+  # the path separately did not, and let these through in the read-only default.
+  def test_percent_encoded_paths_do_not_get_round_the_check
+    json = { 'CONTENT_TYPE' => 'application/json' }
+    target = File.join(Dir.tmpdir, "ood-api-encoded-#{SecureRandom.hex(4)}")
+
+    put "/api/v1/%66iles?path=#{target}", 'data', json
+    assert_equal 403, last_response.status
+    refute File.exist?(target)
+
+    delete "/api/v1/file%73?path=#{target}"
+    assert_equal 403, last_response.status
+    post '/api/v1/%6aobs', { cluster: 'cluster1', script: { content: 'x' } }.to_json, json
+    assert_equal 403, last_response.status
+    post '/api/v1/jobs/1/%68old?cluster=cluster1', '{}', json
+    assert_equal 403, last_response.status
+  end
+
+  # With every tool off, every route under /api/v1 must refuse. A route added
+  # without naming its tool would answer here, so this fails until it does.
+  def test_every_api_route_is_tied_to_a_tool
+    ENV['OOD_API_DISABLE'] = OodApi::Capabilities::ALL_TOOLS.join(',')
+    ungated = ['/api/v1/context']
+
+    OodApi::App.routes.each do |verb, routes|
+      next if verb == 'HEAD'
+
+      routes.each do |pattern, _conditions, _block|
+        path = pattern.to_s.gsub(/:\w+/, '1')
+        next unless path.start_with?('/api/v1') && !ungated.include?(path)
+
+        custom_request(verb, "#{path}?cluster=cluster1&path=/tmp/x", '{}', 'CONTENT_TYPE' => 'application/json')
+        assert_equal 403, last_response.status, "#{verb} #{path} is not tied to a tool"
+      end
+    end
+  end
+
   def test_routes_without_a_tool_are_not_gated
     get '/api/v1/context'
 

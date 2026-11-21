@@ -110,15 +110,15 @@ module OodApi
       authenticate!
     end
 
-    # See OodApi::Capabilities. Runs after authentication, so only a signed-in
-    # user learns what the site has turned off.
-    before '/api/v1/*' do
-      tool = route_tool
-      next if tool.nil? || Capabilities.enabled?(tool)
-
-      Handlers::Audit.emit_event(op: tool, user: current_user, source: 'rest', status: 'disabled',
-                                 path: request.path_info)
-      halt_error(403, 'forbidden', "#{tool} is not enabled at this site")
+    # Every route under /api/v1 names the tool it stands for, so one setting
+    # covers both surfaces (see OodApi::Capabilities). The check is attached to
+    # the route itself rather than made by matching the path a second time,
+    # because any second matcher can disagree with Sinatra's about which route
+    # a path is: Sinatra accepts `/api/v1/%66iles` for `/api/v1/files`.
+    #
+    #   get '/api/v1/jobs', tool: 'list_jobs' do ... end
+    set(:tool) do |name|
+      condition { require_tool!(name) }
     end
 
     # See OodApi::OriginCheck. Applied to state-changing requests; a
@@ -284,14 +284,14 @@ module OodApi
 
     # ============ Clusters ============
 
-    get '/api/v1/clusters' do
+    get '/api/v1/clusters', tool: 'list_clusters' do
       clusters = Handlers::Audit.log(op: 'list_clusters', user: current_user, source: 'rest') do
         Handlers::Clusters.list(clusters: self.class.clusters)
       end
       { data: clusters.map { |c| cluster_json(c) } }.to_json
     end
 
-    get '/api/v1/clusters/:id' do
+    get '/api/v1/clusters/:id', tool: 'get_cluster' do
       cluster = Handlers::Audit.log(op: 'get_cluster', user: current_user, source: 'rest', cluster: params[:id]) do
         Handlers::Clusters.get(clusters: self.class.clusters, id: params[:id])
       end
@@ -300,7 +300,7 @@ module OodApi
 
     # ============ Accounts ============
 
-    get '/api/v1/accounts' do
+    get '/api/v1/accounts', tool: 'list_accounts' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
       accounts = Handlers::Audit.log(op: 'list_accounts', user: current_user, source: 'rest',
@@ -312,7 +312,7 @@ module OodApi
 
     # ============ Queues ============
 
-    get '/api/v1/queues' do
+    get '/api/v1/queues', tool: 'list_queues' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
       queues = Handlers::Audit.log(op: 'list_queues', user: current_user, source: 'rest', cluster: params[:cluster]) do
@@ -323,7 +323,7 @@ module OodApi
 
     # ============ Cluster Info ============
 
-    get '/api/v1/cluster_info' do
+    get '/api/v1/cluster_info', tool: 'get_cluster_info' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
       info = Handlers::Audit.log(op: 'cluster_info', user: current_user, source: 'rest', cluster: params[:cluster]) do
@@ -334,7 +334,7 @@ module OodApi
 
     # ============ Jobs ============
 
-    get '/api/v1/jobs' do
+    get '/api/v1/jobs', tool: 'list_jobs' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
       jobs, cluster = Handlers::Audit.log(op: 'list_jobs', user: current_user, source: 'rest',
@@ -348,7 +348,7 @@ module OodApi
       { data: jobs.map { |j| job_json(j, cluster) } }.to_json
     end
 
-    get '/api/v1/jobs/historic' do
+    get '/api/v1/jobs/historic', tool: 'list_historic_jobs' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
       jobs, cluster = Handlers::Audit.log(op: 'list_historic_jobs', user: current_user, source: 'rest',
@@ -362,7 +362,7 @@ module OodApi
       { data: jobs.map { |j| job_json(j, cluster) } }.to_json
     end
 
-    get '/api/v1/jobs/:id' do
+    get '/api/v1/jobs/:id', tool: 'get_job' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
       job, cluster = Handlers::Audit.log(op: 'get_job', user: current_user, source: 'rest', cluster: params[:cluster],
@@ -376,7 +376,7 @@ module OodApi
       { data: job_json(job, cluster) }.to_json
     end
 
-    post '/api/v1/jobs' do
+    post '/api/v1/jobs', tool: 'submit_job' do
       body = parse_json_object(read_body!)
       halt_bad_request('Missing cluster in request body') if body['cluster'].to_s.strip.empty?
       # `script` and `options` are indexed with dig below, which raises TypeError
@@ -424,7 +424,7 @@ module OodApi
       halt_unprocessable(e.message)
     end
 
-    delete '/api/v1/jobs/:id' do
+    delete '/api/v1/jobs/:id', tool: 'cancel_job' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
       result = Handlers::Audit.log(op: 'cancel_job', user: current_user, source: 'rest', cluster: params[:cluster],
@@ -442,7 +442,7 @@ module OodApi
       halt_unprocessable(e.message)
     end
 
-    post '/api/v1/jobs/:id/hold' do
+    post '/api/v1/jobs/:id/hold', tool: 'hold_job' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
       result = Handlers::Audit.log(op: 'hold_job', user: current_user, source: 'rest', cluster: params[:cluster],
@@ -456,7 +456,7 @@ module OodApi
       halt_unprocessable(e.message)
     end
 
-    post '/api/v1/jobs/:id/release' do
+    post '/api/v1/jobs/:id/release', tool: 'release_job' do
       halt_bad_request('Missing cluster parameter') unless params[:cluster] && !params[:cluster].empty?
 
       result = Handlers::Audit.log(op: 'release_job', user: current_user, source: 'rest', cluster: params[:cluster],
@@ -473,7 +473,7 @@ module OodApi
     # ============ Files ============
 
     # List directory contents or get file metadata
-    get '/api/v1/files' do
+    get '/api/v1/files', tool: 'list_files' do
       path = path_param!
 
       result = Handlers::Audit.log(op: 'list_files', user: current_user, source: 'rest', path: path) do
@@ -488,7 +488,7 @@ module OodApi
     end
 
     # Read file contents
-    get '/api/v1/files/content' do
+    get '/api/v1/files/content', tool: 'read_file' do
       path = path_param!
 
       # Validate before to_i: "abc".to_i is 0 (silently returning an empty
@@ -511,7 +511,9 @@ module OodApi
     end
 
     # Create file or directory
+    # Makes a directory or an empty file, which are different tools over MCP.
     post '/api/v1/files' do
+      require_tool!(params[:type] == 'directory' ? 'create_directory' : 'write_file')
       path = path_param!
 
       if params[:type] == 'directory'
@@ -530,7 +532,7 @@ module OodApi
     end
 
     # Write file contents
-    put '/api/v1/files' do
+    put '/api/v1/files', tool: 'write_file' do
       path = path_param!
 
       # Limit request body size to prevent memory exhaustion
@@ -549,7 +551,7 @@ module OodApi
     end
 
     # Delete file or directory
-    delete '/api/v1/files' do
+    delete '/api/v1/files', tool: 'delete_file' do
       path = path_param!
 
       result = Handlers::Audit.log(op: 'delete_file', user: current_user, source: 'rest', path: path) do
@@ -560,7 +562,7 @@ module OodApi
 
     # ============ Environment Variables ============
 
-    get '/api/v1/env' do
+    get '/api/v1/env', tool: 'list_env' do
       prefix = scalar_param!(:prefix)
       vars = Handlers::Audit.log(op: 'list_env', user: current_user, source: 'rest') do
         Handlers::Env.list(prefix: prefix)
@@ -568,7 +570,7 @@ module OodApi
       { data: vars }.to_json
     end
 
-    get '/api/v1/env/:name' do
+    get '/api/v1/env/:name', tool: 'get_env' do
       result = Handlers::Audit.log(op: 'get_env', user: current_user, source: 'rest') do
         Handlers::Env.get(name: params[:name])
       end
@@ -577,6 +579,7 @@ module OodApi
 
     # ============ Context ============
 
+    # Site policy for assistants. Not a tool: always served.
     get '/api/v1/context' do
       content = Handlers::Audit.log(op: 'read_context', user: current_user, source: 'rest') do
         Handlers::Context.read
@@ -586,43 +589,18 @@ module OodApi
 
     # ============ Helpers ============
 
-    # The tool each route corresponds to, so one setting covers both surfaces.
-    ROUTE_TOOLS = [
-      ['GET',    %r{\A/api/v1/clusters\z},             'list_clusters'],
-      ['GET',    %r{\A/api/v1/clusters/[^/]+\z},       'get_cluster'],
-      ['GET',    %r{\A/api/v1/accounts\z},             'list_accounts'],
-      ['GET',    %r{\A/api/v1/queues\z},               'list_queues'],
-      ['GET',    %r{\A/api/v1/cluster_info\z},         'get_cluster_info'],
-      ['GET',    %r{\A/api/v1/jobs\z},                 'list_jobs'],
-      ['GET',    %r{\A/api/v1/jobs/historic\z},        'list_historic_jobs'],
-      ['GET',    %r{\A/api/v1/jobs/[^/]+\z},           'get_job'],
-      ['POST',   %r{\A/api/v1/jobs\z},                 'submit_job'],
-      ['DELETE', %r{\A/api/v1/jobs/[^/]+\z},           'cancel_job'],
-      ['POST',   %r{\A/api/v1/jobs/[^/]+/hold\z},      'hold_job'],
-      ['POST',   %r{\A/api/v1/jobs/[^/]+/release\z},   'release_job'],
-      ['GET',    %r{\A/api/v1/files\z},                'list_files'],
-      ['GET',    %r{\A/api/v1/files/content\z},        'read_file'],
-      ['PUT',    %r{\A/api/v1/files\z},                'write_file'],
-      ['DELETE', %r{\A/api/v1/files\z},                'delete_file'],
-      ['GET',    %r{\A/api/v1/env\z},                  'list_env'],
-      ['GET',    %r{\A/api/v1/env/[^/]+\z},            'get_env']
-    ].freeze
-
     # Accepted spellings for a boolean query param. See truthy_param?.
     TRUTHY_PARAM_VALUES = ['true', '1', 'yes', 'on'].freeze
 
     private
 
-    # nil for a route with no tool behind it, such as /api/v1/context.
-    def route_tool
-      # POST /files makes a directory or an empty file, which are different
-      # tools over MCP.
-      if request.post? && request.path_info == '/api/v1/files'
-        return params[:type] == 'directory' ? 'create_directory' : 'write_file'
-      end
+    # Refuses the request unless the site has turned `tool` on.
+    def require_tool!(tool)
+      return true if Capabilities.enabled?(tool)
 
-      method = request.head? ? 'GET' : request.request_method
-      ROUTE_TOOLS.find { |verb, pattern, _| verb == method && pattern.match?(request.path_info) }&.last
+      Handlers::Audit.emit_event(op: tool, user: current_user, source: 'rest', status: 'disabled',
+                                 path: request.path_info)
+      halt_error(403, 'forbidden', "#{tool} is not enabled at this site")
     end
 
     # See OodApi::AppAuth. The same rule guards the MCP transport, so both
