@@ -271,9 +271,11 @@ as the user, so an assistant that can submit jobs can do anything the user
 can. See [SECURITY.md](../SECURITY.md).
 
 **Settings the app cannot understand turn it off.** An unknown group, tool
-or key, a switch that is neither `true` nor `false`, or a settings file that
-is not owned by root or fails to parse: any of these makes both REST and MCP
-answer 503 until it is fixed. A typo in `disable` would otherwise leave on the
+or key, a switch that is neither `true` nor `false`, a misspelt `OOD_API_`
+variable, a settings or env file that is not owned by root or cannot be
+parsed, or an `ood_api` block that is nested, repeated or split across files:
+any of these makes both REST and MCP answer 503 until it is fixed. Keep the
+whole `ood_api` block in one file. A typo in `disable` would otherwise leave on the
 tool it was meant to remove, and the app has no way to tell which that was.
 `/health` and the PUN log both say what is wrong.
 

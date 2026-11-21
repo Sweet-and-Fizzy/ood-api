@@ -96,10 +96,12 @@ module Handlers
       translating_errors do
         p = checked_path(path)
         raise Errno::ENOENT unless p.exist?
-        next Entry.new(p, p.stat) unless p.directory?
+        next Entry.new(p, backend.stat(p)) unless p.directory?
 
-        entries = backend.children(p).map { |name, stat| Entry.new(p + name, stat) }
-        entries.sort_by { |entry| [entry.directory? ? 0 : 1, entry.basename.to_s.downcase] }
+        # Joined as strings: a name need not be valid UTF-8, and Pathname#+
+        # raises on one that is not.
+        entries = backend.children(p).map { |name, stat| Entry.new(Pathname.new(File.join(p.to_s, name)), stat) }
+        entries.sort_by { |entry| [entry.directory? ? 0 : 1, entry.basename.to_s.scrub.downcase] }
       end
     end
 
@@ -343,7 +345,12 @@ module Handlers
       return if path.directory?
 
       target = safe_lstat(path)
-      return if target.nil?
+      deny_inode!(target) if target
+    end
+
+    # The same check on a stat, which for an open file cannot be of anything
+    # but the file that will be read or written.
+    def self.deny_inode!(target)
       return if target.nlink < 2 # not hardlinked; the name checks already covered it
 
       denied_inodes.each do |(dev, ino), label|
@@ -470,15 +477,16 @@ module Handlers
 
     # Denied wherever they appear under $HOME, not at one fixed location.
     DENIED_PATTERNS = [
-      # Imported by every Python process the user starts.
-      %r{\A\.local/lib/python[^/]+/site-packages/(user|site)customize\.py\z},
+      # Imported by every Python process the user starts: as a module, a
+      # compiled module, or a package directory of that name.
+      %r{\A\.local/lib/python[^/]+/site-packages/(user|site)customize(\.[^/]*)?(/.*)?\z},
       # A .pth file there is executed line by line at interpreter start.
       %r{\A\.local/lib/python[^/]+/site-packages/[^/]+\.pth\z}
     ].freeze
 
     # The same files as DENIED_PATTERNS, in the form a directory search takes.
     DENIED_GLOBS = [
-      '.local/lib/python*/site-packages/{user,site}customize.py',
+      '.local/lib/python*/site-packages/{user,site}customize{,.*}',
       '.local/lib/python*/site-packages/*.pth'
     ].freeze
 
@@ -528,17 +536,25 @@ module Handlers
       raise ForbiddenError, 'Access denied: git internals are not accessible through this API'
     end
 
-    GIT_DIR_MARKERS = ['HEAD', 'objects', 'refs'].freeze
+    GIT_DIR_MARKERS = ['HEAD', 'objects', 'refs', 'commondir'].freeze
 
     # A `.git` component is the usual sign, but git treats any directory
     # holding HEAD, objects and refs as a repository, wherever it is and
-    # whatever it is called. So a path inside such a directory counts, and so
-    # does the entry that would complete the set.
+    # whatever it is called, and accepts a `commondir` file naming another
+    # directory in place of objects and refs. So a path inside such a
+    # directory counts, and so does the entry that would complete one.
     def self.git_internal?(path)
       return true if path.each_filename.any? { |part| part.casecmp?('.git') }
-      return true if GIT_DIR_MARKERS.include?(path.basename.to_s) && git_markers(path.parent).size >= 2
 
-      path.parent.ascend.any? { |ancestor| git_markers(ancestor).size == GIT_DIR_MARKERS.size }
+      name = path.basename.to_s
+      return true if GIT_DIR_MARKERS.include?(name) && git_dir?(git_markers(path.parent) | [name])
+
+      path.parent.ascend.any? { |ancestor| git_dir?(git_markers(ancestor)) }
+    end
+
+    # @param markers [Array<String>] the marker names present in a directory
+    def self.git_dir?(markers)
+      markers.include?('HEAD') && (markers.include?('commondir') || (['objects', 'refs'] - markers).empty?)
     end
 
     def self.git_markers(directory)

@@ -315,10 +315,11 @@ module Handlers
 
     # The caller's options with the output and error paths checked,
     # normalised and defaulted, and `native` refused unless the site allows it.
-    # Only the dependencies that were given. `false` is not a job id, and
-    # the adapter would pass it to the scheduler as one.
+    # Only the dependencies that were given. `false` and an empty list are
+    # not job ids, and the adapter would pass them to the scheduler as one.
     def self.dependencies(options)
-      options.slice(:after, :afterok, :afternotok, :afterany).select { |_kind, jobs| jobs }
+      options.slice(:after, :afterok, :afternotok, :afterany)
+             .reject { |_kind, jobs| !jobs || (jobs.respond_to?(:empty?) && jobs.empty?) }
     end
 
     def self.with_checked_paths(cluster, workdir, options)

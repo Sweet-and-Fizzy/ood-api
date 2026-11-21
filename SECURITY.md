@@ -94,7 +94,10 @@ rather than one hop. Names are compared case-folded, because on macOS and
 Windows filesystems `~/.SSH` and `~/.ssh` are the same directory. Hardlinks are
 caught by device and inode, since a second name for a denied file resolves to
 itself. A recursive delete is refused outright if a denied home path lies
-anywhere in the tree. A git repository inside the tree is removed with it:
+anywhere in the tree. The rule for git is by name and shape, which cannot be complete: it covers
+`.git` anywhere, a directory git would accept as a repository, and the entry
+that would turn a directory into one, including the `commondir` form. A git
+repository inside the tree is removed with it:
 its internals are denied to writes because a hook is code that runs later,
 and removing one leaves nothing to run.
 

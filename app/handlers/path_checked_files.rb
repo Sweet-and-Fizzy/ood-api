@@ -54,6 +54,10 @@ module Handlers
       path.mkpath
     end
 
+    def self.stat(path)
+      path.stat
+    end
+
     def self.touch(path)
       FileUtils.touch(path)
     end

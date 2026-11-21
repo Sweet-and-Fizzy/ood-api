@@ -306,6 +306,35 @@ class PinnedFilesTest < Minitest::Test
     end
   end
 
+  # Linux file names are bytes. One that is not UTF-8 must not hide the rest.
+  def test_a_name_that_is_not_utf8_does_not_break_the_listing
+    Dir.stub(:home, @home) do
+      File.write(File.join(@dir, "bad\xFFname".b), 'x')
+      File.write(File.join(@dir, 'good'), 'x')
+
+      names = files.list(path: @dir).map { |entry| entry.basename.to_s.b }
+
+      assert_equal ["bad\xFFname".b, 'good'.b], names.sort
+    end
+  end
+
+  # The check is made on the open file, so it holds whatever name led to it.
+  def test_a_hardlink_to_a_denied_file_is_refused_on_the_open_file
+    Dir.stub(:home, @home) do
+      link = File.join(@home, 'innocent.txt')
+      File.link(File.join(@ssh, 'id_rsa'), link)
+      original = files.method(:deny_by_inode!)
+      files.define_singleton_method(:deny_by_inode!) { |_path| nil }
+      begin
+        assert_raises(Handlers::ForbiddenError) { files.read(path: link) }
+        assert_raises(Handlers::ForbiddenError) { files.write(path: link, content: 'overwritten') }
+      ensure
+        files.define_singleton_method(:deny_by_inode!, original)
+      end
+      assert_equal 'PRIVATE KEY', File.read(File.join(@ssh, 'id_rsa'))
+    end
+  end
+
   def test_out_of_space_is_a_storage_error
     Dir.stub(:home, @home) do
       Dir.stubs(:mkdir).raises(Errno::EDQUOT)

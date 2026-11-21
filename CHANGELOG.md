@@ -92,6 +92,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   settings file that is not root-owned or does not parse makes both REST and
   MCP answer 503, where a typo could previously leave on the thing it was
   meant to remove. `/health` and the PUN log give the reason.
+- The same applies to a misspelt `OOD_API_` variable, an env file that
+  cannot be read, and an `ood_api` block that is nested, misspelt, repeated,
+  in a second YAML document or set in more than one file.
 - Changes to `/etc/ood/config/ondemand.d` reach running PUNs within a couple
   of seconds, so a site can switch the app off without restarting them.
 - `/health` reports the settings in force (`status`, `rest`, `mcp`, `tools`,
@@ -105,6 +108,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `read_file` is off, with `upload_enabled: false` `write_file` is off, with
   no Files app installed there are no file tools, and a cluster marked
   `hidden` is not listed and cannot be used.
+- Over MCP, a tool the site switches off stops working at once and leaves
+  the tool list, without a PUN restart. A call to a tool that is off is
+  refused and recorded in the audit log.
 - A directory listing describes each entry itself. A symlink has
   `"symlink": true` and `"directory": false` and carries the link's own size
   and dates, where the listing used to describe the link's target, including

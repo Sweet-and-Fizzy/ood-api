@@ -129,6 +129,22 @@ module OodApi
       raw = SiteConfig.setting(env_name, key)
       return nil if raw.nil?
 
+      names = list_from(raw)
+      return names unless names.empty? && raw.is_a?(String)
+
+      # A variable holding only commas names nothing, so it does not hide
+      # the list in the settings file.
+      from_file = site_settings[key]
+      list_from(from_file) if from_file
+    end
+
+    # @return [Hash] the `ood_api` block from ondemand.d, empty when absent
+    def site_settings
+      settings = SiteConfig.config[:ood_api]
+      settings.is_a?(Hash) ? settings : {}
+    end
+
+    def list_from(raw)
       Array(raw).flat_map { |item| item.to_s.split(',') }.map(&:strip).reject(&:empty?)
     end
 

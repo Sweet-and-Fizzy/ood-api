@@ -12,7 +12,14 @@ module OodApi
     ALLOWLIST_KEYS = ['OOD_ALLOWLIST_PATH', 'WHITELIST_PATH'].freeze
     REFRESH_SECONDS = 1
     # A file that mentions one of these holds settings this app acts on.
-    OWN_SETTINGS = /\bood_api\b|\ballowlist_path\b/
+    OWN_SETTINGS = /ood[_-]?api|allowlist[_-]?path/i
+    # This app's block used as a key, however it is spelt or nested.
+    OWN_KEY = /(?:^|[\s{,])["']?ood[_-]?api["']?\s*:/i
+    # Every variable the app reads. Any other OOD_API_ name is a mistake.
+    KNOWN_VARIABLES = ['ALLOW_NATIVE', 'ALLOWED_ORIGINS', 'APP_TOKENS', 'CAPABILITIES', 'CONTEXT_PATH', 'DISABLE',
+                       'ENV_ALLOWLIST', 'ENV_FILE', 'MAX_CONTEXT_BYTES', 'MAX_CONTEXT_TOTAL_BYTES', 'MAX_FILE_READ',
+                       'MAX_FILE_WRITE', 'MCP', 'REST', 'SYS_APPS', 'TOKEN_ALLOW_NEVER',
+                       'TOKEN_MAX_DAYS'].map { |name| "OOD_API_#{name}" }.freeze
 
     module_function
 
@@ -26,7 +33,10 @@ module OodApi
     #
     # @return [Array<Pathname>]
     def allowlist_paths
-      paths = ALLOWLIST_KEYS.filter_map { |key| ENV[key] || dashboard_env[key] }.first ||
+      # A variable set to nothing is not an allowlist, and must not hide one
+      # given further down.
+      given = ALLOWLIST_KEYS.flat_map { |key| [ENV.fetch(key, nil), dashboard_env[key]] }
+      paths = given.compact.map(&:scrub).reject { |value| value.strip.empty? }.first ||
               config.fetch(:allowlist_path, [])
       Array(paths).flat_map { |path| path.to_s.strip.split(':') }
                   .reject(&:empty?)
@@ -58,14 +68,18 @@ module OodApi
     #   until they are fixed (see OodApi::Capabilities).
     def problems
       config
-      @problems || []
+      (@problems || []) + (@env_problems || []) + unknown_variables
+    end
+
+    def unknown_variables
+      (ENV.keys.grep(/\AOOD_API_/) - KNOWN_VARIABLES).sort.map { |name| "unknown variable #{name}" }
     end
 
     # A setting an admin can give either way: the environment variable when it
     # is set to something, otherwise the key under `ood_api` in ondemand.d. An
     # empty variable counts as unset, so it cannot hide the file's value.
     def setting(env_name, key)
-      value = ENV.fetch(env_name, nil)
+      value = ENV.fetch(env_name, nil)&.scrub
       return value unless value.nil? || value.strip.empty?
 
       settings = config[:ood_api]
@@ -94,8 +108,18 @@ module OodApi
     # Loads this app's own env file the way the Dashboard loads its own:
     # variables already in the environment win. Called once, before the app
     # is loaded, so a change needs a PUN restart.
+    #
+    # A file that is there but cannot be read is a problem, not an empty
+    # file: it may be where the site required application tokens.
     def load_app_env!(file)
-      read_env_file(Pathname.new(file)).each { |key, value| ENV[key] ||= value }
+      file = Pathname.new(file)
+      @env_problems = []
+      return unless file.exist?
+
+      parse_env(file.read(encoding: 'UTF-8')).each { |key, value| ENV[key] ||= value }
+    rescue StandardError => e
+      @env_problems = ["#{file} could not be read (#{e.class})"]
+      warn "ood_api_audit op=site_config status=error file=#{file.basename} error=#{e.class}"
     end
 
     # Run when the files on disk change, with the new settings in place.
@@ -134,7 +158,9 @@ module OodApi
       watched = Pathname.glob(config_directory.join('*')) + [dashboard_env_file]
       watched.sort.map do |file|
         stat = file.stat
-        [file.to_s, stat.mtime.to_f, stat.size, stat.uid]
+        # ctime as well: unlike mtime it cannot be set back, so a file
+        # replaced by one of the same size and date is still noticed.
+        [file.to_s, stat.ino, stat.mtime.to_f, stat.ctime.to_f, stat.size, stat.uid]
       rescue SystemCallError
         [file.to_s]
       end
@@ -145,13 +171,19 @@ module OodApi
     def read_env_file(file)
       return {} unless file.file?
 
-      file.each_line(encoding: 'UTF-8').with_object({}) do |line, vars|
-        match = line.match(/\A\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*\z/)
-        vars[match[1]] = match[2].sub(/\A(['"])(.*)\1\z/, '\2') if match
-      end
+      parse_env(file.read(encoding: 'UTF-8'))
     rescue StandardError => e
       warn "ood_api_audit op=site_config status=error error=#{e.class}"
       {}
+    end
+
+    def parse_env(text)
+      raise ArgumentError, 'not valid UTF-8' unless text.valid_encoding?
+
+      text.each_line.with_object({}) do |line, vars|
+        match = line.match(/\A\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*\z/)
+        vars[match[1]] = match[2].sub(/\A(['"])(.*)\1\z/, '\2') if match
+      end
     end
 
     # Reads the files the way the Dashboard does, so both apps see the same
@@ -161,21 +193,76 @@ module OodApi
     #
     # The Dashboard skips such files quietly. Here a skipped file is a
     # problem when it holds settings for this app, because what it said is
-    # then unknown: it may have been the file that turned something off.
+    # then unknown: it may have been the file that turned something off. The
+    # same goes for a file that names this app's block in a way that would
+    # be silently dropped or overridden.
     def read_config
       @problems = []
-      config_files.each_with_object({}) do |file, merged|
-        unless trusted?(file)
-          skipped(file, 'is not owned by root')
-          next
-        end
-        content = ERB.new(file.read(encoding: 'UTF-8'), trim_mode: '-').result
-        parsed = YAML.safe_load(content, aliases: true, symbolize_names: true)
-        deep_merge!(merged, parsed) if parsed.is_a?(Hash)
-      rescue StandardError, ScriptError => e
-        # The Dashboard's ERB can call Dashboard code this app does not have.
-        skipped(file, "could not be read (#{e.class})")
+      directory = config_directory
+      if directory.exist? && !(directory.readable? && directory.executable?)
+        @problems << "#{directory} cannot be listed"
       end
+      owners = []
+      merged = config_files.each_with_object({}) do |file, result|
+        parsed = load_file(file)
+        next unless parsed
+
+        owners << file.basename.to_s if parsed.key?(:ood_api)
+        deep_merge!(result, parsed)
+      end
+      @problems << "ood_api is set in more than one file: #{owners.join(', ')}" if owners.size > 1
+      merged
+    end
+
+    # @return [Hash, nil] the file's settings, or nil when it is skipped
+    def load_file(file)
+      return skipped(file, 'is not owned by root') unless trusted?(file)
+
+      raw = file.binread.force_encoding('UTF-8')
+      return skipped(file, 'is not valid UTF-8', ours: true) unless raw.valid_encoding? && !raw.include?("\0")
+
+      content = ERB.new(raw, trim_mode: '-').result
+      parsed = YAML.safe_load(content, aliases: true, symbolize_names: true)
+      fault = own_settings_fault(content, parsed)
+      return skipped(file, fault, ours: true) if fault
+
+      parsed.is_a?(Hash) ? parsed : nil
+    rescue StandardError, ScriptError => e
+      # The Dashboard's ERB can call Dashboard code this app does not have.
+      skipped(file, "could not be read (#{e.class})")
+    end
+
+    # What would make this app's settings in a file go missing without an
+    # error: YAML keeps only the first document and the last of two equal
+    # keys, and a block that is misspelt or nested is just another key.
+    def own_settings_fault(content, parsed)
+      uncommented = content.lines.reject { |line| line.lstrip.start_with?('#') }.join
+      return nil unless uncommented.match?(OWN_KEY)
+
+      stream = Psych.parse_stream(content)
+      return 'holds more than one YAML document' if stream.children.size > 1
+      return 'names ood_api, but not as a top-level setting' unless parsed.is_a?(Hash) && parsed.key?(:ood_api)
+
+      repeated_setting(stream.children.first.root)
+    end
+
+    # @return [String, nil] what is set twice, in the file or in the block
+    def repeated_setting(root)
+      return 'sets ood_api more than once' if keys_of(root).count('ood_api') > 1
+
+      block = root.children.each_slice(2).find { |key, _| scalar(key) == 'ood_api' }&.last
+      repeated = keys_of(block).tally.find { |_, count| count > 1 }&.first
+      "sets ood_api.#{repeated} more than once" if repeated
+    end
+
+    def scalar(node)
+      node.value if node.respond_to?(:value)
+    end
+
+    def keys_of(node)
+      return [] unless node.is_a?(Psych::Nodes::Mapping)
+
+      node.children.each_slice(2).filter_map { |key, _| scalar(key) }
     end
 
     def config_files
@@ -188,16 +275,17 @@ module OodApi
       file.stat.uid.zero?
     end
 
-    def skipped(file, reason)
-      ours = holds_own_settings?(file)
+    # @return [nil]
+    def skipped(file, reason, ours: holds_own_settings?(file))
       @problems << "#{file.basename} #{reason}" if ours
       warn "ood_api_audit op=site_config status=#{ours ? 'error' : 'skipped'} " \
            "file=#{file.basename} error=\"#{reason}\""
+      nil
     end
 
     # A file that cannot be read at all is assumed to.
     def holds_own_settings?(file)
-      file.read(encoding: 'UTF-8').scrub.match?(OWN_SETTINGS)
+      file.binread.scrub.match?(OWN_SETTINGS)
     rescue SystemCallError
       true
     end

@@ -25,6 +25,8 @@ module Handlers
 
         File.open(dir.entry(name), File::RDONLY | OPEN_SAFELY) do |file|
           raise ValidationError, 'Not a regular file' unless file.stat.file?
+
+          Files.deny_inode!(file.stat)
           raise PayloadTooLargeError, "File too large (max #{limit} bytes)" if refuse_larger && file.stat.size > limit
 
           file.read(limit) || ''
@@ -41,9 +43,20 @@ module Handlers
         File.open(dir.entry(name), flags) do |file|
           raise ValidationError, 'Not a regular file' unless file.stat.file?
 
+          Files.deny_inode!(file.stat)
           file.truncate(0) unless append
           file.write(content)
         end
+      end
+    end
+
+    # @return [File::Stat] the file itself, reached through the user's own
+    #   symlinks and looked at inside the pinned directory
+    def self.stat(path)
+      with_target(path) do |_dir, _name, _real, stat|
+        raise Errno::ENOENT if stat.nil?
+
+        stat
       end
     end
 

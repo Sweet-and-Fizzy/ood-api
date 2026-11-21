@@ -268,6 +268,117 @@ class CapabilitiesTest < Minitest::Test
     assert_equal 404, last_response.status
   end
 
+  # Each of these used to leave the app fully on although the file said off.
+  def test_settings_that_would_silently_go_missing_turn_everything_off
+    off = "  rest: false\n  mcp: false\n"
+    {
+      "ood_api:\n#{off}---\nother: 1\n".prepend("first: 1\n---\n") => /more than one YAML document/,
+      "OOD_API:\n#{off}"                                           => /not as a top-level setting/,
+      "ood-api:\n#{off}"                                           => /not as a top-level setting/,
+      "production:\n  ood_api:\n  #{off.gsub("\n  ", "\n    ")}"   => /not as a top-level setting/,
+      "- ood_api:\n  #{off.gsub("\n  ", "\n    ")}"                => /not as a top-level setting/,
+      "ood_api:\n#{off}ood_api:\n  capabilities: all\n"            => /sets ood_api more than once/,
+      "ood_api:\n  disable: [read_file]\n  disable: []\n"          => /sets ood_api.disable more than once/,
+      "ood_api:\n#{off}".encode('UTF-16')                          => /not valid UTF-8/
+    }.each do |content, problem|
+      File.binwrite(File.join(@dir, 'ood_api.yml'), content)
+      OodApi::SiteConfig.reset!
+
+      assert_match problem, caps.problems.join("\n"), content.inspect
+      refute caps.rest?, content.inspect
+    end
+  end
+
+  # A later file would otherwise replace the earlier one's lists and switches.
+  def test_ood_api_in_two_files_is_a_problem
+    File.write(File.join(@dir, 'a.yml'), "ood_api:\n  disable: [read_file]\n")
+    File.write(File.join(@dir, 'b.yml'), "ood_api:\n  # nothing yet\n")
+
+    assert_equal ['ood_api is set in more than one file: a.yml, b.yml'], caps.problems
+    refute caps.rest?
+  end
+
+  def test_a_file_that_only_mentions_the_app_in_a_value_or_comment_is_fine
+    File.write(File.join(@dir, 'nav.yml'), "# ood_api: see ood_api.yml\npinned_apps:\n  - sys/ood-api\n")
+
+    assert_empty caps.problems
+    assert caps.rest?
+  end
+
+  def test_a_misspelt_variable_is_a_problem
+    ENV['OOD_API_DISABEL'] = 'read_file'
+
+    assert_equal ['unknown variable OOD_API_DISABEL'], caps.problems
+    refute caps.rest?
+  ensure
+    ENV.delete('OOD_API_DISABEL')
+  end
+
+  def test_a_variable_that_names_nothing_does_not_hide_the_file
+    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  disable: [read_file]\n")
+    ENV['OOD_API_DISABLE'] = ' , '
+
+    refute caps.enabled?('read_file')
+  end
+
+  def test_a_variable_with_bad_bytes_is_a_problem_not_a_crash
+    ENV['OOD_API_MCP'] = "fal\xFFse"
+
+    refute caps.mcp?
+    refute_empty caps.problems
+  end
+
+  def test_an_app_env_file_that_cannot_be_read_is_a_problem
+    file = File.join(@dir, 'env')
+    File.binwrite(file, "OOD_API_APP_TOKENS=true\nX=\xFF\n")
+    OodApi::SiteConfig.load_app_env!(file)
+
+    assert_match(/env could not be read/, caps.problems.join)
+    refute caps.rest?
+  ensure
+    OodApi::SiteConfig.load_app_env!(File.join(@dir, 'absent'))
+  end
+
+  def mcp_call(app, method, params = {})
+    body = JSON.generate(jsonrpc: '2.0', id: 1, method: method, params: params)
+    env = Rack::MockRequest.env_for('/', :method => 'POST', :input => body, 'CONTENT_TYPE' => 'application/json',
+                                         'HTTP_ACCEPT' => 'application/json, text/event-stream')
+    _status, _headers, chunks = app.call(env)
+    text = +''
+    chunks.each { |chunk| text << chunk }
+    JSON.parse(text[/\{.*\}/m])
+  end
+
+  # The MCP server used to be built once, so a tool switched off afterwards
+  # was still listed and still ran.
+  def test_a_tool_switched_off_while_running_stops_working_over_mcp
+    ENV['OOD_API_CAPABILITIES'] = 'all'
+    app = OodApi.mcp_rack_app
+    target = File.join(Dir.tmpdir, "ood-api-live-#{Process.pid}.txt")
+    listed = mcp_call(app, 'tools/list').dig('result', 'tools').map { |tool| tool['name'] }
+    assert_includes listed, 'write_file'
+
+    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  disable: [write_file]\n")
+    OodApi::SiteConfig.reset!
+
+    listed = mcp_call(app, 'tools/list').dig('result', 'tools').map { |tool| tool['name'] }
+    refute_includes listed, 'write_file'
+    assert_includes listed, 'read_file'
+    mcp_call(app, 'tools/call', name: 'write_file', arguments: { path: target, content: 'x' })
+    refute File.exist?(target), 'a tool the site switched off still wrote the file'
+  ensure
+    FileUtils.rm_f(target) if target
+  end
+
+  # Whatever holds a reference to the tool, the tool itself says no.
+  def test_a_disabled_tool_refuses_when_called_directly
+    response = OodApi::Tools::WriteFileTool.call(path: '/tmp/nope.txt', content: 'x')
+
+    assert response.error?
+    assert_match(/not enabled/, response.content.first[:text])
+    refute File.exist?('/tmp/nope.txt')
+  end
+
   # The switch an admin reaches for: no PUN restart.
   def test_a_change_on_disk_is_picked_up_by_a_running_app
     assert caps.rest?

@@ -126,8 +126,8 @@ module OodApi
     # Required because OOD's PUN recycles idle Passenger processes
     # (passenger_min_instances 0), which destroys in-memory state.
     # Stateless supports all tool calls and resource reads; the only
-    # thing lost is server-initiated notifications (tools/list changed),
-    # which we don't use since our tool list is static.
+    # thing lost is server-initiated notifications (tools/list changed);
+    # a client sees a changed tool list the next time it asks.
 
     # DNS-rebinding protection off, deliberately. mcp 1.0.0 added it defaulting
     # to on with an allowlist of loopback only, which 403s every request whose
@@ -329,7 +329,24 @@ module OodApi
     refusal(403, 'forbidden', 'Cross-site requests are not allowed')
   end
 
-  def self.mcp_rack_app(transport = build_mcp_transport)
+  TRANSPORT_LOCK = Mutex.new
+
+  # The transport for the tools that are on right now. The site's settings
+  # can change while the app runs, so the server is rebuilt when the set of
+  # enabled tools does; a transport built once at startup would go on
+  # listing, and running, tools the site has since switched off.
+  def self.current_mcp_transport
+    names = Capabilities.enabled_tools.to_a.sort
+    TRANSPORT_LOCK.synchronize do
+      @mcp_transport = nil unless @mcp_transport_tools == names
+      @mcp_transport_tools = names
+      @mcp_transport ||= build_mcp_transport
+    end
+  end
+
+  # @param transport [Object, nil] a fixed transport, for tests; otherwise the
+  #   one for the current settings is used on each request
+  def self.mcp_rack_app(transport = nil)
     # /mcp is mounted as a sibling Rack app in config.ru, outside the Sinatra
     # app and therefore outside its `before` filters. Without this the MCP
     # surface would serve the full toolset with no app-token check while
@@ -344,7 +361,7 @@ module OodApi
         return bad
       end
 
-      transport.handle_request(request)
+      (transport || current_mcp_transport).handle_request(request)
     rescue Interrupt, SystemExit
       raise
     rescue Exception => e # rubocop:disable Lint/RescueException

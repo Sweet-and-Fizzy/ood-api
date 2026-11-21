@@ -1213,4 +1213,28 @@ class HandlersFilesTest < Minitest::Test
 
     refute File.exist?(project)
   end
+
+  # Git accepts a `commondir` file in place of objects and refs, so the
+  # repository can be spread over two directories with no one of them
+  # looking like one.
+  def test_a_repository_split_with_commondir_cannot_be_completed
+    Handlers::Files.write(path: File.join(@test_dir, 'HEAD'), content: 'ref: refs/heads/main')
+    assert_raises(Handlers::ForbiddenError) do
+      Handlers::Files.write(path: File.join(@test_dir, 'commondir'), content: '.cache/y')
+    end
+
+    other = File.join(@test_dir, 'other')
+    FileUtils.mkdir_p(other)
+    Handlers::Files.write(path: File.join(other, 'commondir'), content: '../y')
+    assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: File.join(other, 'HEAD'), content: 'x') }
+
+    File.write(File.join(other, 'HEAD'), 'ref: x')
+    assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: File.join(other, 'config'), content: 'x') }
+  end
+
+  def test_every_form_of_a_python_startup_module_is_denied
+    assert_denied('.local/lib/python3.11/site-packages/usercustomize/__init__.py')
+    assert_denied('.local/lib/python3.11/site-packages/usercustomize.pyc')
+    assert_denied('.local/lib/python3.11/site-packages/sitecustomize.cpython-311-x86_64-linux-gnu.so')
+  end
 end
