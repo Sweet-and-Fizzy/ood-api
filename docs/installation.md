@@ -34,11 +34,22 @@ authenticate without a browser. Add to `/etc/ood/config/ood_portal.yml`:
 ```yaml
 auth:
   - "AuthType auth-openidc"
-  - "Require valid-user"
+  - "Require claim aud:YOUR_OOD_CLIENT_ID"
 oidc_settings:
   OIDCOAuthVerifyJwksUri: "https://your-idp.example.edu/certs"
   OIDCOAuthRemoteUserClaim: "preferred_username"
 ```
+
+**The `Require claim aud:` line is not optional.** Apache checks a bearer
+token's signature and expiry and nothing else. With `Require valid-user`, a
+token your IdP issued to *any* client, for any other service, logs its owner
+in to the whole portal, Shell included. Requiring the audience limits bearer
+access to tokens issued for Open OnDemand's own client. Use the client ID from
+`oidc_client_id` in `ood_portal.yml` (with the bundled Dex it is the portal's
+server name). Browser login is unaffected, because the session's ID token
+carries the same audience. If your IdP puts the client in a different claim
+(Keycloak access tokens use `azp`), require that claim instead, and check the
+result by presenting a token issued to another client: it must get a 401.
 
 ```bash
 sudo /opt/ood/ood-portal-generator/sbin/update_ood_portal

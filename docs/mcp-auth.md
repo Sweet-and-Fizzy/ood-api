@@ -53,10 +53,15 @@ cookies. MCP clients don't use browsers — they send
 ### Why this is safe
 
 `AuthType auth-openidc` is a superset of `openid-connect` in the same
-module (`mod_auth_openidc`). Browser login works exactly as before.
-Bearer tokens are validated against the same IdP signing keys (JWKS) —
-no weaker authentication path is introduced. The PUN still provides
-per-user isolation.
+module (`mod_auth_openidc`). Browser login works exactly as before, and the
+PUN still provides per-user isolation.
+
+It is safe only with the audience requirement from the install guide.
+Apache validates a bearer token's signature against the IdP's signing keys
+(JWKS) and its expiry, and does not check who the token was issued to. With
+`Require valid-user`, a token the same IdP issued to any other service is a
+full portal login for its owner. `Require claim aud:<your OOD client id>`
+restricts bearer access to tokens issued for Open OnDemand.
 
 ### A revoked token keeps working until it expires
 

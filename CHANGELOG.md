@@ -22,8 +22,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- File access follows the site's Dashboard allowlist (`OOD_ALLOWLIST_PATH`, or
-  `allowlist_path` in `ondemand.d`) when one is set. Sites without one are
+- **Action needed if you enabled bearer tokens.** The install guide's Apache
+  recipe used `Require valid-user`, which accepts a token your IdP issued to
+  any client and logs its owner in to the whole portal. Change it to
+  `Require claim aud:<your OOD client id>` in `ood_portal.yml`, re-run
+  `update_ood_portal` and restart `httpd`. See
+  [installation step 2](docs/installation.md#2-configure-authentication).
+- File access follows the site's Dashboard allowlist (`OOD_ALLOWLIST_PATH`,
+  including in the Dashboard's env file, or `allowlist_path` in `ondemand.d`)
+  when one is set. Sites without one are
   unchanged. When the allowlist excludes `/tmp`, a job submitted without a
   working directory runs in the home directory.
 - More paths under `$HOME` are refused: `~/bin`, `.bashrc.d`, `.k5login`,
