@@ -1043,4 +1043,65 @@ class HandlersFilesTest < Minitest::Test
     assert_raises(Handlers::NotFoundError) { Handlers::Files.touch(path: file) }
     assert_raises(Handlers::NotFoundError) { Handlers::Files.mkdir(path: File.join(@test_dir, 'd')) }
   end
+
+  # With ~/.config a symlink, the token store and systemd/user are somewhere
+  # the rules keyed to $HOME never look.
+  def test_a_denied_path_under_a_symlinked_directory_is_denied_where_it_really_is
+    with_fake_home do |home|
+      elsewhere = File.join(@test_dir, 'elsewhere')
+      FileUtils.mkdir_p(File.join(elsewhere, 'ondemand'))
+      File.symlink(elsewhere, File.join(home, '.config'))
+
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.write(path: File.join(elsewhere, 'ondemand', 'tokens.json'), content: '[]')
+      end
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.write(path: File.join(elsewhere, 'systemd', 'user', 'x.service'), content: 'x')
+      end
+      Handlers::Files.write(path: File.join(elsewhere, 'app', 'settings.json'), content: '{}')
+    end
+  end
+
+  # A home mounted at a second path is the same directory under another name.
+  def test_home_is_recognised_by_identity_not_only_by_spelling
+    with_fake_home do |home|
+      other_name = File.join(@test_dir, 'second-mount')
+      File.symlink(home, other_name)
+
+      rel = Handlers::Files.send(:relative_to_home_by_identity,
+                                 Pathname.new(File.join(other_name, '.ssh/authorized_keys')), Pathname.new(home))
+
+      assert_equal '.ssh/authorized_keys', rel
+    end
+  end
+
+  # git treats any directory holding HEAD, objects and refs as a repository,
+  # and runs what its config says.
+  def test_a_bare_repository_layout_cannot_be_completed_or_written_into
+    repo = File.join(@test_dir, 'bare')
+    FileUtils.mkdir_p(File.join(repo, 'objects'))
+    FileUtils.mkdir_p(File.join(repo, 'refs'))
+    assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: File.join(repo, 'HEAD'), content: 'ref: x') }
+
+    File.write(File.join(repo, 'HEAD'), 'ref: refs/heads/main')
+    assert_raises(Handlers::ForbiddenError) do
+      Handlers::Files.write(path: File.join(repo, 'config'), content: '[core] fsmonitor = evil')
+    end
+    assert_raises(Handlers::ForbiddenError) do
+      Handlers::Files.write(path: File.join(repo, 'hooks', 'pre-commit'), content: 'x')
+    end
+  end
+
+  def test_directories_that_only_resemble_part_of_a_repository_are_untouched
+    project = File.join(@test_dir, 'project')
+    FileUtils.mkdir_p(File.join(project, 'refs'))
+
+    Handlers::Files.write(path: File.join(project, 'config'), content: 'ok')
+    Handlers::Files.write(path: File.join(project, 'refs', 'paper.bib'), content: 'ok')
+    Handlers::Files.write(path: File.join(project, 'HEAD'), content: 'ok')
+  end
+
+  def test_python_path_files_are_denied
+    assert_denied('.local/lib/python3.11/site-packages/evil.pth')
+  end
 end

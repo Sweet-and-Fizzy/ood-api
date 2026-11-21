@@ -429,22 +429,38 @@ module Handlers
     # Denied wherever they appear under $HOME, not at one fixed location.
     DENIED_PATTERNS = [
       # Imported by every Python process the user starts.
-      %r{\A\.local/lib/python[^/]+/site-packages/(user|site)customize\.py\z}
+      %r{\A\.local/lib/python[^/]+/site-packages/(user|site)customize\.py\z},
+      # A .pth file there is executed line by line at interpreter start.
+      %r{\A\.local/lib/python[^/]+/site-packages/[^/]+\.pth\z}
     ].freeze
 
     # A denied name can itself be a symlink: `~/.bashrc -> ~/dots/bashrc` is a
     # common way to keep dotfiles in a repository. The name is refused, but the
     # file it points at is the one the shell reads, so that is refused too.
     def self.deny_aliases!(resolved)
-      home = Pathname.new(Dir.home)
-      (DENIED_EXACT + DENIED_DIRS).each do |rel|
-        denied = home + rel
-        next unless denied.symlink?
-
-        target = link_destination(denied)
+      denied_alias_targets.each do |rel, target|
         next unless resolved == target || path_under?(resolved, target)
 
         raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
+      end
+    end
+
+    # Where each denied name really is, for the ones that are not where their
+    # name says: the name is a symlink, or a directory above it is. With
+    # `~/.config -> /scratch/me/config`, the token store and
+    # `systemd/user` live under /scratch, and the rules keyed to $HOME never
+    # see a request for them there.
+    #
+    # @return [Hash{String => Pathname}] denied relative name => real location
+    def self.denied_alias_targets
+      home = Pathname.new(Dir.home)
+      real_home = home.exist? ? home.realpath : home
+      (DENIED_EXACT + DENIED_DIRS).each_with_object({}) do |rel, found|
+        denied = home + rel
+        target = denied.symlink? ? link_destination(denied) : resolved_destination(denied)
+        found[rel] = target unless target == real_home + rel
+      rescue SystemCallError
+        next
       end
     end
 
@@ -459,9 +475,26 @@ module Handlers
     # command in the repository, and a `.git` file can point git at a
     # directory of them anywhere.
     def self.deny_git_internals!(*paths)
-      return unless paths.any? { |path| path.each_filename.any? { |part| part.casecmp?('.git') } }
+      return unless paths.any? { |path| git_internal?(path) }
 
       raise ForbiddenError, 'Access denied: git internals are not accessible through this API'
+    end
+
+    GIT_DIR_MARKERS = ['HEAD', 'objects', 'refs'].freeze
+
+    # A `.git` component is the usual sign, but git treats any directory
+    # holding HEAD, objects and refs as a repository, wherever it is and
+    # whatever it is called. So a path inside such a directory counts, and so
+    # does the entry that would complete the set.
+    def self.git_internal?(path)
+      return true if path.each_filename.any? { |part| part.casecmp?('.git') }
+      return true if GIT_DIR_MARKERS.include?(path.basename.to_s) && git_markers(path.parent).size >= 2
+
+      path.parent.ascend.any? { |ancestor| git_markers(ancestor).size == GIT_DIR_MARKERS.size }
+    end
+
+    def self.git_markers(directory)
+      GIT_DIR_MARKERS.select { |marker| File.exist?(File.join(directory.to_s, marker)) }
     end
 
     def self.deny_sensitive!(requested, resolved)
@@ -474,10 +507,9 @@ module Handlers
       raw_home = Pathname.new(Dir.home)
       homes = raw_home.exist? ? [raw_home, raw_home.realpath].uniq : [raw_home]
 
-      [requested, resolved].uniq.product(homes).each do |candidate, home|
-        rel = relative_to_home(candidate, home)
-        next unless rel
-
+      relatives = [requested, resolved].uniq.product(homes).map { |candidate, home| relative_to_home(candidate, home) }
+      relatives << relative_to_home_by_identity(resolved, raw_home)
+      relatives.compact.uniq.each do |rel|
         # Case-folded, because macOS and Windows filesystems are usually
         # case-insensitive: ~/.SSH/authorized_keys IS ~/.ssh/authorized_keys
         # there, so an exact-case comparison refuses one spelling and permits
@@ -498,6 +530,29 @@ module Handlers
       DENIED_DIRS.any? { |dir| folded == dir.downcase || folded.start_with?("#{dir.downcase}/") } ||
         DENIED_EXACT.any? { |name| folded == name.downcase } ||
         DENIED_PATTERNS.any? { |pattern| pattern.match?(folded) }
+    end
+
+    # The same question answered by what the directories are rather than by
+    # how they are spelled. A home that is also mounted at a second path is
+    # the same directory under another name, and the string comparison never
+    # recognises it there.
+    def self.relative_to_home_by_identity(path, home)
+      home_stat = home.stat
+      path.ascend do |ancestor|
+        stat = safe_stat(ancestor)
+        next unless stat && stat.dev == home_stat.dev && stat.ino == home_stat.ino
+
+        return path.relative_path_from(ancestor).to_s.sub(/\A\.\z/, '')
+      end
+      nil
+    rescue SystemCallError
+      nil
+    end
+
+    def self.safe_stat(pathname)
+      pathname.stat
+    rescue SystemCallError
+      nil
     end
 
     def self.relative_to_home(path, home)

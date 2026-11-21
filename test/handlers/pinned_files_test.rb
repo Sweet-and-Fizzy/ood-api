@@ -191,6 +191,121 @@ class PinnedFilesTest < Minitest::Test
     end
   end
 
+  # A recursive delete that walked the tree by name could be steered: whoever
+  # owns a subdirectory swaps it for a symlink mid-walk, and the contents of
+  # the link's target are deleted instead.
+  def test_recursive_delete_never_follows_a_swapped_subdirectory
+    precious = File.join(@home, 'precious')
+    FileUtils.mkdir_p(precious)
+    20.times { |i| File.write(File.join(precious, "keep#{i}"), 'x') }
+    cache = File.join(@shared, 'cache')
+    FileUtils.mkdir_p(cache)
+    flipper = fork_subdir_flipper(cache, precious)
+
+    Dir.stub(:home, @home) do
+      deadline = Time.now + 6
+      attempt do
+        files.delete(path: cache, recursive: true)
+      end while Time.now < deadline && Dir.children(precious).size == 20
+    end
+
+    assert_equal 20, Dir.children(precious).size, 'files outside the deleted tree were removed'
+  ensure
+    if flipper
+      Process.kill('KILL', flipper)
+      Process.wait(flipper)
+    end
+  end
+
+  # Keeps `base/sub` alternating between a real directory and a symlink to
+  # `target`, by rename so there is never a moment when it is missing, and
+  # puts the directory back whenever the delete under test removes it.
+  def fork_subdir_flipper(base, target)
+    fork do
+      real = File.join(base, 'sub.real')
+      link = File.join(base, 'sub.lnk')
+      sub = File.join(base, 'sub')
+      loop do
+        restore_flip_pieces(real, link, sub, target)
+        50.times do
+          [[real, sub], [sub, real], [link, sub], [sub, link]].each do |from, dest|
+            rename_quietly(from, dest)
+          end
+        end
+      end
+    end
+  end
+
+  def restore_flip_pieces(real, link, sub, target)
+    FileUtils.mkdir_p(real) unless File.directory?(sub) && !File.symlink?(sub)
+    File.write(File.join(real, 'f'), 'x') if File.directory?(real)
+    File.symlink(target, link) unless File.symlink?(link) || File.symlink?(sub)
+  rescue SystemCallError
+    nil
+  end
+
+  def rename_quietly(from, dest)
+    File.rename(from, dest)
+  rescue SystemCallError
+    nil
+  end
+
+  # Parents used to be created before the final check, so a refused write
+  # could still leave ~/.ssh behind.
+  def test_a_refused_write_creates_no_parent_directories
+    FileUtils.rm_rf(@ssh)
+
+    with_swap(@home) do
+      assert_raises(Handlers::ForbiddenError) do
+        files.write(path: File.join(@dir, '.ssh', 'authorized_keys'), content: 'k')
+      end
+    end
+
+    refute File.exist?(@ssh), '~/.ssh was created by a write that was refused'
+  end
+
+  def test_touch_on_a_directory_does_not_follow_a_swapped_symlink
+    key = File.join(@ssh, 'id_rsa')
+    old = Time.now - 86_400
+    File.utime(old, old, key)
+    sub = File.join(@dir, 'sub')
+    FileUtils.mkdir_p(sub)
+
+    Dir.stub(:home, @home) do
+      original = Handlers::PinnedDir.instance_method(:lstat)
+      Handlers::PinnedDir.define_method(:lstat) do |name|
+        result = original.bind_call(self, name)
+        if name == 'sub' && File.directory?(sub) && !File.symlink?(sub)
+          Dir.rmdir(sub)
+          File.symlink(key, sub)
+        end
+        result
+      end
+      begin
+        attempt { files.touch(path: sub) }
+      ensure
+        Handlers::PinnedDir.define_method(:lstat, original)
+      end
+    end
+
+    assert_in_delta old, File.mtime(key), 2, 'the swapped-in target had its times changed'
+  end
+
+  # The kernel will not follow another user's symlink in a sticky directory.
+  # Following it by hand would sidestep that.
+  def test_another_users_symlink_is_not_followed
+    Dir.stub(:home, @home) do
+      target = File.join(@home, 'mine.txt')
+      File.write(target, 'mine')
+      link = File.join(@shared, 'theirs')
+      File.symlink(target, link)
+      Process.stubs(:euid).returns(Process.uid + 1)
+
+      assert_raises(Handlers::ForbiddenError) { files.write(path: link, content: 'overwritten') }
+      assert_equal 'mine', File.read(target)
+    end
+  end
+
   def test_out_of_space_is_a_storage_error
     Dir.stub(:home, @home) do
       Dir.stubs(:mkdir).raises(Errno::EDQUOT)
