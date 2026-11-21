@@ -139,6 +139,19 @@ module Handlers
       raise ValidationError, e.message.sub(/ @ .*/, '')
     end
 
+    # Removing a symlink unlinks the link and never touches its target, so the
+    # policy applies to where the link is, not to where it points. Judging it
+    # by its target made a dangling link, or one pointing outside the allowed
+    # roots, impossible to remove.
+    def self.validate_link_location!(link)
+      location = link.parent.realpath.join(link.basename)
+      unless allowed_path_roots.any? { |root| path_under?(location, root) }
+        raise ForbiddenError, 'Access denied: path not in allowed directories'
+      end
+
+      deny_sensitive!(link, location)
+    end
+
     # Where an open of `path` should land, worked out before the open.
     def self.expected_destination(path)
       return path.realpath if path.exist?
@@ -200,7 +213,7 @@ module Handlers
 
     def self.delete(path:, recursive: false)
       p = normalize_path(path)
-      validate_path!(p)
+      p.symlink? ? validate_link_location!(p) : validate_path!(p)
       raise NotFoundError, 'Path not found' unless p.exist? || p.symlink?
 
       # A symlink is removed as a link, whatever it points at. `directory?`

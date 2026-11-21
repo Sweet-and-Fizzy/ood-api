@@ -860,6 +860,30 @@ class HandlersFilesTest < Minitest::Test
     assert_equal 'keep', File.read(File.join(dir, 'keep.txt'))
   end
 
+  # Unlinking never follows the link, so a target outside the allowed roots
+  # does not stop the link itself from being removed.
+  def test_delete_removes_a_symlink_whose_target_is_outside_the_allowed_roots
+    ['/nonexistent/x', '/etc/passwd'].each do |target|
+      link = File.join(@test_dir, 'outside')
+      File.symlink(target, link)
+
+      Handlers::Files.delete(path: link)
+
+      refute File.symlink?(link)
+    end
+    assert File.exist?('/etc/passwd')
+  end
+
+  def test_delete_still_refuses_a_symlink_at_a_denied_location
+    with_fake_home do |home|
+      link = File.join(home, '.bashrc')
+      File.symlink(File.join(home, 'elsewhere'), link)
+
+      assert_raises(Handlers::ForbiddenError) { Handlers::Files.delete(path: link) }
+      assert File.symlink?(link)
+    end
+  end
+
   def test_delete_removes_a_dangling_symlink
     link = File.join(@test_dir, 'dangling')
     File.symlink(File.join(@test_dir, 'gone'), link)

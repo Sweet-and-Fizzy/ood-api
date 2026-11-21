@@ -63,6 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Hold and release report the job's real status when it has already started.
+  They used to answer `queued_held` and `queued` for a job that was running.
+- A symlink can be deleted when its target is missing or outside the allowed
+  directories. Removing a link never touches its target.
 - A path starting with `~` and an unknown user name returns 400, not 500.
 - Deleting a symlink removes the link, including one that points at a
   directory or at nothing.

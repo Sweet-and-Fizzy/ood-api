@@ -513,8 +513,8 @@ class HandlersJobsTest < Minitest::Test
   # "Invalid job id specified" and returns normally for a job that is not there.
   # Stub `info` accordingly.
 
-  def stub_existing_job(id = '789')
-    @adapter.stubs(:info).with(id).returns(mock_job_info(id: id, job_owner: 'drew'))
+  def stub_existing_job(id = '789', status: :running)
+    @adapter.stubs(:info).with(id).returns(mock_job_info(id: id, job_owner: 'drew', status: status))
   end
 
   # An id the scheduler has never heard of comes back as :completed with no
@@ -568,7 +568,7 @@ class HandlersJobsTest < Minitest::Test
   # hold
 
   def test_hold_calls_hold_on_adapter
-    stub_existing_job
+    stub_existing_job(status: :queued)
     @adapter.expects(:hold).with('789')
     result = Handlers::Jobs.hold(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
     assert_equal '789', result[:job_id]
@@ -585,8 +585,31 @@ class HandlersJobsTest < Minitest::Test
 
   # release
 
+  # Slurm accepts a hold on a job that has already started and the job keeps
+  # running. Seen against a real scheduler: the API answered `queued_held`
+  # while squeue showed RUNNING.
+  def test_hold_and_release_report_the_real_status_of_a_started_job
+    stub_existing_job(status: :running)
+    @adapter.stubs(:hold)
+    @adapter.stubs(:release)
+
+    assert_equal 'running', Handlers::Jobs.hold(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')[:status]
+    assert_equal 'running', Handlers::Jobs.release(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')[:status]
+  end
+
+  # The hold already happened; a failed status lookup must not turn it into
+  # an error.
+  def test_hold_reports_the_expected_status_when_the_lookup_fails
+    @adapter.stubs(:info).with('789').returns(mock_job_info(id: '789', job_owner: 'drew'))
+            .then.raises(OodCore::JobAdapterError, 'scheduler busy')
+    @adapter.stubs(:hold)
+
+    assert_equal 'queued_held',
+                 Handlers::Jobs.hold(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')[:status]
+  end
+
   def test_release_calls_release_on_adapter
-    stub_existing_job
+    stub_existing_job(status: :queued_held)
     @adapter.expects(:release).with('789')
     result = Handlers::Jobs.release(clusters: @clusters, cluster_id: 'cluster1', job_id: '789')
     assert_equal '789', result[:job_id]

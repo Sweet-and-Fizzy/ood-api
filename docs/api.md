@@ -487,6 +487,11 @@ POST /api/v1/jobs/:id/hold?cluster=:cluster_id
 }
 ```
 
+`status` is `queued_held` for a job that was waiting. Schedulers also accept a
+hold on a job that has already started; that job keeps running, and `status`
+reports what the scheduler says (for example `running`). Release behaves the
+same way, answering `queued` for a waiting job.
+
 **Example:**
 ```bash
 curl -X POST \

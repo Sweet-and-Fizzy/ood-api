@@ -372,14 +372,29 @@ module Handlers
       assert_job_exists!(clusters: clusters, cluster_id: cluster_id, job_id: job_id)
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
       Handlers.with_adapter(cluster, 'hold job') { cluster.job_adapter.hold(job_id) }
-      { job_id: job_id, status: 'queued_held' }
+      { job_id: job_id, status: status_after(cluster, job_id, 'queued_held') }
     end
 
     def self.release(clusters:, cluster_id:, job_id:)
       assert_job_exists!(clusters: clusters, cluster_id: cluster_id, job_id: job_id)
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
       Handlers.with_adapter(cluster, 'release job') { cluster.job_adapter.release(job_id) }
-      { job_id: job_id, status: 'queued' }
+      { job_id: job_id, status: status_after(cluster, job_id, 'queued') }
+    end
+
+    WAITING_STATUSES = ['queued', 'queued_held', 'undetermined', ''].freeze
+
+    # The status to report after a hold or release. Schedulers accept both on
+    # a job that has already started (Slurm records the hold for a later
+    # requeue), and the job keeps running, so the answer has to come from the
+    # scheduler. A job still waiting gets `expected`, because adapters do not
+    # all tell a held job from a queued one. If the lookup fails the operation
+    # still succeeded, so `expected` is reported then too.
+    def self.status_after(cluster, job_id, expected)
+      actual = Handlers.with_adapter(cluster, 'get job status') { cluster.job_adapter.info(job_id) }.status.to_s
+      WAITING_STATUSES.include?(actual) ? expected : actual
+    rescue AdapterError, NotSupportedError
+      expected
     end
   end
 end
