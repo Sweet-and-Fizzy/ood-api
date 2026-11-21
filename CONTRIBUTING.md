@@ -32,7 +32,7 @@ bundle exec rubocop
 
 ## Before you open a pull request
 
-CI runs the test suite across Ruby 3.0–3.3, and RuboCop once on 3.2. It will
+CI runs the test suite across Ruby 3.1–4.0, and RuboCop once on 3.2. It will
 fail on any of the following. Running them locally first is faster than a
 round trip.
 
@@ -89,8 +89,9 @@ COVERAGE_ENFORCE=1 bundle exec rake test
 Headroom is thin. Adding error branches without tests for them is the usual
 way this goes red.
 
-**Ruby 3.0 compatibility.** OOD 3.x ships Ruby 3.0, so the code and the
-lockfile must stay installable there. `.rubocop.yml` targets 3.0 and several
+**Ruby 3.1 compatibility.** Ruby 3.1 is the oldest version Open OnDemand's
+own CI tests, so the code and the lockfile must stay installable there.
+`.rubocop.yml` targets 3.1 and several
 gems are pinned below their latest versions for this reason — check the
 comments in the `Gemfile` before bumping anything.
 

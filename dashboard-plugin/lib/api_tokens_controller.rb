@@ -30,8 +30,7 @@ class ApiTokensController < ApplicationController
       return
     end
 
-    token = ApiToken.generate(name: name)
-    @new_token = token.token
+    token, @new_token = ApiToken.generate(name: name)
     @tokens = ApiToken.all
     flash.now[:notice] = t('dashboard.api_tokens.created_notice', name: token.name)
     render :index

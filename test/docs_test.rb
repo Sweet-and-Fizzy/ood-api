@@ -40,8 +40,7 @@ class DocsTest < Minitest::Test
   # The README advertises a tool count. mcp_server.rb is the only place the
   # list actually lives.
   def test_documented_mcp_tool_count_matches_the_server
-    src = read_utf8(File.join(ROOT, 'app/mcp_server.rb'))
-    actual = src[/tools:\s*\[(.*?)\]/m, 1].scan(/\w+Tool/).uniq.size
+    actual = OodApi::MCP_TOOLS.size
 
     # Numerals only, and the number must sit directly before "tools" (or
     # "MCP tools"). Docs state the count as a numeral, which is more scannable
@@ -218,10 +217,10 @@ class DocsTest < Minitest::Test
     calls
   end
 
-  # SECURITY.md says the excon advisory is unreachable because this app makes
-  # no outbound HTTP request. Excon IS loaded — it arrives with ood_core — so
-  # the claim rests entirely on nothing ever opening a connection, which is a
-  # property of the code rather than of the dependency tree.
+  # SECURITY.md says this app makes no outbound network calls. Excon IS
+  # loaded — it arrives with ood_core — so the claim rests entirely on nothing
+  # ever opening a connection, which is a property of the code rather than of
+  # the dependency tree.
   #
   # Trip-wire on TCPSocket.open and Excon::Connection#request: exercise the
   # surface and assert neither fires. A future handler that calls out breaks

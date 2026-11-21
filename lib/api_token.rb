@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'json'
+require 'digest'
 require 'securerandom'
 require 'fileutils'
 # Time#iso8601 lives in the stdlib `time` library, not in core. This file only
@@ -23,29 +24,40 @@ module OodApi
     # exclude nobody. The lock file is never renamed over, so it stays stable.
     LOCK_FILE = File.join(TOKENS_DIR, '.tokens.json.lock')
 
-    attr_reader :id, :name, :token, :created_at, :last_used_at
+    # last_used_at is bookkeeping for the token page, not a security control.
+    # Writing it on every request means an fsync to an NFS home per API call,
+    # so it is refreshed at most this often.
+    TOUCH_INTERVAL = 300
+
+    attr_reader :id, :name, :token_digest, :created_at, :last_used_at
 
     def initialize(attrs = {})
       @id = attrs[:id] || attrs['id']
       @name = attrs[:name] || attrs['name']
-      @token = attrs[:token] || attrs['token']
+      @token_digest = attrs[:token_digest] || attrs['token_digest']
       @created_at = attrs[:created_at] || attrs['created_at']
       @last_used_at = attrs[:last_used_at] || attrs['last_used_at']
     end
 
     class << self
+      # Only a SHA-256 digest of each token is stored. Tokens are 256 bits of
+      # SecureRandom, so an unsalted digest cannot be brute-forced, and a copy
+      # of tokens.json (a backup, a snapshot, a job that reads it) no longer
+      # yields a working credential.
+      def digest(plain_token)
+        Digest::SHA256.hexdigest(plain_token.to_s)
+      end
+
       # Find a token by its plain text value using timing-safe comparison
       def find_by_token(plain_token)
         return nil if plain_token.nil? || plain_token.empty?
 
+        presented = digest(plain_token)
         load_tokens.each do |attrs|
-          # Only a String is a credential. `to_s` on its own would turn an
-          # unquoted `"token": 123456` in a hand-edited file into a working
-          # token spelled "123456", and installation docs invite hand-editing.
-          stored = attrs[:token]
-          next unless stored.is_a?(String)
+          stored = stored_digest(attrs)
+          next unless stored
 
-          return new(attrs) if tokens_match?(stored, plain_token.to_s)
+          return new(attrs.merge(token_digest: stored)) if tokens_match?(stored, presented)
         end
         nil
       end
@@ -59,10 +71,10 @@ module OodApi
       def create(name:)
         plain_token = SecureRandom.hex(32)
         token_attrs = {
-          id:         SecureRandom.uuid,
-          name:       name,
-          token:      plain_token,
-          created_at: Time.now.iso8601
+          id:           SecureRandom.uuid,
+          name:         name,
+          token_digest: digest(plain_token),
+          created_at:   Time.now.iso8601
         }
 
         with_lock do
@@ -82,7 +94,6 @@ module OodApi
         end
       end
 
-      # Update last_used_at for a token
       # Records last-used bookkeeping. Deliberately never raises: the caller
       # has already authenticated, and a read-only or full token store should
       # not turn a valid request into a 500.
@@ -91,6 +102,9 @@ module OodApi
           tokens = load_tokens
           token_data = tokens.find { |t| t[:id] == token.id }
           return unless token_data
+          # A legacy plaintext entry is always rewritten, so it is hashed on
+          # its first use rather than whenever the interval next lapses.
+          return if recently_touched?(token_data) && !token_data.key?(:token)
 
           token_data[:last_used_at] = Time.now.iso8601
           save_tokens(tokens)
@@ -101,6 +115,38 @@ module OodApi
       end
 
       private
+
+      # The digest for a stored entry, or nil when it holds no credential.
+      #
+      # Entries written before hashing carry a plaintext `token`, and the
+      # installation guide used to tell operators to write one by hand. Those
+      # still authenticate; save_tokens replaces the plaintext with its digest
+      # the next time the file is written.
+      #
+      # Only a String is a credential. `to_s` on its own would turn an unquoted
+      # `"token": 123456` in a hand-edited file into a working token.
+      def stored_digest(attrs)
+        hashed = attrs[:token_digest]
+        return hashed if hashed.is_a?(String) && hashed.match?(/\A\h{64}\z/)
+
+        legacy = attrs[:token]
+        legacy.is_a?(String) && !legacy.empty? ? digest(legacy) : nil
+      end
+
+      def harden(attrs)
+        return attrs unless attrs.key?(:token)
+
+        hashed = stored_digest(attrs)
+        rest = attrs.except(:token)
+        hashed ? rest.merge(token_digest: hashed) : rest
+      end
+
+      def recently_touched?(token_data)
+        last = Time.iso8601(token_data[:last_used_at].to_s)
+        (Time.now - last).between?(0, TOUCH_INTERVAL)
+      rescue ArgumentError
+        false
+      end
 
       # Serialises read-modify-write across processes. The Dashboard plugin
       # writes the same file, so the lock has to be visible to a separate
@@ -154,7 +200,7 @@ module OodApi
           # Create with 0600 from the start so the token file is never briefly
           # world-readable between creation and chmod.
           File.open(tmp, File::WRONLY | File::CREAT | File::EXCL, 0o600) do |f|
-            f.write(JSON.pretty_generate(tokens))
+            f.write(JSON.pretty_generate(tokens.map { |t| harden(t) }))
             f.flush
             f.fsync
           end
@@ -181,7 +227,7 @@ module OodApi
       {
         id:           id,
         name:         name,
-        token:        token,
+        token_digest: token_digest,
         created_at:   created_at,
         last_used_at: last_used_at
       }

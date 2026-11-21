@@ -3,11 +3,10 @@
 
 AllCops:
   NewCops: enable
-  TargetRubyVersion: 3.0
+  TargetRubyVersion: 3.1
   SuggestExtensions: false
   Exclude:
     - 'vendor/**/*'
-    - 'mcp/**/*'
 
 # HTTP status codes in test names are meaningful (401, 503, etc.)
 Naming/VariableNumber:
@@ -18,7 +17,6 @@ Naming/VariableNumber:
 Naming/PredicateMethod:
   AllowedMethods:
     - destroy
-    - touch_last_used!
 
 # style
 Style/MultilineBlockChain:

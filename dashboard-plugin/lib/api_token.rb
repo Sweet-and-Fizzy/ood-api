@@ -5,6 +5,7 @@
 # (lib/api_token.rb) broke exactly this way when it was loaded outside Rack.
 # Requiring it directly keeps the two copies honest about their dependencies.
 require 'time'
+require 'digest'
 
 # Represents an API token for authenticating programmatic access to OOD.
 # Tokens are stored in a user-local JSON file.
@@ -20,7 +21,7 @@ class ApiToken
   # docs/installation.md tells operators they may hand-write tokens.json, a
   # visible-but-unenforced expiry field invites someone to add an expiry and
   # believe the credential dies on its own. Revocation is the real control.
-  attr_reader :id, :name, :token, :created_at, :last_used_at
+  attr_reader :id, :name, :token_digest, :created_at, :last_used_at
 
   TOKEN_DIR = Pathname.new('~/.config/ondemand').expand_path
   TOKEN_FILE = TOKEN_DIR.join('tokens.json')
@@ -45,31 +46,21 @@ class ApiToken
       attrs ? new(attrs) : nil
     end
 
-    # No caller in this plugin — the Dashboard only lists, creates and revokes.
-    # Authentication runs in the ood-api process against its own copy
-    # (lib/api_token.rb). Kept so the two files stay comparable: the sync
-    # requirement noted above is easier to check when neither has quietly
-    # dropped a method the other has.
-    def find_by_token(token_string)
-      return nil if token_string.blank?
-
-      load_tokens.each do |attrs|
-        # Only a String is a credential, matching lib/api_token.rb: `to_s`
-        # would turn an unquoted `"token": 123456` into a working token.
-        stored = attrs[:token]
-        next unless stored.is_a?(String)
-
-        return new(attrs) if tokens_match?(stored, token_string.to_s)
-      end
-      nil
+    # Only a SHA-256 digest is stored, matching lib/api_token.rb. Tokens are
+    # 256 bits of SecureRandom, so an unsalted digest cannot be brute-forced.
+    def digest(plain_token)
+      Digest::SHA256.hexdigest(plain_token.to_s)
     end
 
+    # Returns [ApiToken, plain_token]. The plaintext exists only in this return
+    # value, for the one page render that shows it to the user.
     def generate(name:)
+      plain_token = SecureRandom.hex(32)
       token_attrs = {
-        id:         SecureRandom.uuid,
-        name:       name,
-        token:      SecureRandom.hex(32),
-        created_at: Time.current.iso8601
+        id:           SecureRandom.uuid,
+        name:         name,
+        token_digest: digest(plain_token),
+        created_at:   Time.current.iso8601
       }
 
       with_lock do
@@ -78,7 +69,7 @@ class ApiToken
         save_tokens(tokens)
       end
 
-      new(token_attrs)
+      [new(token_attrs), plain_token]
     end
 
     # Serialises read-modify-write across processes. ood-api writes this same
@@ -125,7 +116,7 @@ class ApiToken
         # Create with 0600 from the start so the token file is never briefly
         # world-readable between creation and chmod.
         tmp.open(File::WRONLY | File::CREAT | File::EXCL, 0o600) do |f|
-          f.write(JSON.pretty_generate(tokens))
+          f.write(JSON.pretty_generate(tokens.map { |t| harden(t) }))
           f.flush
           f.fsync
         end
@@ -139,20 +130,32 @@ class ApiToken
 
     private
 
-    def tokens_match?(left, right)
-      return false unless left.bytesize == right.bytesize
+    # The digest for a stored entry, or nil when it holds no credential.
+    # Entries written before hashing carry a plaintext `token`; save_tokens
+    # replaces it with its digest the next time the file is written. Only a
+    # String is a credential: `to_s` would turn an unquoted `"token": 123456`
+    # into a working token.
+    def stored_digest(attrs)
+      hashed = attrs[:token_digest]
+      return hashed if hashed.is_a?(String) && hashed.match?(/\A\h{64}\z/)
 
-      left_bytes = left.unpack('C*')
-      result = 0
-      right.each_byte { |byte| result |= byte ^ left_bytes.shift }
-      result.zero?
+      legacy = attrs[:token]
+      legacy.is_a?(String) && legacy.present? ? digest(legacy) : nil
+    end
+
+    def harden(attrs)
+      return attrs unless attrs.key?(:token)
+
+      hashed = stored_digest(attrs)
+      rest = attrs.except(:token)
+      hashed ? rest.merge(token_digest: hashed) : rest
     end
   end
 
   def initialize(attrs = {})
     @id           = attrs[:id]
     @name         = attrs[:name]
-    @token        = attrs[:token]
+    @token_digest = attrs[:token_digest]
     @created_at   = attrs[:created_at]
     @last_used_at = attrs[:last_used_at]
   end
@@ -177,25 +180,6 @@ class ApiToken
       self.class.save_tokens(tokens)
     end
     true
-  end
-
-  # Records last-used bookkeeping. Deliberately never raises: the caller has
-  # already authenticated, and a read-only or full token store should not turn
-  # a valid request into a Dashboard 500.
-  def touch_last_used!
-    self.class.with_lock do
-      tokens = self.class.load_tokens
-      token_data = tokens.find { |t| t[:id] == id }
-      return false unless token_data
-
-      token_data[:last_used_at] = Time.current.iso8601
-      self.class.save_tokens(tokens)
-      @last_used_at = token_data[:last_used_at]
-    end
-    true
-  rescue SystemCallError, IOError => e
-    Rails.logger.error("Failed to record API token last-used: #{e.class}")
-    false
   end
 
   private

@@ -12,6 +12,8 @@ require 'fileutils'
 require 'ood_core'
 require_relative '../lib/api_token'
 require_relative '../lib/app_auth'
+require_relative '../lib/origin_check'
+require_relative '../lib/capabilities'
 require_relative 'handlers/audit'
 require_relative 'handlers/clusters'
 require_relative 'handlers/jobs'
@@ -20,7 +22,36 @@ require_relative 'handlers/env'
 require_relative 'handlers/context'
 
 module OodApi
+  # Refuses multipart bodies before Sinatra sees them. Rack parses a multipart
+  # body, spooling each part to a temp file, as soon as anything reads
+  # `params`, and Sinatra does that before any filter runs. That let a caller
+  # who had not authenticated write tens of megabytes to the web node's disk.
+  # Nothing in this API takes multipart, so it is turned away unread.
+  class RejectMultipart
+    BODY = { error:   'unsupported_media_type',
+             message: 'multipart bodies are not accepted; send application/json' }.to_json.freeze
+
+    def initialize(app)
+      @app = app
+    end
+
+    def call(env)
+      return @app.call(env) unless env['CONTENT_TYPE'].to_s.strip.downcase.start_with?('multipart/')
+
+      [415, { 'content-type' => 'application/json' }, [BODY]]
+    end
+  end
+
+  # The REST API: authentication, request checks and one route per operation.
+  # The work itself is in the Handlers modules, which the MCP tools share.
   class App < Sinatra::Base
+    use RejectMultipart
+
+    # Errors are always answered by the handlers below. In development
+    # Sinatra would otherwise show its HTML debug page and skip them, which
+    # is what a dev app under /pun/dev runs as.
+    set :show_exceptions, false
+
     # Sinatra 4 added host authorization. Its restrictive allowlist —
     # localhost only — applies in the development environment; production and
     # test already default to permit-all, so this setting changes nothing for
@@ -68,12 +99,37 @@ module OodApi
     # without protecting anything. If a site ever fronts this API with a
     # cross-origin SPA, add an explicit, origin-scoped allow-list then.
 
-    # Authentication runs first so an unauthenticated caller learns nothing —
-    # not even the configured size limits. `authenticate!` reads only
-    # request.env, never `params`, so it does not trigger the body parse the
-    # next filter exists to prevent.
+    # Authentication is the first filter, so an unauthenticated caller does not
+    # learn the configured size limits. `authenticate!` reads only request.env,
+    # never `params`, so it does not trigger the body parse the size filter
+    # exists to prevent. One exception: Sinatra parses the body before any
+    # filter runs, so a body Rack cannot parse is rejected before auth. See the
+    # Rack::BadRequest handlers below.
     before '/api/v1/*' do
+      halt_error(404, 'not_found', 'The REST API is not enabled at this site') unless Capabilities.rest?
       authenticate!
+    end
+
+    # See OodApi::Capabilities. Runs after authentication, so only a signed-in
+    # user learns what the site has turned off.
+    before '/api/v1/*' do
+      tool = route_tool
+      next if tool.nil? || Capabilities.enabled?(tool)
+
+      Handlers::Audit.emit_event(op: tool, user: current_user, source: 'rest', status: 'disabled',
+                                 path: request.path_info)
+      halt_error(403, 'forbidden', "#{tool} is not enabled at this site")
+    end
+
+    # See OodApi::OriginCheck. Applied to state-changing requests; a
+    # cross-site GET cannot read its response and changes nothing.
+    before '/api/v1/*' do
+      next unless ['POST', 'PUT', 'PATCH', 'DELETE'].include?(request.request_method)
+      next unless OodApi::OriginCheck.cross_site?(request.env)
+
+      Handlers::Audit.emit_event(op: 'origin_check', user: current_user, source: 'rest', status: 'denied',
+                                 path: request.path_info, origin: request.env['HTTP_ORIGIN'])
+      halt_error(403, 'forbidden', 'Cross-site requests are not allowed')
     end
 
     # CSRF defense for state-changing requests.
@@ -138,10 +194,9 @@ module OodApi
     # Malformed bodies Rack rejects while parsing.
     #
     # Sinatra's dispatch! merges @request.params before it runs `before`
-    # filters, so the body parse happens upstream of authenticate! — the
-    # comment above about an unauthenticated caller learning nothing does not
-    # hold for a body Rack cannot parse. A multipart body with too many parts
-    # escaped as a bare 500 to a caller who had not authenticated.
+    # filters, so the body parse happens upstream of authenticate!. A
+    # multipart body with too many parts escaped as a bare 500 to a caller
+    # who had not authenticated.
     #
     # Rack::BadRequest is the marker these share, but it is a module mixed
     # into classes with unrelated superclasses (EmptyContentError < EOFError)
@@ -190,10 +245,10 @@ module OodApi
 
     # Default status for every handler error, so a route that omits a rescue
     # degrades to the right code instead of an unexplained 500. Routes keep
-    # their own rescues where they need a different status than the default
-    # (PayloadTooLargeError is 400 on a read, since there the client asked for
-    # too much rather than sent too much), and a route-level rescue always
-    # wins over these.
+    # their own rescues only where they need a different status than the
+    # default (PayloadTooLargeError is 400 on a read, since there the client
+    # asked for too much rather than sent too much; a scheduler refusing a job
+    # is 422), and a route-level rescue always wins over these.
     #
     # The rescue lists had drifted apart per route: PUT /files 500'd on
     # NotFoundError, POST /files on StorageError, GET /files on
@@ -241,8 +296,6 @@ module OodApi
         Handlers::Clusters.get(clusters: self.class.clusters, id: params[:id])
       end
       { data: cluster_json(cluster) }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     end
 
     # ============ Accounts ============
@@ -255,10 +308,6 @@ module OodApi
         Handlers::Clusters.accounts(clusters: self.class.clusters, id: params[:cluster])
       end
       { data: accounts.map(&:to_h) }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::AdapterError => e
-      halt_service_unavailable(e.message)
     end
 
     # ============ Queues ============
@@ -270,10 +319,6 @@ module OodApi
         Handlers::Clusters.queues(clusters: self.class.clusters, id: params[:cluster])
       end
       { data: queues.map(&:to_h) }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::AdapterError => e
-      halt_service_unavailable(e.message)
     end
 
     # ============ Cluster Info ============
@@ -285,10 +330,6 @@ module OodApi
         Handlers::Clusters.info(clusters: self.class.clusters, id: params[:cluster])
       end
       { data: info.to_h }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::AdapterError => e
-      halt_service_unavailable(e.message)
     end
 
     # ============ Jobs ============
@@ -305,10 +346,6 @@ module OodApi
         )
       end
       { data: jobs.map { |j| job_json(j, cluster) } }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::AdapterError => e
-      halt_service_unavailable(e.message)
     end
 
     get '/api/v1/jobs/historic' do
@@ -323,10 +360,6 @@ module OodApi
         )
       end
       { data: jobs.map { |j| job_json(j, cluster) } }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::AdapterError => e
-      halt_service_unavailable(e.message)
     end
 
     get '/api/v1/jobs/:id' do
@@ -341,12 +374,10 @@ module OodApi
         )
       end
       { data: job_json(job, cluster) }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     end
 
     post '/api/v1/jobs' do
-      body = parse_json_object(request.body.read)
+      body = parse_json_object(read_body!)
       halt_bad_request('Missing cluster in request body') if body['cluster'].to_s.strip.empty?
       # `script` and `options` are indexed with dig below, which raises TypeError
       # on a String and NoMethodError on a scalar. Valid JSON of the wrong shape
@@ -363,7 +394,8 @@ module OodApi
                                               output_path: body.dig('options', 'output_path'),
                                               error_path: body.dig('options', 'error_path'),
                                               workdir: body.dig('script', 'workdir'),
-                                              native: audit_native(body.dig('options', 'native'))) do
+                                              native: audit_native(body.dig('options', 'native')),
+                                              **Handlers::Jobs.script_audit(body.dig('script', 'content'))) do
         Handlers::Jobs.submit(
           clusters:       self.class.clusters,
           cluster_id:     body['cluster'],
@@ -386,10 +418,6 @@ module OodApi
       { data: job_json(job_info, cluster) }.to_json
     rescue JSON::ParserError
       halt_bad_request('Invalid JSON in request body')
-    rescue Handlers::ValidationError => e
-      halt_bad_request(e.message)
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     rescue Handlers::SchedulerUnavailableError => e
       halt_service_unavailable(e.message)
     rescue Handlers::AdapterError => e
@@ -408,8 +436,6 @@ module OodApi
         )
       end
       { data: result }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     rescue Handlers::SchedulerUnavailableError => e
       halt_service_unavailable(e.message)
     rescue Handlers::AdapterError => e
@@ -424,8 +450,6 @@ module OodApi
         Handlers::Jobs.hold(clusters: self.class.clusters, cluster_id: params[:cluster], job_id: params[:id])
       end
       { data: result }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     rescue Handlers::SchedulerUnavailableError => e
       halt_service_unavailable(e.message)
     rescue Handlers::AdapterError => e
@@ -440,8 +464,6 @@ module OodApi
         Handlers::Jobs.release(clusters: self.class.clusters, cluster_id: params[:cluster], job_id: params[:id])
       end
       { data: result }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     rescue Handlers::SchedulerUnavailableError => e
       halt_service_unavailable(e.message)
     rescue Handlers::AdapterError => e
@@ -463,10 +485,6 @@ module OodApi
       else
         { data: file_json(result) }.to_json
       end
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::ForbiddenError => e
-      halt_forbidden(e.message)
     end
 
     # Read file contents
@@ -488,12 +506,6 @@ module OodApi
       # GET /api/v1/files returns the correct body for the same conditions.
       content_type 'application/octet-stream'
       body
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::ValidationError => e
-      halt_bad_request(e.message)
-    rescue Handlers::ForbiddenError => e
-      halt_forbidden(e.message)
     rescue Handlers::PayloadTooLargeError => e
       halt_bad_request(e.message)
     end
@@ -515,10 +527,6 @@ module OodApi
 
       status 201
       { data: file_json(result) }.to_json
-    rescue Handlers::ValidationError => e
-      halt_bad_request(e.message)
-    rescue Handlers::ForbiddenError => e
-      halt_forbidden(e.message)
     end
 
     # Write file contents
@@ -538,18 +546,6 @@ module OodApi
         Handlers::Files.write(path: path, content: content, append: append)
       end
       { data: file_json(result) }.to_json
-    rescue Handlers::ValidationError => e
-      halt_bad_request(e.message)
-    rescue Handlers::ForbiddenError => e
-      halt_forbidden(e.message)
-    rescue Handlers::StorageError => e
-      # Pass the message through. Hardcoding "No space left on device" here
-      # discarded out_of_space_message's wording, so EDQUOT — a per-user home
-      # quota, the case files.rb calls out as the one that actually bites on
-      # HPC sites — was reported as a full filesystem. POST /files already
-      # falls through to the central map and gets this right; the two write
-      # endpoints disagreed on the same condition.
-      halt_error(507, 'insufficient_storage', e.message)
     end
 
     # Delete file or directory
@@ -560,12 +556,6 @@ module OodApi
         Handlers::Files.delete(path: path, recursive: params[:recursive] == 'true')
       end
       { data: result }.to_json
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
-    rescue Handlers::ValidationError => e
-      halt_bad_request(e.message)
-    rescue Handlers::ForbiddenError => e
-      halt_forbidden(e.message)
     end
 
     # ============ Environment Variables ============
@@ -583,10 +573,6 @@ module OodApi
         Handlers::Env.get(name: params[:name])
       end
       { data: result }.to_json
-    rescue Handlers::ForbiddenError => e
-      halt_forbidden(e.message)
-    rescue Handlers::NotFoundError => e
-      halt_not_found(e.message)
     end
 
     # ============ Context ============
@@ -600,14 +586,49 @@ module OodApi
 
     # ============ Helpers ============
 
+    # The tool each route corresponds to, so one setting covers both surfaces.
+    ROUTE_TOOLS = [
+      ['GET',    %r{\A/api/v1/clusters\z},             'list_clusters'],
+      ['GET',    %r{\A/api/v1/clusters/[^/]+\z},       'get_cluster'],
+      ['GET',    %r{\A/api/v1/accounts\z},             'list_accounts'],
+      ['GET',    %r{\A/api/v1/queues\z},               'list_queues'],
+      ['GET',    %r{\A/api/v1/cluster_info\z},         'get_cluster_info'],
+      ['GET',    %r{\A/api/v1/jobs\z},                 'list_jobs'],
+      ['GET',    %r{\A/api/v1/jobs/historic\z},        'list_historic_jobs'],
+      ['GET',    %r{\A/api/v1/jobs/[^/]+\z},           'get_job'],
+      ['POST',   %r{\A/api/v1/jobs\z},                 'submit_job'],
+      ['DELETE', %r{\A/api/v1/jobs/[^/]+\z},           'cancel_job'],
+      ['POST',   %r{\A/api/v1/jobs/[^/]+/hold\z},      'hold_job'],
+      ['POST',   %r{\A/api/v1/jobs/[^/]+/release\z},   'release_job'],
+      ['GET',    %r{\A/api/v1/files\z},                'list_files'],
+      ['GET',    %r{\A/api/v1/files/content\z},        'read_file'],
+      ['PUT',    %r{\A/api/v1/files\z},                'write_file'],
+      ['DELETE', %r{\A/api/v1/files\z},                'delete_file'],
+      ['GET',    %r{\A/api/v1/env\z},                  'list_env'],
+      ['GET',    %r{\A/api/v1/env/[^/]+\z},            'get_env']
+    ].freeze
+
     # Accepted spellings for a boolean query param. See truthy_param?.
     TRUTHY_PARAM_VALUES = ['true', '1', 'yes', 'on'].freeze
 
     private
 
+    # nil for a route with no tool behind it, such as /api/v1/context.
+    def route_tool
+      # POST /files makes a directory or an empty file, which are different
+      # tools over MCP.
+      if request.post? && request.path_info == '/api/v1/files'
+        return params[:type] == 'directory' ? 'create_directory' : 'write_file'
+      end
+
+      method = request.head? ? 'GET' : request.request_method
+      ROUTE_TOOLS.find { |verb, pattern, _| verb == method && pattern.match?(request.path_info) }&.last
+    end
+
     # See OodApi::AppAuth. The same rule guards the MCP transport, so both
     # surfaces enforce app tokens identically.
     def authenticate!
+      Handlers::Audit.context = nil
       result = OodApi::AppAuth.authenticate(request.env)
       if result == false
         # Every other refusal in this app leaves a record; a rejected token did
@@ -621,7 +642,7 @@ module OodApi
         halt_unauthorized
       end
 
-      @current_token = result
+      Handlers::Audit.context = { token_id: result.id } if result
     end
 
     def current_user
@@ -683,8 +704,6 @@ module OodApi
       value.valid_encoding? ? value : value.scrub('?')
     end
 
-    # Returns nil when absent (meaning "no caller-supplied limit"), otherwise a
-    # positive Integer. Halts 400 on anything else.
     # `native` reaches the route as whatever JSON the caller sent. Calling
     # join on a String or Hash raised, so a client error surfaced as a 500 —
     # and Handlers::Jobs.validate_native_paths! tolerates a non-Array, so the
@@ -694,6 +713,8 @@ module OodApi
       value.is_a?(Array) ? value.join(' ') : value
     end
 
+    # Returns nil when absent (meaning "no caller-supplied limit"), otherwise a
+    # positive Integer. Halts 400 on anything else.
     def parse_max_size(raw)
       return nil if raw.nil? || raw.to_s.empty?
 
@@ -713,6 +734,14 @@ module OodApi
 
     def halt_error(status_code, error_type, message)
       halt status_code, { error: error_type, message: message }.to_json
+    end
+
+    # Bounded read. The Content-Length filter cannot see a chunked body, which
+    # carries no length, so the read itself has to stop at the limit.
+    def read_body!(limit = Handlers::Files::MAX_FILE_WRITE)
+      raw = request.body.read(limit + 1) || ''
+      halt_error(413, 'payload_too_large', "Request body too large (max #{limit} bytes)") if raw.bytesize > limit
+      raw
     end
 
     # JSON.parse happily returns an Array, String, Integer or nil for a
@@ -767,10 +796,6 @@ module OodApi
       halt_error(400, 'bad_request', message)
     end
 
-    def halt_not_found(message)
-      halt_error(404, 'not_found', message)
-    end
-
     def halt_unauthorized
       halt_error(401, 'unauthorized', 'Invalid or missing API token')
     end
@@ -781,10 +806,6 @@ module OodApi
 
     def halt_service_unavailable(message)
       halt_error(503, 'service_unavailable', message)
-    end
-
-    def halt_forbidden(message)
-      halt_error(403, 'forbidden', message)
     end
 
     def file_json(path)

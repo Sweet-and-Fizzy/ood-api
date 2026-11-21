@@ -25,13 +25,27 @@ module Handlers
       emit(**fields)
     end
 
+    # Per-request fields added to every record, set once by the auth layer:
+    # which app token made the request. Without it, per-client revocation has
+    # no per-client attribution. Thread-local because Passenger may serve
+    # requests on several threads.
+    CONTEXT_KEY = :ood_api_audit_context
+
+    def self.context=(fields)
+      Thread.current[CONTEXT_KEY] = fields
+    end
+
+    def self.context
+      Thread.current[CONTEXT_KEY] || {}
+    end
+
     # Backstop. `quote` is written not to raise, but this is on every request
     # path and a logging failure must never become the caller's failure.
     # Exception rather than StandardError so nothing at all escapes, with an
     # unconditional re-raise for Interrupt/SystemExit, which must not be
     # swallowed.
     def self.emit(**fields)
-      parts = fields.filter_map do |k, v|
+      parts = context.merge(fields).filter_map do |k, v|
         next if v.nil?
 
         "#{k}=#{quote(v)}"

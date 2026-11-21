@@ -34,11 +34,31 @@ authenticate without a browser. Add to `/etc/ood/config/ood_portal.yml`:
 ```yaml
 auth:
   - "AuthType auth-openidc"
-  - "Require valid-user"
+  - "Require claim aud:YOUR_OOD_CLIENT_ID"
 oidc_settings:
   OIDCOAuthVerifyJwksUri: "https://your-idp.example.edu/certs"
   OIDCOAuthRemoteUserClaim: "preferred_username"
 ```
+
+**The `Require claim aud:` line is not optional.** Apache checks a bearer
+token's signature and expiry and nothing else. With `Require valid-user`, a
+token your IdP issued to *any* client, for any other service, logs its owner
+in to the whole portal, Shell included. Requiring the audience limits bearer
+access to tokens issued for Open OnDemand's own client. Use the client ID from
+`oidc_client_id` in `ood_portal.yml` (with the bundled Dex it is the portal's
+server name). Browser login is unaffected, because the session's ID token
+carries the same audience.
+
+**Keycloak sites use `Require claim azp:YOUR_OOD_CLIENT_ID` instead.** A
+Keycloak access token carries `aud: account` and names the client in `azp`, so
+the `aud:` line above refuses every bearer token, the portal's own included.
+Do not require `aud:account`: it accepts tokens from every client in the realm
+and breaks browser login. Checked on Keycloak 26.0.8 with Open OnDemand 4.2.5:
+with the `azp:` line the portal client's token is accepted, another client's
+token gets a 401, and browser login still works.
+
+Whatever the IdP, check the result by presenting a token issued to another
+client: it must get a 401.
 
 ```bash
 sudo /opt/ood/ood-portal-generator/sbin/update_ood_portal
@@ -82,8 +102,9 @@ ln -s /var/www/ood/apps/sys/ood-api/dashboard-plugin /etc/ood/config/plugins/ood
 ```
 
 Every request to `/api/v1/*` and `/mcp` must then carry `X-OOD-API-Token:
-<token>` **in addition to** whatever Apache accepts — the token is a second
-factor, never a credential on its own. Its own header is what lets it coexist
+<token>` **in addition to** whatever Apache accepts. The token is never a
+credential on its own, and it can be revoked per client. It is not an
+independent second factor, since anyone signed in as the user can create one. Its own header is what lets it coexist
 with the JWT in `Authorization`. Restart the PUN; token management appears at
 `/settings/api_tokens`.
 
@@ -107,7 +128,7 @@ Tokens can also be created manually:
 mkdir -p ~/.config/ondemand
 TOKEN=$(python -c "import secrets; print(secrets.token_hex(32))")
 cat > ~/.config/ondemand/tokens.json << EOF
-[{"id": "$(uuidgen)", "name": "My Token", "token": "$TOKEN", "created_at": "$(date -Iseconds)"}]
+[{"id": "$(uuidgen)", "name": "My Token", "token_digest": "$(printf %s "$TOKEN" | sha256sum | cut -d' ' -f1)", "created_at": "$(date -Iseconds)"}]
 EOF
 chmod 600 ~/.config/ondemand/tokens.json
 echo "Your token: $TOKEN"
@@ -171,6 +192,46 @@ page** titled "App has not been initialized" means step 3 has not been done.
 
 ## Configuration
 
+### What to enable
+
+A fresh install is read-only. It can list clusters, accounts, queues, jobs and
+files, read file contents, and read the allowed environment variables. Turn on
+more in `/etc/ood/config/ondemand.d/ood_api.yml`:
+
+```yaml
+ood_api:
+  capabilities: [read, jobs, files_write]
+  disable: [cancel_job]
+  mcp: true
+  rest: true
+```
+
+| Group | Tools |
+|-------|-------|
+| `read` (always on) | `list_clusters`, `get_cluster`, `list_accounts`, `list_queues`, `get_cluster_info`, `list_jobs`, `get_job`, `list_historic_jobs`, `list_files`, `read_file`, `list_env`, `get_env` |
+| `jobs` | `submit_job`, `cancel_job`, `hold_job`, `release_job` |
+| `files_write` | `write_file`, `create_directory`, `delete_file` |
+
+`disable` removes single tools, including read tools, from whatever the groups
+turned on. The tool name covers both surfaces: `delete_file` removes the MCP
+tool and makes `DELETE /api/v1/files` return 403. Over REST, creating an empty
+file with `POST /api/v1/files?touch=true` counts as `write_file`.
+
+`jobs` deserves thought before you enable it. A job script is code that runs
+as the user, so an assistant that can submit jobs can do anything the user
+can. See [SECURITY.md](../SECURITY.md).
+
+The same settings can be given as environment variables on the PUN, which
+take precedence; see the table below. A name the app does not recognise makes
+it fall back to read-only and log the problem, so check the PUN log after a
+change. Each start logs one line with the result:
+
+```
+ood_api_audit op=capabilities status=ok rest=true mcp=true tools=get_cluster,get_cluster_info,...
+```
+
+Restart the PUN after changing any of these.
+
 ### Authentication
 
 | Setting | Location | Description |
@@ -199,6 +260,12 @@ page** titled "App has not been initialized" means step 3 has not been done.
 | `OOD_API_MAX_CONTEXT_BYTES` | No | `262144` (256 KB) | Per-file cap on agent context fragments. A larger file is replaced with a note rather than served. |
 | `OOD_API_MAX_CONTEXT_TOTAL_BYTES` | No | `1048576` (1 MB) | Cap across all context fragments together. The per-file cap alone bounds nothing when there are many files. |
 | `OOD_API_ALLOW_NATIVE` | No | unset | Set to `true` to accept `options.native` on job submission. It is raw scheduler argv and can override the paths this API validates, so it is off by default — see [the note in the API guide](api.md#submit-job). |
+| `OOD_API_CAPABILITIES` | No | `read` | Comma-separated groups to enable: `read`, `jobs`, `files_write`, or `all`. See [what to enable](#what-to-enable). |
+| `OOD_API_DISABLE` | No | unset | Comma-separated tool names to remove, for example `cancel_job,list_historic_jobs`. |
+| `OOD_API_REST` | No | `true` | Set to `false` to switch off `/api/v1`. |
+| `OOD_API_MCP` | No | `true` | Set to `false` to switch off `/mcp`. |
+| `OOD_API_ALLOWED_ORIGINS` | No | unset | Comma-separated origins (for example `https://portal.example.edu`) whose browser requests are accepted in addition to the portal's own. Only needed if a front end on another origin calls this API. |
+| `OOD_ALLOWLIST_PATH` | No | unset | Open OnDemand's own file allowlist. It is read from the PUN environment, from the Dashboard's env file (`/etc/ood/config/apps/dashboard/env`), and from `allowlist_path` in `/etc/ood/config/ondemand.d`, in that order. When set, file access through this API is confined to the same colon-separated paths as the Dashboard file browser. Unset, it is confined to the home and temp directories. |
 
 ## Troubleshooting
 

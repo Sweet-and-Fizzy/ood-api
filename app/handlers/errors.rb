@@ -1,22 +1,26 @@
 # frozen_string_literal: true
 
 module Handlers
-  class NotFoundError < StandardError; end
-  class ValidationError < StandardError; end
-  class ForbiddenError < StandardError; end
+  # Parent of every error a handler raises on purpose, so callers can rescue
+  # the family without listing each member.
+  class Error < StandardError; end
+
+  class NotFoundError < Error; end
+  class ValidationError < Error; end
+  class ForbiddenError < Error; end
   # The adapter ran and the scheduler answered, but rejected the request — a
   # bad queue name, an account the user cannot charge, a resource request the
   # partition cannot satisfy. The caller can fix these by changing the request.
-  class AdapterError < StandardError; end
+  class AdapterError < Error; end
 
   # The scheduler could not be reached at all. Nothing about the request is
   # wrong, so it is not the caller's to fix — retrying later may work.
   # Separate from AdapterError so routes can map it to 503 rather than 422.
   # It subclasses AdapterError, so a route rescuing both must list this first.
   class SchedulerUnavailableError < AdapterError; end
-  class NotSupportedError < StandardError; end
-  class PayloadTooLargeError < StandardError; end
-  class StorageError < StandardError; end
+  class NotSupportedError < Error; end
+  class PayloadTooLargeError < Error; end
+  class StorageError < Error; end
 
   # Wraps every call into an ood_core job adapter.
   #

@@ -96,11 +96,11 @@ class McpServerTest < Minitest::Test
     'read_file'          => [true,  false, true],
     'list_env'           => [true,  false, true],
     'get_env'            => [true,  false, true],
-    'submit_job'         => [false, false, false],
+    'submit_job'         => [false, true, false],
     'hold_job'           => [false, false, true],
     'release_job'        => [false, false, true],
     'create_directory'   => [false, false, true],
-    'write_file'         => [false, true,  false],
+    'write_file'         => [false, true, false],
     'cancel_job'         => [false, true,  true],
     'delete_file'        => [false, true,  true]
   }.freeze
@@ -120,7 +120,9 @@ class McpServerTest < Minitest::Test
       assert_equal read_only, hints['readOnlyHint'], "#{tool['name']} readOnlyHint"
       assert_equal destructive, hints['destructiveHint'], "#{tool['name']} destructiveHint"
       assert_equal idempotent, hints['idempotentHint'], "#{tool['name']} idempotentHint"
-      assert_equal false, hints['openWorldHint'], "#{tool['name']} openWorldHint"
+      # A job runs on a compute node with network access; nothing else here
+      # reaches beyond the cluster's own filesystem and scheduler.
+      assert_equal tool['name'] == 'submit_job', hints['openWorldHint'], "#{tool['name']} openWorldHint"
     end
   end
 
@@ -141,6 +143,25 @@ class McpServerTest < Minitest::Test
         JSON.generate(jsonrpc: '2.0', id: 1, method: 'tools/list', params: {})
       )
     }.merge(headers)
+  end
+
+  def test_mcp_refuses_cross_site_requests
+    status, = OodApi.mcp_rack_app.call(mcp_env('HTTP_HOST'   => 'ood.example.edu',
+                                               'HTTP_ORIGIN' => 'https://evil.example'))
+    assert_equal 403, status
+
+    status, = OodApi.mcp_rack_app.call(mcp_env('HTTP_HOST'   => 'ood.example.edu',
+                                               'HTTP_ORIGIN' => 'https://ood.example.edu'))
+    assert_equal 200, status
+  end
+
+  def test_mcp_body_is_bounded_before_it_is_parsed
+    big = StringIO.new('a' * (OodApi.max_request_bytes + 10))
+    JSON.expects(:parse).never
+
+    status, = OodApi.mcp_rack_app.call(mcp_env('rack.input' => big))
+
+    assert_equal 413, status
   end
 
   def test_mcp_requires_app_token_when_enabled

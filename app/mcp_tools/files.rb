@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
-require 'mcp'
-require_relative '../handlers/audit'
+require_relative 'base'
 require_relative '../handlers/files'
 
 module OodApi
@@ -23,7 +22,7 @@ module OodApi
       end
     end
 
-    class ListFilesTool < MCP::Tool
+    class ListFilesTool < Base
       tool_name 'list_files'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'List contents of a directory or get file metadata'
@@ -35,9 +34,8 @@ module OodApi
         required:   ['path']
       })
 
-      def self.call(server_context:, path:, **_params)
-        user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
-        result = Handlers::Audit.log(op: 'list_files', user: user, source: 'mcp', path: path) do
+      def self.run(path:, **_params)
+        result = audited('list_files', path: path) do
           Handlers::Files.list(path: path)
         end
         if result.is_a?(Array)
@@ -49,17 +47,13 @@ module OodApi
         else
           text = "File: #{result.basename}\nPath: #{result}"
         end
-        MCP::Tool::Response.new([{ type: 'text', text: text }])
-      rescue Handlers::NotFoundError, Handlers::ValidationError,
-             Handlers::ForbiddenError, Handlers::PayloadTooLargeError,
-             Handlers::StorageError => e
-        MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
+        text_response(text)
       rescue ArgumentError => e
-        MCP::Tool::Response.new([{ type: 'text', text: "Invalid path: #{e.message}" }], error: true)
+        error_response("Invalid path: #{e.message}")
       end
     end
 
-    class ReadFileTool < MCP::Tool
+    class ReadFileTool < Base
       tool_name 'read_file'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'Read the contents of a file'
@@ -72,22 +66,17 @@ module OodApi
         required:   ['path']
       })
 
-      def self.call(server_context:, path:, max_size: nil, **_params)
-        user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
-        content = Handlers::Audit.log(op: 'read_file', user: user, source: 'mcp', path: path) do
+      def self.run(path:, max_size: nil, **_params)
+        content = audited('read_file', path: path) do
           Handlers::Files.read(path: path, max_size: max_size)
         end
-        MCP::Tool::Response.new([{ type: 'text', text: McpText.safe_text(content) }])
-      rescue Handlers::NotFoundError, Handlers::ValidationError,
-             Handlers::ForbiddenError, Handlers::PayloadTooLargeError,
-             Handlers::StorageError => e
-        MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
+        text_response(McpText.safe_text(content))
       rescue ArgumentError => e
-        MCP::Tool::Response.new([{ type: 'text', text: "Invalid path: #{e.message}" }], error: true)
+        error_response("Invalid path: #{e.message}")
       end
     end
 
-    class WriteFileTool < MCP::Tool
+    class WriteFileTool < Base
       tool_name 'write_file'
       annotations(read_only_hint: false, destructive_hint: true, idempotent_hint: false, open_world_hint: false)
       description 'Write content to a file (creates or overwrites)'
@@ -101,23 +90,18 @@ module OodApi
         required:   ['path', 'content']
       })
 
-      def self.call(server_context:, path:, content:, append: false, **_params)
-        user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
-        result = Handlers::Audit.log(op: 'write_file', user: user, source: 'mcp', path: path) do
+      def self.run(path:, content:, append: false, **_params)
+        result = audited('write_file', path: path) do
           Handlers::Files.write(path: path, content: content, append: append)
         end
         text = "File written: #{result}"
-        MCP::Tool::Response.new([{ type: 'text', text: text }])
-      rescue Handlers::NotFoundError, Handlers::ValidationError,
-             Handlers::ForbiddenError, Handlers::PayloadTooLargeError,
-             Handlers::StorageError => e
-        MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
+        text_response(text)
       rescue ArgumentError => e
-        MCP::Tool::Response.new([{ type: 'text', text: "Invalid path: #{e.message}" }], error: true)
+        error_response("Invalid path: #{e.message}")
       end
     end
 
-    class CreateDirectoryTool < MCP::Tool
+    class CreateDirectoryTool < Base
       tool_name 'create_directory'
       annotations(read_only_hint: false, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
       description 'Create a new directory'
@@ -129,22 +113,18 @@ module OodApi
         required:   ['path']
       })
 
-      def self.call(server_context:, path:, **_params)
-        user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
-        result = Handlers::Audit.log(op: 'create_directory', user: user, source: 'mcp', path: path) do
+      def self.run(path:, **_params)
+        result = audited('create_directory', path: path) do
           Handlers::Files.mkdir(path: path)
         end
         text = "Directory created: #{result}"
-        MCP::Tool::Response.new([{ type: 'text', text: text }])
-      rescue Handlers::NotFoundError, Handlers::ValidationError,
-             Handlers::ForbiddenError, Handlers::StorageError => e
-        MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
+        text_response(text)
       rescue ArgumentError => e
-        MCP::Tool::Response.new([{ type: 'text', text: "Invalid path: #{e.message}" }], error: true)
+        error_response("Invalid path: #{e.message}")
       end
     end
 
-    class DeleteFileTool < MCP::Tool
+    class DeleteFileTool < Base
       tool_name 'delete_file'
       annotations(read_only_hint: false, destructive_hint: true, idempotent_hint: true, open_world_hint: false)
       description 'Delete a file or directory'
@@ -157,18 +137,14 @@ module OodApi
         required:   ['path']
       })
 
-      def self.call(server_context:, path:, recursive: false, **_params)
-        user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
-        result = Handlers::Audit.log(op: 'delete_file', user: user, source: 'mcp', path: path) do
+      def self.run(path:, recursive: false, **_params)
+        result = audited('delete_file', path: path) do
           Handlers::Files.delete(path: path, recursive: recursive)
         end
         text = "Deleted: #{result[:path]}"
-        MCP::Tool::Response.new([{ type: 'text', text: text }])
-      rescue Handlers::NotFoundError, Handlers::ValidationError,
-             Handlers::ForbiddenError, Handlers::StorageError => e
-        MCP::Tool::Response.new([{ type: 'text', text: e.message }], error: true)
+        text_response(text)
       rescue ArgumentError => e
-        MCP::Tool::Response.new([{ type: 'text', text: "Invalid path: #{e.message}" }], error: true)
+        error_response("Invalid path: #{e.message}")
       end
     end
   end
