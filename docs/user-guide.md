@@ -1,4 +1,4 @@
-<!-- Site maintainers: this guide is based on ood-api's docs/user-guide.md template (v0.4.2). Note any local customizations here so future template updates don't overwrite them. -->
+<!-- Site maintainers: this guide is based on ood-api's docs/user-guide.md template (v0.5.0). Note any local customizations here so future template updates don't overwrite them. -->
 
 # OOD API — User Guide
 
@@ -301,7 +301,7 @@ refused unless your administrator has set `OOD_API_ALLOW_NATIVE=true`.
 > and `options` (`script.content`, `options.job_name`). If you are switching
 > between the two, see [the REST reference](api.md#submit-job).
 
-**Files** (paths must be absolute and within your allowed roots. If your site
+**Files** (paths must be absolute, or start with `~`, and be within your allowed roots. If your site
 restricts the Open OnDemand file browser, the same directories apply here.
 Otherwise the roots are your home directory, `/tmp`, and the directory
 `$TMPDIR` points at, which on a compute node is often per-job scratch)

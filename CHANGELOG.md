@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential stores of common cloud, cluster and registry clients. A client
   that reads or writes any of these through the API will now get a 403.
 - Application tokens are stored as SHA-256 digests. Existing tokens keep
-  working and are converted the first time each is used. A `tokens.json`
+  working and are all converted the first time any one of them is used. A `tokens.json`
   written by hand should now carry `token_digest` in place of `token`.
 - State-changing REST requests and all MCP requests are refused when the
   browser reports another site as their source (`Origin` or `Sec-Fetch-Site`).
@@ -102,8 +102,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `{"status":"ok"}`. It answers 503 when the settings are not understood.
 - The app reads its own env file, `/etc/ood/config/apps/ood-api/env`.
   `app_tokens` can be set under `ood_api` as well as in
-  `OOD_API_APP_TOKENS`. An environment variable set to nothing counts as
-  unset.
+  `OOD_API_APP_TOKENS`, and that variable now accepts `1`, `yes` and `on` as
+  well as `true`; a site that had set one of those and was not requiring
+  tokens will be after the upgrade. A setting given as an empty environment
+  variable counts as unset, and a size limit left empty or set to zero means
+  the default.
 - The Dashboard's own restrictions apply here. With `download_enabled: false`
   `read_file` is off, with `upload_enabled: false` `write_file` is off, with
   no Files app installed there are no file tools, and a cluster marked
@@ -137,10 +140,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   they carry; the token id used to come first when application tokens were
   on.
 - An address the app does not serve returns `not_found`, not `bad_request`.
+- The responses to a write, a touch and a directory creation describe the
+  path itself, so through a symlink they describe the link.
+- A symlink that belongs to another user is not followed when it is the
+  last part of the path.
+- Hold and release look the job up afterwards to report its real status,
+  and report a failure of that lookup.
+- A tool that is switched off is refused after the content-type, size and
+  origin checks, so a malformed request to it gets those errors first.
+- When `/mcp` is switched off or the settings are not understood it answers
+  plain JSON with 404 or 503, not a JSON-RPC error.
+- `max_size` given as a string of digits is accepted on a file read, and
+  `content` that is not a string is a 400.
+- The Dashboard token page reads the token settings from the app's env file
+  as well as from `ondemand.d`.
 - An empty `workdir` on job submission means the default directory.
 - Filesystem errors that used to surface as a 500 are reported: a read-only
   filesystem and "operation not permitted" as 403, a busy file as 400, and
-  I/O errors and stale handles as a storage error. Error messages no longer
+  I/O errors and stale handles as 503. Error messages no longer
   include internal paths.
 - `ostruct` is now a declared dependency. `ood_core` requires it, and Ruby
   4.0 no longer ships it by default, so the app did not load there.

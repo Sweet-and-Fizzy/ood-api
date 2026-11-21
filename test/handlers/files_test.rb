@@ -1243,9 +1243,9 @@ class HandlersFilesTest < Minitest::Test
   # Three files in a shared directory used to make this app refuse every
   # path under it, for every user. Git itself ignores a repository in a
   # directory that belongs to someone else.
-  def test_repository_markers_in_a_directory_owned_by_someone_else_do_not_count
+  def test_repository_markers_in_a_directory_anyone_can_write_to_do_not_count
     ['HEAD', 'objects', 'refs'].each { |name| FileUtils.touch(File.join(@test_dir, name)) }
-    Process.stubs(:euid).returns(Process.uid + 1)
+    File.chmod(0o1777, @test_dir)
 
     Handlers::Files.write(path: File.join(@test_dir, 'notes.txt'), content: 'ok')
     assert_equal 'ok', Handlers::Files.read(path: File.join(@test_dir, 'notes.txt'))
@@ -1287,5 +1287,18 @@ class HandlersFilesTest < Minitest::Test
   # R reads it before .Rprofile, and it can name another file to run.
   def test_the_r_environment_file_is_denied
     assert_denied('.Renviron')
+  end
+
+  # Nothing has been touched when the path rules refuse the request.
+  def test_a_recursive_delete_refused_by_the_rules_does_not_claim_partial_removal
+    with_fake_home do |home|
+      FileUtils.mkdir_p(File.join(home, '.config', 'git'))
+
+      err = assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.delete(path: File.join(home, '.config'), recursive: true)
+      end
+
+      refute_match(/may already have been removed/, err.message)
+    end
   end
 end

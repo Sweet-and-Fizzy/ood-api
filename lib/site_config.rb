@@ -3,6 +3,7 @@
 require 'erb'
 require 'pathname'
 require 'yaml'
+require_relative 'log'
 
 module OodApi
   # Reads the Open OnDemand site settings this app shares with the Dashboard,
@@ -14,14 +15,12 @@ module OodApi
     # The settings this app reads from its block in ondemand.d.
     OWN_NAMES = [:capabilities, :disable, :rest, :mcp, :app_tokens, :token_max_days, :token_allow_never].freeze
     # A file that mentions one of these holds settings this app acts on.
-    OWN_SETTINGS = /ood[_-]?api|allowlist[_-]?path/i
-    # This app's block used as a key, however it is spelt or nested.
-    OWN_KEY = /(?:^|[\s{,])["']?ood[_-]?api["']?\s*:/i
+    OWN_SETTINGS = /(?:^|[\s{,])["']?(?:ood[_-]?api|allowlist[_-]?path)["']?\s*:/i
     # Every variable the app reads. Any other OOD_API_ name is a mistake.
     KNOWN_VARIABLES = ['ALLOW_NATIVE', 'ALLOWED_ORIGINS', 'APP_TOKENS', 'CAPABILITIES', 'CONTEXT_PATH', 'DISABLE',
                        'ENV_ALLOWLIST', 'ENV_FILE', 'MAX_CONTEXT_BYTES', 'MAX_CONTEXT_TOTAL_BYTES', 'MAX_FILE_READ',
                        'MAX_FILE_WRITE', 'MCP', 'REST', 'SYS_APPS', 'TOKEN_ALLOW_NEVER',
-                       'TOKEN_MAX_DAYS'].map { |name| "OOD_API_#{name}" }.freeze
+                       'TOKEN_MAX_DAYS', 'DEV_BIND'].map { |name| "OOD_API_#{name}" }.freeze
 
     module_function
 
@@ -88,6 +87,15 @@ module OodApi
       settings.is_a?(Hash) ? settings[key] : nil
     end
 
+    # A size or count from the environment. Empty, zero or not a number
+    # means the default, so a variable left blank cannot set a limit of 0.
+    def limit(env_name, default)
+      value = Integer(ENV.fetch(env_name, '').strip, 10)
+      value.positive? ? value : default
+    rescue ArgumentError
+      default
+    end
+
     # One of the Dashboard's own on/off settings, read from where the
     # Dashboard reads it: `OOD_<NAME>` in the environment or the Dashboard's
     # env file, then the key in ondemand.d. They default to on. A value that
@@ -116,13 +124,19 @@ module OodApi
     def load_app_env!(file)
       file = Pathname.new(file)
       @env_problems = []
-      return unless file.exist?
+      begin
+        file.stat
+      rescue Errno::ENOENT, Errno::ENOTDIR
+        return
+      end
       raise ArgumentError, 'not owned by root, or writable by everyone' unless trusted?(file)
 
-      parse_env(file.read(encoding: 'UTF-8')).each { |key, value| ENV[key] ||= value }
+      parse_env(file.read(encoding: 'UTF-8')).each do |key, value|
+        ENV[key] = value if ENV.fetch(key, '').strip.empty?
+      end
     rescue StandardError => e
       @env_problems = ["#{file} could not be used (#{e.message.scrub[0, 80]})"]
-      warn "ood_api_audit op=site_config status=error file=#{file.basename} error=#{e.class}"
+      OodApi::Log.line "op=site_config status=error file=#{file.basename} error=#{e.class}"
     end
 
     # Run when the files on disk change, with the new settings in place.
@@ -176,7 +190,7 @@ module OodApi
 
       parse_env(file.read(encoding: 'UTF-8'))
     rescue StandardError => e
-      warn "ood_api_audit op=site_config status=error error=#{e.class}"
+      OodApi::Log.line "op=site_config status=error error=#{e.class}"
       {}
     end
 
@@ -246,14 +260,26 @@ module OodApi
     # error: YAML keeps only the first document and the last of two equal
     # keys, and a block that is misspelt or nested is just another key.
     def own_settings_fault(content, parsed)
-      uncommented = content.lines.reject { |line| line.lstrip.start_with?('#') }.join
-      return nil unless uncommented.match?(OWN_KEY)
-
-      stream = Psych.parse_stream(content)
-      return 'holds more than one YAML document' if stream.children.size > 1
+      documents = Psych.parse_stream(content).children.select(&:root)
+      return nil unless documents.any? { |document| own_key?(document.root) }
+      return 'holds more than one YAML document' if documents.size > 1
       return 'names ood_api, but not as a top-level setting' unless parsed.is_a?(Hash) && parsed.key?(:ood_api)
 
-      repeated_setting(stream.children.first.root)
+      repeated_setting(documents.first.root)
+    end
+
+    # Whether this app's block is used as a key anywhere in the document,
+    # however it is spelt or nested. Looked for in the parsed tree, so a
+    # comment or a value that merely contains the name does not count.
+    def own_key?(node)
+      return false unless node.respond_to?(:children) && node.children
+
+      keys_of(node).any? { |key| key.match?(/\Aood[_-]?api\z/i) } || node.children.any? { |child| own_key?(child) }
+    end
+
+    # The text with comments removed, whole-line and trailing.
+    def uncommented(text)
+      text.lines.map { |line| line.sub(/(^|\s)#.*/, '') }.join("\n")
     end
 
     # A file named for this app whose settings were written without the
@@ -300,14 +326,14 @@ module OodApi
     # @return [nil]
     def skipped(file, reason, ours: holds_own_settings?(file))
       @problems << "#{file.basename} #{reason}" if ours
-      warn "ood_api_audit op=site_config status=#{ours ? 'error' : 'skipped'} " \
-           "file=#{file.basename} error=\"#{reason}\""
+      OodApi::Log.line "op=site_config status=#{ours ? 'error' : 'skipped'} " \
+                       "file=#{file.basename} error=\"#{reason}\""
       nil
     end
 
     # A file that cannot be read at all is assumed to.
     def holds_own_settings?(file)
-      file.binread.scrub.lines.reject { |line| line.lstrip.start_with?('#') }.join.match?(OWN_SETTINGS)
+      uncommented(file.binread.scrub).match?(OWN_SETTINGS)
     rescue SystemCallError
       true
     end

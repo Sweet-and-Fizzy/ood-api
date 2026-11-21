@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative 'log'
+
 require 'json'
 require 'digest'
 require 'securerandom'
@@ -121,7 +123,7 @@ module OodApi
           save_tokens(tokens)
         end
       rescue SystemCallError, IOError => e
-        warn "ood_api_audit op=token_touch status=error error=#{e.class}"
+        OodApi::Log.line "op=token_touch status=error error=#{e.class}"
         nil
       end
 
@@ -201,7 +203,7 @@ module OodApi
         # Failing open to [] means "you have no tokens", which 401s the user
         # rather than erroring. Without this line there is no trace at all when
         # someone reports that their tokens vanished.
-        warn "ood_api_audit op=token_load status=corrupt error=#{e.class}"
+        OodApi::Log.line "op=token_load status=corrupt error=#{e.class}"
         []
       end
 

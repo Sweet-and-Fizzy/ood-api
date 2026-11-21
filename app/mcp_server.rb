@@ -43,7 +43,7 @@ MCP.configure do |config|
         )
       end
     rescue StandardError => e
-      warn "ood_api_audit op=mcp_instrumentation_failed status=error error=#{e.class}"
+      OodApi::Log.line "op=mcp_instrumentation_failed status=error error=#{e.class}"
     end
     result
   end

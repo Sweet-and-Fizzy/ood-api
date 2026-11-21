@@ -353,6 +353,20 @@ class PinnedFilesTest < Minitest::Test
     end
   end
 
+  def test_recursive_delete_of_an_unreadable_directory_with_contents_is_a_permission_error
+    skip 'root reads everything' if Process.uid.zero?
+    Dir.stub(:home, @home) do
+      tree = File.join(@home, 'tree2')
+      FileUtils.mkdir_p(File.join(tree, 'locked'))
+      File.write(File.join(tree, 'locked', 'f'), 'x')
+      File.chmod(0o000, File.join(tree, 'locked'))
+
+      assert_raises(Handlers::ForbiddenError) { files.delete(path: tree, recursive: true) }
+    ensure
+      File.chmod(0o700, File.join(tree, 'locked'))
+    end
+  end
+
   def test_out_of_space_is_a_storage_error
     Dir.stub(:home, @home) do
       Dir.stubs(:mkdir).raises(Errno::EDQUOT)

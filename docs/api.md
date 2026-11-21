@@ -137,7 +137,7 @@ check for `200` with `"status":"ok"` in the body, not merely a non-error.
 
 #### List Clusters
 
-Returns all available HPC clusters that allow job submission.
+Returns the HPC clusters that allow job submission. A cluster the site marks `hidden` is left out and cannot be used by id either.
 
 ```
 GET /api/v1/clusters
@@ -641,7 +641,7 @@ and write, and return `403 forbidden`:
 Symlinks and hardlinks into these paths are refused too, and a recursive delete
 of a parent directory is refused if one of the home paths above lies beneath
 it. A git repository inside a deleted tree is removed with it. A symlink that
-belongs to another user is not followed. The user can
+belongs to another user is not followed when it is the last part of the path. The user can
 still edit these files by other means; the restriction exists so that an agent
 acting on untrusted input cannot establish access that outlives the session.
 
@@ -696,7 +696,8 @@ GET /api/v1/files?path=:path
 ```
 
 Every entry also carries `"symlink": true` or `false`, and `"target"`, which
-is `null` except for a symlink. A symlink is described as the link itself:
+is `null` except for a symlink. The responses to a write, a touch and a
+directory creation describe the path in the same way. A symlink is described as the link itself:
 `directory` is `false`, the size, owner and time are the link's own, and
 `target` is the path written in the link. Nothing is reported about the thing
 at that path. List or read the link's path to follow
@@ -1272,7 +1273,9 @@ The API uses standard HTTP status codes:
 | `unsupported_media_type` | 415 | A `POST`/`PUT`/`PATCH` did not send `Content-Type: application/json` (`DELETE` is exempt) |
 | `unprocessable_entity` | 422 | Request understood but could not be processed |
 | `not_implemented` | 501 | The site's scheduler adapter does not support this operation |
-| `service_unavailable` | 503 | Scheduler communication error |
+| `service_unavailable` | 503 | The scheduler could not be reached, or the filesystem reported an I/O error or a stale handle |
+| `misconfigured` | 503 | The site's settings could not be understood, so the API is switched off until they are fixed |
+| `internal_error` | 500 | Something unexpected failed; the PUN log has an `op=unhandled_error` line |
 | `insufficient_storage` | 507 | The write could not be stored: no space left on device, disk quota exceeded, or file too large for the filesystem |
 
 ## Examples
@@ -1403,7 +1406,7 @@ done
 
 ## Application tokens
 
-For sites using Google OIDC or other IdPs that don't publish a JWKS endpoint with verifiable access tokens, ood-api can manage its own tokens. Enable this mode by setting an environment variable on the PUN (e.g. via `passenger_env_var` in your `pun.conf.erb`):
+For sites using Google OIDC or other IdPs that don't publish a JWKS endpoint with verifiable access tokens, ood-api can manage its own tokens. Enable this mode with `app_tokens: true` under `ood_api`, or with the environment variable below; [the install guide](installation.md#where-environment-variables-go) says where variables go:
 
 ```
 OOD_API_APP_TOKENS=true
@@ -1424,8 +1427,10 @@ JWT, leaving nowhere for a second credential. Giving app tokens their own
 header lets a client satisfy both layers on one request, and is what allows MCP
 clients to use app tokens at all.
 
-**Application tokens do not replace Apache's auth**; they are a second
-factor on top of it. A request must still get past Apache, either with an OIDC
+**Application tokens do not replace Apache's auth**; they are an additional
+credential on top of it, one per client and revocable on its own. They are
+not an independent second factor, since anyone signed in as the user can
+create one. A request must still get past Apache, either with an OIDC
 **session cookie** (OOD's default `AuthType openid-connect`) or with a bearer
 JWT (`AuthType auth-openidc`). A request carrying only `X-OOD-API-Token` and
 nothing Apache accepts is rejected — or 302-redirected to your IdP — before it
@@ -1482,7 +1487,7 @@ A client that cannot set a custom header cannot use app tokens; such sites shoul
 
 ### Session lifetime
 
-When Apache is gating with a **session cookie**, that cookie is valid for the configured OIDC session lifetime — by default 8 hours inactivity / 8 hours max (see `OIDCSessionInactivityTimeout` and `OIDCSessionMaxDuration` in `ood_portal.yml`). Refresh it by logging in again when it expires. The app token itself does not expire; it is valid until revoked.
+When Apache is gating with a **session cookie**, that cookie is valid for the configured OIDC session lifetime — by default 8 hours inactivity / 8 hours max (see `OIDCSessionInactivityTimeout` and `OIDCSessionMaxDuration` in `ood_portal.yml`). Refresh it by logging in again when it expires. The app token has its own expiry, set when it is created and shown on the token page.
 
 For unattended CI or long-running jobs, prefer a JWT alone, which does not depend on a browser session.
 

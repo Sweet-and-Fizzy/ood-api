@@ -438,6 +438,64 @@ class CapabilitiesTest < Minitest::Test
     assert_match(/op=write_file user=\S+ source=mcp status=disabled/, err)
   end
 
+  # None of these is about this app's settings, so none may switch it off.
+  def test_other_content_that_mentions_the_app_changes_nothing
+    [
+      "dashboard_title: x # ood_api: see the other file\n",
+      "announcement: \"ood-api: docs are at example.edu\"\n",
+      "pinned_apps:\n  - sys/ood-api\n---\n",
+      "nav_bar:\n  - title: \"ood_api: tools\"\n    url: /pun/sys/ood-api\n"
+    ].each do |content|
+      File.write(File.join(@dir, 'site.yml'), content)
+      OodApi::SiteConfig.reset!
+
+      assert_empty caps.problems, content.inspect
+      assert caps.rest?, content.inspect
+    end
+  end
+
+  def test_a_broken_file_that_only_lists_the_app_is_skipped_not_a_problem
+    File.write(File.join(@dir, 'nav.yml'), "pinned_apps:\n  - sys/ood-api\n  - <%= Configuration.nope %>\n")
+
+    assert_empty caps.problems
+  end
+
+  def test_a_query_string_that_cannot_be_parsed_is_a_bad_request
+    get '/health', {}, { 'QUERY_STRING' => 'path=/tmp/100%' }
+    assert_equal 400, last_response.status
+    get '/api/v1/clusters', {}, { 'QUERY_STRING' => 'a=1&a[b]=2' }
+    assert_equal 400, last_response.status
+    assert_equal 'bad_request', JSON.parse(last_response.body)['error']
+  end
+
+  def test_a_surface_that_is_off_says_so
+    ENV['OOD_API_REST'] = 'false'
+
+    get '/api/v1/clusters'
+
+    assert_equal 404, last_response.status
+    assert_match(/REST API is not enabled/, JSON.parse(last_response.body)['message'])
+  end
+
+  def test_the_variable_bin_dev_reads_is_known
+    ENV['OOD_API_DEV_BIND'] = '0.0.0.0'
+
+    assert_empty caps.problems
+  ensure
+    ENV.delete('OOD_API_DEV_BIND')
+  end
+
+  def test_a_blank_or_zero_limit_means_the_default
+    ENV['OOD_API_TEST_LIMIT'] = ''
+    assert_equal 10, OodApi::SiteConfig.limit('OOD_API_TEST_LIMIT', 10)
+    ENV['OOD_API_TEST_LIMIT'] = '0'
+    assert_equal 10, OodApi::SiteConfig.limit('OOD_API_TEST_LIMIT', 10)
+    ENV['OOD_API_TEST_LIMIT'] = ' 25 '
+    assert_equal 25, OodApi::SiteConfig.limit('OOD_API_TEST_LIMIT', 10)
+  ensure
+    ENV.delete('OOD_API_TEST_LIMIT')
+  end
+
   # The switch an admin reaches for: no PUN restart.
   def test_a_change_on_disk_is_picked_up_by_a_running_app
     assert caps.rest?

@@ -72,10 +72,10 @@ module OodApi
     # whenever the files in ondemand.d change.
     def announce
       found = problems
-      found.each { |problem| warn "ood_api_audit op=capabilities status=error error=\"#{problem.tr('"', "'")}\"" }
+      found.each { |problem| OodApi::Log.line "op=capabilities status=error error=\"#{problem.tr('"', "'")}\"" }
       note = found.empty? ? '' : ' error="settings could not be understood; nothing is served until they are fixed"'
-      warn "ood_api_audit ts=#{Time.now.utc.iso8601(3)} op=capabilities " \
-           "status=#{found.empty? ? 'ok' : 'error'} #{summary}#{note}"
+      OodApi::Log.line 'op=capabilities ' \
+                       "status=#{found.empty? ? 'ok' : 'error'} #{summary}#{note}"
     end
 
     # Settings that cannot be understood turn everything off. A name that is

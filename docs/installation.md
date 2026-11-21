@@ -203,7 +203,8 @@ MCP clients authenticate via JWT bearer tokens validated by Apache. This require
 Every limit and restriction applies to **both** surfaces — size limits, the path
 allowlist, the sensitive-path deny-list, and the environment-variable allowlist.
 MCP is not a way around them. The difference is only in how a refusal is
-reported: MCP tools return a protocol error, REST returns an HTTP status. See
+reported: an MCP tool returns a result marked as an error, REST returns an
+HTTP status. See
 [Configuration](#configuration) for the settings and
 [SECURITY.md](../SECURITY.md) for what they do.
 
@@ -279,8 +280,8 @@ can. See [SECURITY.md](../SECURITY.md).
 
 **Settings the app cannot understand turn it off.** An unknown group, tool
 or key, a switch that is neither `true` nor `false`, a misspelt `OOD_API_`
-variable, a settings or env file that is not owned by root or cannot be
-parsed, or an `ood_api` block that is nested, repeated or split across files:
+variable, a settings file that holds this app's settings and is not owned by
+root or cannot be parsed, an env file that is not owned by root, or an `ood_api` block that is nested, repeated or split across files:
 any of these makes both REST and MCP answer 503 until it is fixed. Keep the
 whole `ood_api` block in one file. A typo in `disable` would otherwise leave on the
 tool it was meant to remove, and the app has no way to tell which that was.
@@ -309,6 +310,9 @@ ood_api_audit op=capabilities status=ok rest=true mcp=true app_tokens=false tool
 ```
 
 ### Where environment variables go
+
+Switches accept `true`, `yes`, `on` or `1`, and `false`, `no`, `off` or `0`.
+Group and tool names are matched whatever their case.
 
 Every setting under `ood_api` can also be given as an environment variable
 (see the table below), and the limits can only be given that way. Put them in
@@ -379,6 +383,8 @@ the first second after a restart can get a 502 while the PUN starts.
 | `OOD_API_REST` | No | `true` | Set to `false` to switch off `/api/v1`. |
 | `OOD_API_MCP` | No | `true` | Set to `false` to switch off `/mcp`. |
 | `OOD_API_ALLOWED_ORIGINS` | No | unset | Comma-separated origins (for example `https://portal.example.edu`) whose browser requests are accepted in addition to the portal's own. Only needed if a front end on another origin calls this API. |
+| `OOD_API_ENV_FILE` | No | `/etc/ood/config/apps/ood-api/env` | Where the app's own env file is. Only needed if the app is installed under another name. |
+| `OOD_DOWNLOAD_ENABLED`, `OOD_UPLOAD_ENABLED` | No | `true` | The Dashboard's own switches, read from the PUN environment, the Dashboard's env file, or `download_enabled` and `upload_enabled` in `ondemand.d`. See [what to enable](#what-to-enable). |
 | `OOD_ALLOWLIST_PATH` | No | unset | Open OnDemand's own file allowlist. It is read from the PUN environment, from the Dashboard's env file (`/etc/ood/config/apps/dashboard/env`), and from `allowlist_path` in `/etc/ood/config/ondemand.d`, in that order. The Dashboard in Open OnDemand 4.2 and earlier does not read `allowlist_path` from `ondemand.d`, so on those releases set the allowlist in the Dashboard's env file, which confines both. When set, file access through this API is confined to the same colon-separated paths as the Dashboard file browser. Unset, it is confined to the home and temp directories. |
 
 ## Audit log

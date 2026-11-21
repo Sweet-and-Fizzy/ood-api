@@ -12,8 +12,8 @@ module Handlers
   # File operations confined to the allowed directories and kept away from the
   # denied paths inside them.
   module Files
-    MAX_FILE_READ  = ENV.fetch('OOD_API_MAX_FILE_READ', 10 * 1024 * 1024).to_i
-    MAX_FILE_WRITE = ENV.fetch('OOD_API_MAX_FILE_WRITE', 50 * 1024 * 1024).to_i
+    MAX_FILE_READ  = OodApi::SiteConfig.limit('OOD_API_MAX_FILE_READ', 10 * 1024 * 1024)
+    MAX_FILE_WRITE = OodApi::SiteConfig.limit('OOD_API_MAX_FILE_WRITE', 50 * 1024 * 1024)
 
     # Every way the filesystem says "no room", mapped to 507 rather than a bare
     # 500. EDQUOT is the one that actually bites on HPC sites — a per-user home
@@ -49,7 +49,7 @@ module Handlers
       [Errno::EEXIST]                => [ValidationError, 'Path already exists'],
       [Errno::EBUSY, Errno::ETXTBSY] => [ValidationError, 'File or directory is in use'],
       [Errno::EIO, Errno::ESTALE]    => [FilesystemError, 'The filesystem reported an error'],
-      [Errno::EMFILE, Errno::ENFILE] => [ValidationError, 'The directory tree is too deep to work on in one request']
+      [Errno::EMFILE, Errno::ENFILE] => [ValidationError, 'Too many files are open; try a smaller directory tree']
     }.freeze
 
     def self.out_of_space_message(err)
@@ -170,12 +170,19 @@ module Handlers
 
     # A recursive delete that fails part-way has already removed something,
     # and the caller needs to know that the tree is no longer whole.
+    #
+    # Only a failure of the filesystem during the walk counts. A refusal by
+    # the path rules comes before anything is touched.
     def self.remove(path, recursive)
-      translating_errors { backend.delete(path, recursive: recursive) }
-    rescue Error => e
-      raise unless recursive && path.directory? && !path.symlink?
+      backend.delete(path, recursive: recursive)
+    rescue SystemCallError => e
+      raise unless recursive
 
-      raise e.class, "#{e.message}. Part of the directory may already have been removed"
+      begin
+        translating_errors { raise e }
+      rescue Error => err
+        raise err.class, "#{err.message}. Part of the directory may already have been removed"
+      end
     end
 
     # The path every operation but delete works on: normalised, and checked
@@ -576,13 +583,13 @@ module Handlers
       markers.include?('HEAD') && (markers.include?('commondir') || (['objects', 'refs'] - markers).empty?)
     end
 
-    # Only in a directory the user owns. Git refuses to use a repository in
-    # a directory that belongs to someone else, and counting those would let
-    # one user put three files in /tmp and have this app refuse every path
-    # under it for everybody.
+    # Not in a directory anyone may write to. Counting those would let one
+    # user put three files in /tmp and have this app refuse every path under
+    # it for everybody. A repository kept in such a directory is not one
+    # this rule can protect in any case.
     def self.git_markers(directory)
       stat = safe_stat(directory)
-      return [] unless stat && stat.uid == Process.euid
+      return [] if stat.nil? || stat.world_writable?
 
       GIT_DIR_MARKERS.select { |marker| File.exist?(File.join(directory.to_s, marker)) }
     end

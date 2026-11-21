@@ -300,13 +300,18 @@ module OodApi
       end
     end
 
-    not_found do
+    error Sinatra::NotFound do
       halt_error(404, 'not_found', 'There is nothing at this address')
+    end
+
+    # A query string or form body Sinatra could not parse.
+    error Sinatra::BadRequest do
+      halt_error(400, 'bad_request', 'Malformed request')
     end
 
     # Anything no handler expected. The log gets the class, the message and
     # where it came from; the caller gets none of that.
-    error StandardError do
+    error Exception do
       err = env['sinatra.error']
       Handlers::Audit.emit_event(op: 'unhandled_error', user: current_user, source: 'rest', status: 'error',
                                  error: "#{err.class}: #{err.message}", at: Array(err.backtrace).first(5).join(' | '),
@@ -859,7 +864,10 @@ module OodApi
     def file_json(entry)
       # Writes hand back the path they worked on; describe it as it now is,
       # without following a link.
-      entry = Handlers::Files::Entry.new(entry, entry.lstat) if entry.is_a?(Pathname)
+      if entry.is_a?(Pathname)
+        stat = entry.lstat
+        entry = Handlers::Files::Entry.new(entry, stat, (entry.readlink.to_s if stat.symlink?))
+      end
       build_file_hash(entry)
     rescue ArgumentError
       # No name for the owner or group on this host.

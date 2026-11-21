@@ -126,7 +126,7 @@ says so; the app does not fall back to a weaker method. Each start logs which
 method is in use (`op=file_access mode=pinned`). A recursive delete holds
 each directory open as it descends and never follows a symlink. A listing
 describes each entry itself, so a symlink is reported as a link and says
-nothing about what it points at.
+only the path written in the link, not anything about what is at that path.
 
 On systems that never had `/proc/self/fd`, which means development on macOS,
 the app checks the path before and after the open instead. That narrows the

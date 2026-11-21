@@ -14,7 +14,7 @@ require_relative 'app/mcp_server'
 OodApi::Capabilities.announce
 
 file_access = Handlers::Files.access_mode
-warn "ood_api_audit op=file_access status=#{file_access == :unavailable ? 'error' : 'ok'} mode=#{file_access}"
+OodApi::Log.line "op=file_access status=#{file_access == :unavailable ? 'error' : 'ok'} mode=#{file_access}"
 
 app = Rack::Builder.new do
   map('/mcp') { run OodApi.mcp_rack_app }

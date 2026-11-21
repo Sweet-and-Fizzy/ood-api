@@ -43,7 +43,7 @@ module OodApi
     # An expired token is refused like an unknown one, but the log says which
     # token it was, so its owner can tell why a client stopped working.
     def log_expired(token)
-      warn "ood_api_audit ts=#{Time.now.utc.iso8601(3)} op=authenticate status=expired token_id=#{token.id}"
+      OodApi::Log.line "op=authenticate status=expired token_id=#{token.id}"
     end
 
     # Returns the ApiToken when authentication passes (or when app tokens are

@@ -107,7 +107,7 @@ module Handlers
     # open or the unlink fail, and the removal stops.
     def self.remove_directory(parent, name)
       directory = open_for_removal(parent, name)
-      return Dir.rmdir(parent.entry(name)) unless directory
+      return remove_unreadable(parent, name) unless directory
 
       Dir.children(directory.entry('.')).each do |child|
         next remove_directory(directory, child) if directory.lstat(child)&.directory?
@@ -127,6 +127,14 @@ module Handlers
       parent.descend(name)
     rescue Errno::EACCES
       nil
+    end
+
+    # It goes if it is empty. If it is not, the trouble is that it cannot be
+    # read, and that is what the caller is told.
+    def self.remove_unreadable(parent, name)
+      Dir.rmdir(parent.entry(name))
+    rescue Errno::ENOTEMPTY
+      raise Errno::EACCES
     end
 
     # @return [Array<Array(String, File::Stat)>] each name in the directory
@@ -212,6 +220,6 @@ module Handlers
     end
 
     private_class_method :pin, :split_existing, :with_target, :link_target, :remove_tree, :remove_directory,
-                         :open_for_removal
+                         :open_for_removal, :remove_unreadable
   end
 end

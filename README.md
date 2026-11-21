@@ -37,7 +37,7 @@ This README is for administrators evaluating the app. The guides:
 
 Three things worth knowing before you read further.
 
-**Maturity.** v0.4.2. Verified against OOD 4.2.3 with Slurm, and running at a
+**Maturity.** v0.5.0. Verified against OOD 4.2.3 with Slurm, and running at a
 small number of sites — see [Testing](#testing) for the current list. Treat it
 as early software.
 
@@ -276,7 +276,7 @@ the code, see [Contributing](CONTRIBUTING.md) and
 - Application tokens never stand alone — a request must also satisfy Apache, with either a JWT or a session cookie. They are revocable per client, not an independent second factor
 - PUN cleanup cron runs every 2 hours by default — long-running API workflows may need this adjusted
 - Dashboard plugin requires OOD 4.0+
-- MCP transport runs in stateless mode — server-initiated notifications are not supported (tool list is static, so this has no practical impact)
+- MCP transport runs in stateless mode — server-initiated notifications are not supported (a client sees a change to the site's enabled tools the next time it lists them)
 - Job history, hold/release, and dependencies are scheduler-dependent — not all schedulers support all features
 - Account discovery, queue listing, cluster info, and historic jobs are only fully supported on Slurm — other schedulers return `501 not_implemented`. See the scheduler table under [Before you evaluate](#before-you-evaluate). Contributions to expand adapter coverage in `ood_core` would benefit all ood-api sites
 - No rate limiting — see [Security posture](#security-posture)
