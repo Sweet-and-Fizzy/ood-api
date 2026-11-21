@@ -105,7 +105,9 @@ module Handlers
     # contents of the link's target deleted. Here a swapped entry makes the
     # open or the unlink fail, and the removal stops.
     def self.remove_directory(parent, name)
-      directory = parent.descend(name)
+      directory = open_for_removal(parent, name)
+      return Dir.rmdir(parent.entry(name)) unless directory
+
       Dir.children(directory.entry('.')).each do |child|
         next remove_directory(directory, child) if directory.lstat(child)&.directory?
 
@@ -116,6 +118,16 @@ module Handlers
       directory&.close
     end
 
+    # A directory the user cannot read can still be removed if it is empty,
+    # so that is left to rmdir to decide.
+    #
+    # @return [PinnedDir, nil] nil when the directory cannot be opened
+    def self.open_for_removal(parent, name)
+      parent.descend(name)
+    rescue Errno::EACCES
+      nil
+    end
+
     # @return [Array<Array(String, File::Stat)>] each name in the directory
     #   with the stat of the entry itself, not of what a symlink points at
     def self.children(path)
@@ -123,7 +135,9 @@ module Handlers
       Files.validate_real!(dir.real)
       Dir.children(dir.entry('.')).filter_map do |name|
         stat = dir.lstat(name)
-        [name, stat] if stat
+        [name, stat, (File.readlink(dir.entry(name)) if stat.symlink?)] if stat
+      rescue SystemCallError
+        nil
       end
     ensure
       dir&.close
@@ -196,6 +210,7 @@ module Handlers
       Pathname.new(File.expand_path(File.readlink(dir.entry(name)), real.parent.to_s))
     end
 
-    private_class_method :pin, :split_existing, :with_target, :link_target, :remove_tree, :remove_directory
+    private_class_method :pin, :split_existing, :with_target, :link_target, :remove_tree, :remove_directory,
+                         :open_for_removal
   end
 end

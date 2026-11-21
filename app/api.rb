@@ -52,6 +52,14 @@ module OodApi
     # is what a dev app under /pun/dev runs as.
     set :show_exceptions, false
 
+    # Sinatra would print every error and its backtrace to the log before
+    # the handlers below run, including the ones they turn into an ordinary
+    # 4xx. It also formats the message itself, and one that is not valid
+    # UTF-8, as a scheduler's can be, raised from there and took the request
+    # down with it. Errors are recorded by the audit line and, when nothing
+    # expected them, by the handler for StandardError.
+    set :dump_errors, false
+
     # Sinatra 4 added host authorization. Its restrictive allowlist —
     # localhost only — applies in the development environment; production and
     # test already default to permit-all, so this setting changes nothing for
@@ -262,6 +270,7 @@ module OodApi
       Handlers::ForbiddenError            => [403, 'forbidden'],
       Handlers::PayloadTooLargeError      => [413, 'payload_too_large'],
       Handlers::StorageError              => [507, 'insufficient_storage'],
+      Handlers::FilesystemError           => [503, 'service_unavailable'],
       Handlers::AdapterError              => [503, 'service_unavailable'],
       # Same status as its parent, listed so the mapping survives any future
       # change to AdapterError's default.
@@ -270,6 +279,20 @@ module OodApi
       error klass do
         halt_error(code, type, env['sinatra.error'].message)
       end
+    end
+
+    not_found do
+      halt_error(404, 'not_found', 'There is nothing at this address')
+    end
+
+    # Anything no handler expected. The log gets the class, the message and
+    # where it came from; the caller gets none of that.
+    error StandardError do
+      err = env['sinatra.error']
+      Handlers::Audit.emit_event(op: 'unhandled_error', user: current_user, source: 'rest', status: 'error',
+                                 error: "#{err.class}: #{err.message}", at: Array(err.backtrace).first(5).join(' | '),
+                                 path: request.path_info)
+      halt_error(500, 'internal_error', 'An unexpected error occurred')
     end
 
     # Safety net. LoadError and NotImplementedError descend from ScriptError,
@@ -814,6 +837,9 @@ module OodApi
 
     # @param entry [Handlers::Files::Entry]
     def file_json(entry)
+      # Writes hand back the path they worked on; describe it as it now is,
+      # without following a link.
+      entry = Handlers::Files::Entry.new(entry, entry.lstat) if entry.is_a?(Pathname)
       build_file_hash(entry)
     rescue ArgumentError
       # No name for the owner or group on this host.
@@ -827,6 +853,7 @@ module OodApi
         name:      json_safe(entry.basename.to_s),
         directory: entry.directory?,
         symlink:   entry.symlink?,
+        target:    json_safe(entry.link_target),
         size:      entry.directory? ? nil : stat.size,
         mode:      stat.mode,
         owner:     json_safe(use_ids ? stat.uid.to_s : Etc.getpwuid(stat.uid).name),

@@ -80,7 +80,8 @@ module Handlers
     #   with the stat of the entry itself
     def self.children(path)
       path.children.filter_map do |child|
-        [child.basename.to_s, child.lstat]
+        stat = child.lstat
+        [child.basename.to_s, stat, (child.readlink.to_s if stat.symlink?)]
       rescue Errno::ENOENT
         nil
       end

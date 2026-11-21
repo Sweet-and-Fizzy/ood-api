@@ -289,7 +289,7 @@ module Handlers
 
       # /tmp unless the site's file allowlist excludes it.
       # An empty workdir means the same as none given.
-      workdir = nil if workdir.to_s.strip.empty?
+      workdir = nil if workdir.to_s.scrub.strip.empty?
       workdir ||= Files.path_allowed?('/tmp') ? '/tmp' : Dir.home
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
 

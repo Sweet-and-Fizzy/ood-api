@@ -85,15 +85,20 @@ module OodApi
       disabled = list_setting('OOD_API_DISABLE', :disable) || []
       rest = switch('OOD_API_REST', :rest)
       mcp = switch('OOD_API_MCP', :mcp)
-      problems = SiteConfig.problems + unknown_settings +
-                 unknown(groups, GROUPS.keys + ['all'], 'capability') + unknown(disabled, ALL_TOOLS, 'tool') +
-                 [rest, mcp, switch('OOD_API_APP_TOKENS', :app_tokens, default: false),
-                  switch('OOD_API_TOKEN_ALLOW_NEVER', :token_allow_never, default: false)].grep(String)
+      problems = setting_problems + [rest, mcp].grep(String) +
+                 unknown(groups, GROUPS.keys + ['all'], 'capability') + unknown(disabled, ALL_TOOLS, 'tool')
       return { tools: Set.new, rest: false, mcp: false, problems: problems } unless problems.empty?
 
       groups = GROUPS.keys if groups.include?('all')
       tools = (['read'] | groups).flat_map { |group| GROUPS.fetch(group) } - disabled - off_in_dashboard
       { tools: Set.new(tools), rest: rest, mcp: mcp, problems: [] }
+    end
+
+    # What is wrong outside the lists and the two surface switches.
+    def setting_problems
+      switches = [switch('OOD_API_APP_TOKENS', :app_tokens, default: false),
+                  switch('OOD_API_TOKEN_ALLOW_NEVER', :token_allow_never, default: false)]
+      SiteConfig.problems + unknown_settings + TokenPolicy.problems + switches.grep(String)
     end
 
     FILE_TOOLS = ['list_files', 'read_file', 'write_file', 'create_directory', 'delete_file'].freeze
@@ -144,8 +149,10 @@ module OodApi
       settings.is_a?(Hash) ? settings : {}
     end
 
+    # Names are matched whatever their case: `ALL` and `Read_File` are
+    # plain enough.
     def list_from(raw)
-      Array(raw).flat_map { |item| item.to_s.split(',') }.map(&:strip).reject(&:empty?)
+      Array(raw).flat_map { |item| item.to_s.scrub.split(',') }.map { |name| name.strip.downcase }.reject(&:empty?)
     end
 
     # @return [Boolean, String] on or off, or what is wrong with the value
@@ -163,5 +170,6 @@ module OodApi
 end
 
 require_relative 'app_auth'
+require_relative 'token_policy'
 
 OodApi::SiteConfig.on_change { OodApi::Capabilities.announce }

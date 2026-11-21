@@ -39,21 +39,22 @@ module OodApi
         result = audited('list_files', path: path) do
           Handlers::Files.list(path: path)
         end
-        if result.is_a?(Array)
-          lines = result.map do |p|
-            type = if p.directory? then 'dir '
-                   else
-                     p.symlink? ? 'link' : 'file'
-                   end
-            "  #{type}  #{p.basename}"
-          end
-          text = "Directory: #{path}\n#{lines.join("\n")}"
-        else
-          text = "File: #{result.basename}\nPath: #{result}"
-        end
+        text = if result.is_a?(Array)
+                 "Directory: #{path}\n#{result.map { |entry| line_for(entry) }.join("\n")}"
+               else
+                 "File: #{result.basename}\nPath: #{result}"
+               end
         text_response(text)
       rescue ArgumentError => e
         error_response("Invalid path: #{e.message}")
+      end
+
+      # One line of a listing. A symlink shows the path written in it.
+      def self.line_for(entry)
+        return "  dir   #{entry.basename}" if entry.directory?
+        return "  link  #{entry.basename} -> #{entry.link_target}" if entry.symlink?
+
+        "  file  #{entry.basename}"
       end
     end
 

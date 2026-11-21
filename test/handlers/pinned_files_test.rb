@@ -335,6 +335,20 @@ class PinnedFilesTest < Minitest::Test
     end
   end
 
+  # An empty directory needs no reading to be removed.
+  def test_recursive_delete_removes_an_empty_directory_it_cannot_read
+    skip 'root reads everything' if Process.uid.zero?
+    Dir.stub(:home, @home) do
+      tree = File.join(@home, 'tree')
+      FileUtils.mkdir_p(File.join(tree, 'locked'))
+      File.chmod(0o000, File.join(tree, 'locked'))
+
+      files.delete(path: tree, recursive: true)
+
+      refute File.exist?(tree)
+    end
+  end
+
   def test_out_of_space_is_a_storage_error
     Dir.stub(:home, @home) do
       Dir.stubs(:mkdir).raises(Errno::EDQUOT)

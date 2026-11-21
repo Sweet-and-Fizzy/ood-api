@@ -695,9 +695,11 @@ GET /api/v1/files?path=:path
 }
 ```
 
-Every entry also carries `"symlink": true` or `false`. A symlink is described
-as the link itself: `directory` is `false` and the size, owner and time are
-the link's own, whatever it points at. List or read the link's path to follow
+Every entry also carries `"symlink": true` or `false`, and `"target"`, which
+is `null` except for a symlink. A symlink is described as the link itself:
+`directory` is `false`, the size, owner and time are the link's own, and
+`target` is the path written in the link. Nothing is reported about the thing
+at that path. List or read the link's path to follow
 it; that is where the access rules are applied to its target. Entries are
 listed whether or not the user can read them.
 
@@ -1241,7 +1243,7 @@ The API uses standard HTTP status codes:
 | 422 | Unprocessable Entity (job submission/cancellation failed) |
 | 500 | Internal Server Error |
 | 501 | Not Implemented (the site's scheduler adapter does not support the operation) |
-| 503 | Service Unavailable (scheduler communication error) |
+| 503 | Service Unavailable (the scheduler could not be reached, the filesystem reported an I/O error or a stale handle, or the site's settings could not be understood and the API is off: `misconfigured`) |
 | 507 | Insufficient Storage (no space left on device, disk quota exceeded, or file too large for the filesystem) |
 
 > **413 applies to writes only.** `PUT /api/v1/files` returns 413

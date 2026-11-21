@@ -339,6 +339,40 @@ class CapabilitiesTest < Minitest::Test
     OodApi::SiteConfig.load_app_env!(File.join(@dir, 'absent'))
   end
 
+  def test_names_are_matched_whatever_their_case
+    ENV['OOD_API_CAPABILITIES'] = 'ALL'
+    ENV['OOD_API_DISABLE'] = 'Delete_File'
+
+    assert_empty caps.problems
+    assert caps.enabled?('submit_job')
+    refute caps.enabled?('delete_file')
+  end
+
+  def test_a_token_lifetime_that_is_not_a_number_is_a_problem
+    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  token_max_days: abc\n")
+
+    assert_equal ['token_max_days must be a number of days, not "abc"'], caps.problems
+  end
+
+  def test_an_env_file_value_ends_at_a_comment
+    file = File.join(@dir, 'env')
+    File.write(file, "OOD_API_MCP=off # for now\nOOD_API_REST=\"on\" # quoted\n")
+    OodApi::SiteConfig.load_app_env!(file)
+
+    assert_empty caps.problems
+    refute caps.mcp?
+    assert caps.rest?
+  ensure
+    ENV.delete('OOD_API_MCP')
+    ENV.delete('OOD_API_REST')
+  end
+
+  # Production prints errors before handling them unless told not to, and
+  # that printing raised on a message that was not valid UTF-8.
+  def test_sinatra_does_not_print_errors_before_they_are_handled
+    refute OodApi::App.dump_errors?
+  end
+
   def mcp_call(app, method, params = {})
     body = JSON.generate(jsonrpc: '2.0', id: 1, method: method, params: params)
     env = Rack::MockRequest.env_for('/', :method => 'POST', :input => body, 'CONTENT_TYPE' => 'application/json',

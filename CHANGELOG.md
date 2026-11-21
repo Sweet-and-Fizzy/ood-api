@@ -63,9 +63,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Anything inside a `.git` directory, and any file named `.git`, is refused in
   every allowed location.
 - If a denied name such as `~/.bashrc` is a symlink, its target is refused too.
-- Site settings in `ondemand.d` are read the way the Dashboard reads them, so
-  one unreadable file no longer discards the rest, including the file
-  allowlist.
+- Site settings in `ondemand.d` are read the way the Dashboard reads them:
+  through ERB, with YAML anchors, merged file by file. A file that cannot be
+  read and holds settings for this app turns the app off; see Changed.
 - Job working directory, output and error paths are passed to the scheduler
   in the normalised form that was checked.
 - Multipart request bodies are refused before they are parsed. Rack wrote
@@ -116,6 +116,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and dates, where the listing used to describe the link's target, including
   targets outside the allowed directories. Entries the user cannot read are
   now listed.
+- A symlink in a listing carries `target`, the path written in the link.
+- An I/O error or a stale file handle is reported as 503, and a directory
+  tree too deep to remove in one request as 400. A recursive delete that
+  fails part-way says the tree may be partly gone.
+- Group and tool names in the settings are matched whatever their case.
+  `token_max_days` that is not a number is a settings problem.
 - Reading, writing, touching or deleting one of the allowed top-level
   directories itself returns 400 with a message that says so. Listing it
   still works.

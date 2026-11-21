@@ -1121,6 +1121,8 @@ class HandlersFilesTest < Minitest::Test
     refute entries['to-passwd'].directory?
     assert_equal File.lstat(File.join(@test_dir, 'to-passwd')).size, entries['to-passwd'].stat.size
     refute entries['plain'].symlink?
+    assert_equal '/etc/passwd', entries['to-passwd'].link_target
+    assert_nil entries['plain'].link_target
   end
 
   # These used to answer "path not in allowed directories", which is false.
@@ -1183,7 +1185,7 @@ class HandlersFilesTest < Minitest::Test
     backend.stubs(:write).raises(Errno::EROFS)
     assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: file, content: 'y') }
     backend.stubs(:read).raises(Errno::ESTALE)
-    assert_raises(Handlers::StorageError) { Handlers::Files.read(path: file) }
+    assert_raises(Handlers::FilesystemError) { Handlers::Files.read(path: file) }
     backend.stubs(:delete).raises(Errno::EBUSY)
     assert_raises(Handlers::ValidationError) { Handlers::Files.delete(path: file) }
   end
@@ -1236,5 +1238,49 @@ class HandlersFilesTest < Minitest::Test
     assert_denied('.local/lib/python3.11/site-packages/usercustomize/__init__.py')
     assert_denied('.local/lib/python3.11/site-packages/usercustomize.pyc')
     assert_denied('.local/lib/python3.11/site-packages/sitecustomize.cpython-311-x86_64-linux-gnu.so')
+  end
+
+  # Three files in a shared directory used to make this app refuse every
+  # path under it, for every user. Git itself ignores a repository in a
+  # directory that belongs to someone else.
+  def test_repository_markers_in_a_directory_owned_by_someone_else_do_not_count
+    ['HEAD', 'objects', 'refs'].each { |name| FileUtils.touch(File.join(@test_dir, name)) }
+    Process.stubs(:euid).returns(Process.uid + 1)
+
+    Handlers::Files.write(path: File.join(@test_dir, 'notes.txt'), content: 'ok')
+    assert_equal 'ok', Handlers::Files.read(path: File.join(@test_dir, 'notes.txt'))
+  end
+
+  def test_ordinary_directories_named_like_git_parts_are_usable
+    data = File.join(@test_dir, 'data')
+    FileUtils.mkdir_p(File.join(data, 'refs'))
+    FileUtils.mkdir_p(File.join(data, 'objects'))
+
+    Handlers::Files.write(path: File.join(data, 'objects', 'a.txt'), content: 'ok')
+    Handlers::Files.write(path: File.join(data, 'refs', 'b.txt'), content: 'ok')
+  end
+
+  def test_a_symlink_to_an_allowed_top_level_directory_can_be_deleted
+    ENV['OOD_ALLOWLIST_PATH'] = "#{@test_dir}:#{Dir.tmpdir}"
+    link = File.join(Dir.tmpdir, "ood-link-#{SecureRandom.hex(4)}")
+    File.symlink(@test_dir, link)
+
+    Handlers::Files.delete(path: link)
+
+    refute File.symlink?(link)
+    assert File.directory?(@test_dir)
+  ensure
+    ENV.delete('OOD_ALLOWLIST_PATH')
+    FileUtils.rm_f(link) if link
+  end
+
+  def test_a_recursive_delete_that_fails_says_the_tree_may_be_partly_gone
+    tree = File.join(@test_dir, 'tree')
+    FileUtils.mkdir_p(tree)
+    Handlers::Files.backend.stubs(:delete).raises(Errno::EACCES)
+
+    err = assert_raises(Handlers::ForbiddenError) { Handlers::Files.delete(path: tree, recursive: true) }
+
+    assert_match(/may already have been removed/, err.message)
   end
 end

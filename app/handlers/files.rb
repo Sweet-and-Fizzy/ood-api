@@ -48,7 +48,8 @@ module Handlers
       [Errno::ENOTEMPTY]             => [ValidationError, 'Directory not empty'],
       [Errno::EEXIST]                => [ValidationError, 'Path already exists'],
       [Errno::EBUSY, Errno::ETXTBSY] => [ValidationError, 'File or directory is in use'],
-      [Errno::EIO, Errno::ESTALE]    => [StorageError, 'The filesystem reported an error']
+      [Errno::EIO, Errno::ESTALE]    => [FilesystemError, 'The filesystem reported an error'],
+      [Errno::EMFILE, Errno::ENFILE] => [ValidationError, 'The directory tree is too deep to work on in one request']
     }.freeze
 
     def self.out_of_space_message(err)
@@ -82,9 +83,10 @@ module Handlers
     end
 
     # One thing in a listing: where it is, and what it is. The stat is of the
-    # entry itself, so a symlink is reported as a link and says nothing about
-    # what it points at, which may be outside the allowed directories.
-    Entry = Struct.new(:path, :stat) do
+    # entry itself, so a symlink is reported as a link. It carries the path
+    # written in the link, which is the link's own content, and nothing about
+    # the thing at that path, which may be outside the allowed directories.
+    Entry = Struct.new(:path, :stat, :link_target) do
       def basename = path.basename
       def directory? = stat.directory?
       def symlink? = stat.symlink?
@@ -100,7 +102,9 @@ module Handlers
 
         # Joined as strings: a name need not be valid UTF-8, and Pathname#+
         # raises on one that is not.
-        entries = backend.children(p).map { |name, stat| Entry.new(Pathname.new(File.join(p.to_s, name)), stat) }
+        entries = backend.children(p).map do |name, stat, target|
+          Entry.new(Pathname.new(File.join(p.to_s, name)), stat, target)
+        end
         entries.sort_by { |entry| [entry.directory? ? 0 : 1, entry.basename.to_s.scrub.downcase] }
       end
     end
@@ -156,9 +160,22 @@ module Handlers
         p.symlink? ? validate_link_location!(p) : validate_path!(p)
         raise Errno::ENOENT unless p.exist? || p.symlink?
 
-        backend.delete(inside_root(p), recursive: recursive)
+        # A link is removed as a link, even one that points at an allowed
+        # top-level directory.
+        inside_root(p) unless p.symlink?
+        remove(p, recursive)
         { path: p.to_s, deleted: true }
       end
+    end
+
+    # A recursive delete that fails part-way has already removed something,
+    # and the caller needs to know that the tree is no longer whole.
+    def self.remove(path, recursive)
+      translating_errors { backend.delete(path, recursive: recursive) }
+    rescue Error => e
+      raise unless recursive && path.directory? && !path.symlink?
+
+      raise e.class, "#{e.message}. Part of the directory may already have been removed"
     end
 
     # The path every operation but delete works on: normalised, and checked
@@ -557,7 +574,14 @@ module Handlers
       markers.include?('HEAD') && (markers.include?('commondir') || (['objects', 'refs'] - markers).empty?)
     end
 
+    # Only in a directory the user owns. Git refuses to use a repository in
+    # a directory that belongs to someone else, and counting those would let
+    # one user put three files in /tmp and have this app refuse every path
+    # under it for everybody.
     def self.git_markers(directory)
+      stat = safe_stat(directory)
+      return [] unless stat && stat.uid == Process.euid
+
       GIT_DIR_MARKERS.select { |marker| File.exist?(File.join(directory.to_s, marker)) }
     end
 

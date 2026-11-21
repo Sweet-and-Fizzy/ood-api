@@ -543,6 +543,13 @@ class HandlersJobsTest < Minitest::Test
     Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: '#!/bin/bash', workdir: '')
   end
 
+  def test_a_workdir_that_is_not_utf8_is_refused_not_crashed_on
+    assert_raises(Handlers::ValidationError) do
+      Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: '#!/bin/bash',
+                            workdir: (+"/tmp/\xFF").force_encoding('UTF-8'))
+    end
+  end
+
   # cancel / hold / release
   #
   # These three confirm the job exists before acting, because ood_core swallows

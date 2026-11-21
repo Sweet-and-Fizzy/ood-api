@@ -96,7 +96,7 @@ curl -H "Authorization: Bearer <jwt>" \
   https://ondemand.example.edu/pun/sys/ood-api/health
 ```
 
-Expected: `{"status":"ok"}`
+Expected: a JSON body beginning `{"status":"ok"`
 
 If you get 401, check the [Troubleshooting](#troubleshooting) section.
 

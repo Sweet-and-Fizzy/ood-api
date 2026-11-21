@@ -182,8 +182,15 @@ module OodApi
 
       text.each_line.with_object({}) do |line, vars|
         match = line.match(/\A\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*\z/)
-        vars[match[1]] = match[2].sub(/\A(['"])(.*)\1\z/, '\2') if match
+        vars[match[1]] = env_value(match[2]) if match
       end
+    end
+
+    # A quoted value is taken whole. An unquoted one ends at a comment, as
+    # in the dotenv files the Dashboard reads.
+    def env_value(raw)
+      quoted = raw.match(/\A(['"])(.*)\1\s*(?:#.*)?\z/)
+      quoted ? quoted[2] : raw.sub(/\s+#.*\z/, '')
     end
 
     # Reads the files the way the Dashboard does, so both apps see the same
@@ -285,7 +292,7 @@ module OodApi
 
     # A file that cannot be read at all is assumed to.
     def holds_own_settings?(file)
-      file.binread.scrub.match?(OWN_SETTINGS)
+      file.binread.scrub.lines.reject { |line| line.lstrip.start_with?('#') }.join.match?(OWN_SETTINGS)
     rescue SystemCallError
       true
     end
