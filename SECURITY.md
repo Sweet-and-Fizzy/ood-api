@@ -65,8 +65,10 @@ Within `$HOME`, a deny-list refuses:
   `.config/environment.d`), and X session files;
 - `~/.ssh`, `~/.k5login`, `~/.rhosts`, `~/.forward`, `~/.pam_environment`;
 - directories on the default `PATH` (`~/bin`, `~/.local/bin`);
-- `~/.gitconfig`, `~/.config/git`, and the `hooks` directory and `config`
-  file of any git repository;
+- `~/.gitconfig` and `~/.config/git`;
+- anything inside a `.git` directory, and any file named `.git`, in every
+  allowed location and not only under `$HOME`. Hooks and config there run
+  with every git command;
 - startup files for Python (`usercustomize.py`), R (`.Rprofile`), Jupyter and
   VNC, plus `~/.config/autostart` and `~/.config/systemd/user`;
 - credential stores (`.netrc`, `.git-credentials`, `.pgpass`, `.my.cnf`,
@@ -78,6 +80,10 @@ The list covers the common persistence and credential paths and is not
 exhaustive. Other files can run code or hold secrets (editor and application
 config, `~/ondemand/dev`, shell history), and a list of names cannot keep up
 with them. It is a backstop, not a boundary.
+
+If a denied name is itself a symlink, as when dotfiles are kept in a
+repository and linked into place, the file or directory it points at is
+denied too.
 
 It is enforced against the requested path, its resolved form, and the
 destination a symlink chain actually reaches — following the chain to its end

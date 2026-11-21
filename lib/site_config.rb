@@ -67,19 +67,34 @@ module OodApi
       {}
     end
 
+    # Reads the files the way the Dashboard does, so both apps see the same
+    # settings: every file goes through ERB, YAML anchors are allowed, files
+    # are merged key by key, and a file that fails is skipped on its own. In
+    # production only root-owned files count.
     def read_config
-      files = Pathname.glob(config_directory.join('*.{yml,yaml,yml.erb,yaml.erb}')).sort
-      files.each_with_object({}) do |file, merged|
-        content = file.read(encoding: 'UTF-8')
-        content = ERB.new(content, trim_mode: '-').result if file.extname == '.erb'
-        parsed = YAML.safe_load(content, symbolize_names: true)
-        merged.merge!(parsed) if parsed.is_a?(Hash)
+      config_files.each_with_object({}) do |file, merged|
+        content = ERB.new(file.read(encoding: 'UTF-8'), trim_mode: '-').result
+        parsed = YAML.safe_load(content, aliases: true, symbolize_names: true)
+        deep_merge!(merged, parsed) if parsed.is_a?(Hash)
+      rescue StandardError, ScriptError => e
+        # The Dashboard's ERB can call Dashboard code this app does not have.
+        # Such a file is skipped here though the Dashboard reads it, so say
+        # which one: a setting in it will not apply to this app.
+        warn "ood_api_audit op=site_config status=error file=#{file.basename} error=#{e.class}"
       end
-    rescue StandardError => e
-      # A site config this app cannot read must not take the API down. It is
-      # the Dashboard's file first, and the Dashboard reports problems in it.
-      warn "ood_api_audit op=site_config status=error error=#{e.class}"
-      {}
+    end
+
+    def config_files
+      files = Pathname.glob(config_directory.join('*.{yml,yaml,yml.erb,yaml.erb}')).sort
+      return files unless (ENV['RAILS_ENV'] || ENV.fetch('RACK_ENV', nil)) == 'production'
+
+      files.select { |file| file.stat.uid.zero? }
+    end
+
+    def deep_merge!(base, other)
+      base.merge!(other) do |_key, old, new|
+        old.is_a?(Hash) && new.is_a?(Hash) ? deep_merge!(old, new) : new
+      end
     end
   end
 end

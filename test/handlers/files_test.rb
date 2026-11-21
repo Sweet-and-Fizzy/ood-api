@@ -257,6 +257,12 @@ class HandlersFilesTest < Minitest::Test
   # other means; the deny-list exists so an agent driving these tools on
   # injected input cannot establish access that outlives the session.
 
+  # Exercises the path-based implementation used where PinnedDir is not
+  # supported, whatever platform the suite runs on.
+  def without_pinning
+    Handlers::PinnedDir.stubs(:supported?).returns(false)
+  end
+
   # A fake home under tmpdir, so tests never touch the real one.
   def with_fake_home
     fake = File.join(@test_dir, 'home')
@@ -654,6 +660,7 @@ class HandlersFilesTest < Minitest::Test
   def test_touch_maps_out_of_space_to_storage_error
     with_fake_home do |home|
       target = File.join(home, 'f.txt')
+      without_pinning
       FileUtils.stubs(:touch).raises(Errno::ENOSPC)
       assert_raises(Handlers::StorageError) { Handlers::Files.touch(path: target) }
     end
@@ -661,6 +668,7 @@ class HandlersFilesTest < Minitest::Test
 
   def test_mkdir_maps_out_of_space_to_storage_error
     with_fake_home do |home|
+      without_pinning
       Pathname.any_instance.stubs(:mkpath).raises(Errno::ENOSPC)
       assert_raises(Handlers::StorageError) { Handlers::Files.mkdir(path: File.join(home, 'd')) }
     end
@@ -668,6 +676,7 @@ class HandlersFilesTest < Minitest::Test
 
   def test_quota_exceeded_is_reported_distinctly
     with_fake_home do |home|
+      without_pinning
       FileUtils.stubs(:touch).raises(Errno::EDQUOT)
       err = assert_raises(Handlers::StorageError) { Handlers::Files.touch(path: File.join(home, 'f.txt')) }
       assert_match(/quota/i, err.message)
@@ -803,6 +812,7 @@ class HandlersFilesTest < Minitest::Test
     out = File.join(shared, 'out')
     validated_as = Pathname.new(shared).realpath.join('out')
     File.symlink(victim, out)
+    without_pinning
     Handlers::Files.stubs(:expected_destination).returns(validated_as)
 
     assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: out, content: 'overwritten') }
@@ -815,6 +825,7 @@ class HandlersFilesTest < Minitest::Test
     out = File.join(@test_dir, 'out')
     validated_as = Pathname.new(@test_dir).realpath.join('out')
     File.symlink(secret, out)
+    without_pinning
     Handlers::Files.stubs(:expected_destination).returns(validated_as)
 
     assert_raises(Handlers::ForbiddenError) { Handlers::Files.read(path: out) }
@@ -942,7 +953,8 @@ class HandlersFilesTest < Minitest::Test
     ['bin/ls', '.bashrc.d/x.sh', '.k5login', '.rhosts', '.zlogout', '.config/environment.d/x.conf',
      '.config/fish/config.fish', '.vnc/xstartup', '.jupyter/jupyter_notebook_config.py',
      '.local/lib/python3.11/site-packages/usercustomize.py', '.Rprofile',
-     'code/repo/.git/hooks/pre-commit', 'code/repo/.git/config'].each { |rel| assert_denied(rel) }
+     'code/repo/.git/hooks/pre-commit', 'code/repo/.git/config', 'code/repo/.git/HEAD',
+     'code/sub/.git'].each { |rel| assert_denied(rel) }
   end
 
   def test_credential_stores_are_denied
@@ -953,8 +965,38 @@ class HandlersFilesTest < Minitest::Test
   end
 
   def test_ordinary_paths_near_the_denied_ones_are_still_allowed
-    ['binaries/tool', 'code/repo/.git/HEAD', 'code/repo/.github/workflows/ci.yml',
+    ['binaries/tool', 'code/repo/.gitignore', 'code/repo/.github/workflows/ci.yml',
      '.local/lib/python3.11/site-packages/mypkg/__init__.py', '.config/app/settings.json',
      'notes/.aws-notes.txt'].each { |rel| assert_allowed(rel) }
+  end
+
+  # Dotfiles kept in a repository and linked into place: the name is denied,
+  # and so is the file the name points at, since that is what the shell reads.
+  def test_the_target_of_a_denied_symlink_is_denied_too
+    with_fake_home do |home|
+      FileUtils.mkdir_p(File.join(home, 'dots', 'ssh'))
+      File.write(File.join(home, 'dots', 'bashrc'), '# mine')
+      File.symlink(File.join(home, 'dots', 'bashrc'), File.join(home, '.bashrc'))
+      File.symlink(File.join(home, 'dots', 'ssh'), File.join(home, '.ssh'))
+
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.write(path: File.join(home, 'dots', 'bashrc'), content: 'evil')
+      end
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.write(path: File.join(home, 'dots', 'ssh', 'authorized_keys'), content: 'evil')
+      end
+      Handlers::Files.write(path: File.join(home, 'dots', 'vimrc'), content: 'fine')
+    end
+  end
+
+  # A `.git` file can point git at a directory of hooks anywhere, and repos
+  # live outside $HOME too.
+  def test_git_internals_are_denied_in_every_allowed_location
+    assert_raises(Handlers::ForbiddenError) do
+      Handlers::Files.write(path: File.join(@test_dir, 'repo', '.git'), content: 'gitdir: /tmp/evil')
+    end
+    assert_raises(Handlers::ForbiddenError) do
+      Handlers::Files.write(path: File.join(@test_dir, 'repo', '.git', 'hooks', 'pre-commit'), content: 'x')
+    end
   end
 end

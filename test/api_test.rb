@@ -683,12 +683,24 @@ options: { job_name: 'api-job' } }.to_json,
       post '/api/v1/files?path=/tmp/x', body,
            { 'CONTENT_TYPE' => 'multipart/form-data; boundary=x' }
 
-      assert_equal 400, last_response.status, "#{label} must be a 400"
+      assert_equal 415, last_response.status, "#{label} must be refused unread"
       assert_includes last_response.headers['content-type'].to_s, 'json',
                       "#{label} must not answer in HTML"
       refute_match(/Rack::|<h1>/, last_response.body,
                    "#{label} must not name an internal class")
     end
+  end
+
+  # Rack spools multipart parts to disk when `params` is first read, which is
+  # before authentication. The body must never reach the parser.
+  def test_multipart_is_refused_before_anything_parses_it
+    Rack::Multipart.expects(:parse_multipart).never
+    get '/api/v1/clusters'
+    assert_equal 401, last_response.status
+
+    post '/api/v1/files?path=/tmp/x', "--x\r\nContent-Disposition: form-data; name=\"f\"\r\n\r\nv\r\n--x--\r\n",
+         { 'CONTENT_TYPE' => 'multipart/form-data; boundary=x' }
+    assert_equal 415, last_response.status
   end
 
   def test_reads_are_unaffected_by_the_content_type_requirement

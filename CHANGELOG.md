@@ -35,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   working directory runs in the home directory.
 - More paths under `$HOME` are refused: `~/bin`, `.bashrc.d`, `.k5login`,
   `.rhosts`, fish, environment.d, VNC and Jupyter startup files,
-  `usercustomize.py`, `.Rprofile`, git hooks and repository config, and the
+  `usercustomize.py`, `.Rprofile`, and the
   credential stores of common cloud, cluster and registry clients. A client
   that reads or writes any of these through the API will now get a 403.
 - Application tokens are stored as SHA-256 digests. Existing tokens keep
@@ -43,9 +43,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   written by hand should now carry `token_digest` in place of `token`.
 - State-changing REST requests and all MCP requests are refused when the
   browser reports another site as their source (`Origin` or `Sec-Fetch-Site`).
-- Reads and writes verify the opened file against the validated path, so a
-  path swapped for a symlink between the check and the open is refused.
-  Writing to a FIFO or device is refused; it used to block the worker.
+- On Linux, every file operation works relative to a directory it holds open
+  and applies the path rules to where the kernel says that directory is. A
+  path swapped for a symlink between the check and the operation is refused,
+  and nothing is created, written or deleted first. Writing to a FIFO or
+  device is refused; it used to block the worker.
+- Anything inside a `.git` directory, and any file named `.git`, is refused in
+  every allowed location.
+- If a denied name such as `~/.bashrc` is a symlink, its target is refused too.
+- Site settings in `ondemand.d` are read the way the Dashboard reads them, so
+  one unreadable file no longer discards the rest, including the file
+  allowlist.
+- Job working directory, output and error paths are passed to the scheduler
+  in the normalised form that was checked.
+- Multipart request bodies are refused before they are parsed. Rack wrote
+  them to disk ahead of authentication.
 - On Slurm an error path is always supplied, so `#SBATCH --error=` in a script
   cannot redirect stderr to an unvalidated path.
 - Request bodies are read with a bound even when no `Content-Length` is sent.
@@ -80,6 +92,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   They used to answer `queued_held` and `queued` for a job that was running.
 - A symlink can be deleted when its target is missing or outside the allowed
   directories. Removing a link never touches its target.
+- Errors are JSON under `/pun/dev` as well. In development mode they were
+  Sinatra's HTML debug page.
 - A path starting with `~` and an unknown user name returns 400, not 500.
 - Deleting a symlink removes the link, including one that points at a
   directory or at nothing.

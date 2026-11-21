@@ -72,4 +72,33 @@ class SiteConfigTest < Minitest::Test
 
     assert_empty OodApi::SiteConfig.allowlist_paths
   end
+
+  # The Dashboard skips a bad file on its own and keeps the rest. Dropping
+  # every file when one failed would silently lose the site's allowlist.
+  def test_one_bad_file_does_not_discard_the_others
+    File.write(File.join(@dir, 'a_broken.yml'), "x: [unclosed\n")
+    File.write(File.join(@dir, 'b_erb.yml'), "y: <%= NoSuchDashboardConstant.value %>\n")
+    File.write(File.join(@dir, 'c_files.yml'), "allowlist_path: /scratch\n")
+
+    assert_equal ['/scratch'], OodApi::SiteConfig.allowlist_paths.map(&:to_s)
+  end
+
+  def test_yaml_anchors_are_allowed_as_in_the_dashboard
+    File.write(File.join(@dir, 'files.yml'), "paths: &p /scratch\nallowlist_path: *p\n")
+
+    assert_equal ['/scratch'], OodApi::SiteConfig.allowlist_paths.map(&:to_s)
+  end
+
+  def test_erb_runs_in_plain_yml_files_too
+    File.write(File.join(@dir, 'files.yml'), "allowlist_path: <%= '/render' + 'ed' %>\n")
+
+    assert_equal ['/rendered'], OodApi::SiteConfig.allowlist_paths.map(&:to_s)
+  end
+
+  def test_nested_settings_merge_across_files
+    File.write(File.join(@dir, 'a.yml'), "ood_api:\n  capabilities: [jobs]\n")
+    File.write(File.join(@dir, 'b.yml'), "ood_api:\n  mcp: false\n")
+
+    assert_equal({ capabilities: ['jobs'], mcp: false }, OodApi::SiteConfig.config[:ood_api])
+  end
 end

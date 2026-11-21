@@ -22,7 +22,36 @@ require_relative 'handlers/env'
 require_relative 'handlers/context'
 
 module OodApi
+  # Refuses multipart bodies before Sinatra sees them. Rack parses a multipart
+  # body, spooling each part to a temp file, as soon as anything reads
+  # `params`, and Sinatra does that before any filter runs. That let a caller
+  # who had not authenticated write tens of megabytes to the web node's disk.
+  # Nothing in this API takes multipart, so it is turned away unread.
+  class RejectMultipart
+    BODY = { error:   'unsupported_media_type',
+             message: 'multipart bodies are not accepted; send application/json' }.to_json.freeze
+
+    def initialize(app)
+      @app = app
+    end
+
+    def call(env)
+      return @app.call(env) unless env['CONTENT_TYPE'].to_s.strip.downcase.start_with?('multipart/')
+
+      [415, { 'content-type' => 'application/json' }, [BODY]]
+    end
+  end
+
+  # The REST API: authentication, request checks and one route per operation.
+  # The work itself is in the Handlers modules, which the MCP tools share.
   class App < Sinatra::Base
+    use RejectMultipart
+
+    # Errors are always answered by the handlers below. In development
+    # Sinatra would otherwise show its HTML debug page and skip them, which
+    # is what a dev app under /pun/dev runs as.
+    set :show_exceptions, false
+
     # Sinatra 4 added host authorization. Its restrictive allowlist —
     # localhost only — applies in the development environment; production and
     # test already default to permit-all, so this setting changes nothing for

@@ -99,7 +99,9 @@ module Handlers
               '(no spaces or other punctuation)'
       end
 
-      Files.validate_path!(Files.normalize_path(path))
+      normalized = Files.normalize_path(path)
+      Files.validate_path!(normalized)
+      normalized.to_s
     end
 
     # Flags that name a file or directory the scheduler will write to, across
@@ -291,9 +293,13 @@ module Handlers
       # write primitive that ignores the allowed roots and the deny-list — a
       # job redirecting stdout to ~/.ssh/authorized_keys would sail past a
       # check that refuses the identical path via write_file.
-      job_path!(workdir)
-      job_path!(options[:output_path])
-      job_path!(options[:error_path])
+      # The scheduler is given the normalised spelling that was checked, not
+      # the caller's. `dir/link/../x` is `dir/x` to the check but the parent of
+      # the link's target to the kernel, so passing the raw string on would
+      # submit a path the check never saw.
+      workdir = job_path!(workdir)
+      options = options.merge(output_path: job_path!(options[:output_path]),
+                              error_path:  job_path!(options[:error_path]))
       reject_native!(options[:native])
 
       # Always give the adapter an output path, even when the caller omitted

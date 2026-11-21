@@ -415,6 +415,26 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
+  # `shared/link/../x` is `shared/x` to the path check but the parent of the
+  # link's target to the kernel. The scheduler must get the checked spelling.
+  def test_scheduler_gets_the_normalised_paths_that_were_validated
+    with_fake_home do |home|
+      FileUtils.mkdir_p(File.join(home, 'shared'))
+      captured = nil
+      @adapter.expects(:submit).with do |script|
+        captured = script
+        true
+      end.returns('789')
+      @adapter.expects(:info).with('789').returns(mock_job_info(id: '789'))
+
+      Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: 'echo hi',
+                            workdir: "#{home}/shared/l/..", output_path: "#{home}/shared/l/../out.log")
+
+      assert_equal File.join(home, 'shared'), captured.workdir.to_s
+      assert_equal File.join(home, 'shared', 'out.log'), captured.output_path.to_s
+    end
+  end
+
   def test_script_audit_records_digest_and_size_not_content
     fields = Handlers::Jobs.script_audit("#!/bin/bash\necho hi\n")
 

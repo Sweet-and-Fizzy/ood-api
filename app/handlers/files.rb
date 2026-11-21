@@ -6,6 +6,7 @@ require 'etc'
 require 'tmpdir'
 require_relative 'errors'
 require_relative '../../lib/site_config'
+require_relative 'pinned_dir'
 
 module Handlers
   module Files
@@ -49,15 +50,16 @@ module Handlers
       validate_path!(p)
       raise NotFoundError, 'Path not found' unless p.exist?
 
-      if p.directory?
-        p.children.select(&:readable?).sort_by { |c| [c.directory? ? 0 : 1, c.basename.to_s.downcase] }
-      else
-        p
-      end
+      return p unless p.directory?
+
+      children = PinnedDir.supported? ? PinnedFiles.children(p).map { |name| p + name } : p.children
+      children.select(&:readable?).sort_by { |c| [c.directory? ? 0 : 1, c.basename.to_s.downcase] }
     rescue Errno::ENOENT
       raise NotFoundError, 'Path not found'
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
+    rescue *BAD_PATH_ERRORS => e
+      raise ValidationError, e.message.sub(/ @ .*/, '')
     end
 
     # True only for a value that converts to a positive integer. Infinity and
@@ -79,10 +81,11 @@ module Handlers
 
       p = normalize_path(path)
       validate_path!(p)
-      readable_file!(p)
-
       effective_limit = max_size ? [max_size, MAX_FILE_READ].min : MAX_FILE_READ
-      expected = expected_destination(p)
+      return PinnedFiles.read(p, limit: effective_limit, refuse_larger: !max_size) if PinnedDir.supported?
+
+      readable_file!(p)
+      expected = checked_destination(p)
       File.open(p.to_s, File::RDONLY | File::NONBLOCK) do |f|
         verify_open_file!(f, p, expected)
         if !max_size && (f.stat.size > effective_limit)
@@ -95,6 +98,8 @@ module Handlers
       raise NotFoundError, 'File not found'
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
+    rescue *BAD_PATH_ERRORS => e
+      raise ValidationError, e.message.sub(/ @ .*/, '')
     end
 
     def self.readable_file!(path)
@@ -115,8 +120,13 @@ module Handlers
       raise ValidationError, 'Cannot write to directory' if p.exist? && p.directory?
       raise PayloadTooLargeError, "Content too large (max #{MAX_FILE_WRITE} bytes)" if content.bytesize > MAX_FILE_WRITE
 
+      if PinnedDir.supported?
+        PinnedFiles.write(p, content, append: append)
+        return p
+      end
+
       p.parent.mkpath unless p.parent.exist?
-      expected = expected_destination(p)
+      expected = checked_destination(p)
       # No O_TRUNC: nothing is destroyed until the open file has been checked.
       flags = File::WRONLY | File::CREAT | File::NONBLOCK | (append ? File::APPEND : 0)
       File.open(p.to_s, flags) do |f|
@@ -152,6 +162,28 @@ module Handlers
       deny_sensitive!(link, location)
     end
 
+    # The policy applied to a path the kernel has already resolved, so there
+    # is nothing left in it to re-point: it must be inside an allowed root and
+    # must not be, or be an alias of, anything on the deny-list.
+    def self.validate_real!(real)
+      unless allowed_path_roots.any? { |root| path_under?(real, root) }
+        raise ForbiddenError, 'Access denied: path not in allowed directories'
+      end
+
+      deny_sensitive!(real, real)
+      deny_aliases!(real)
+      deny_by_inode!(real)
+    end
+
+    # Used where PinnedDir is not supported. Resolves the path first and
+    # applies the policy to the result, so the destination the open is later
+    # compared against is one that was itself checked.
+    def self.checked_destination(path)
+      expected = expected_destination(path)
+      validate_real!(expected)
+      expected
+    end
+
     # Where an open of `path` should land, worked out before the open.
     def self.expected_destination(path)
       return path.realpath if path.exist?
@@ -185,7 +217,7 @@ module Handlers
       validate_path!(p)
       raise ValidationError, 'Path already exists' if p.exist?
 
-      p.mkpath
+      PinnedDir.supported? ? PinnedFiles.mkdir(p) : p.mkpath
       p
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
@@ -201,8 +233,12 @@ module Handlers
       p = normalize_path(path)
       validate_path!(p)
 
-      FileUtils.touch(p)
+      PinnedDir.supported? ? PinnedFiles.touch(p) : FileUtils.touch(p)
       p
+    rescue Errno::ENOENT
+      raise NotFoundError, 'Path not found'
+    rescue Errno::ENXIO
+      raise ValidationError, 'Not a regular file'
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
     rescue *OUT_OF_SPACE_ERRORS => e
@@ -215,6 +251,11 @@ module Handlers
       p = normalize_path(path)
       p.symlink? ? validate_link_location!(p) : validate_path!(p)
       raise NotFoundError, 'Path not found' unless p.exist? || p.symlink?
+
+      if PinnedDir.supported?
+        PinnedFiles.delete(p, recursive: recursive)
+        return { path: p.to_s, deleted: true }
+      end
 
       # A symlink is removed as a link, whatever it points at. `directory?`
       # follows links, so a link to a directory used to reach rmdir and fail.
@@ -239,6 +280,8 @@ module Handlers
       raise ForbiddenError, 'Permission denied'
     rescue Errno::ENOTEMPTY
       raise ValidationError, 'Directory not empty'
+    rescue *BAD_PATH_ERRORS => e
+      raise ValidationError, e.message.sub(/ @ .*/, '')
     end
 
     # --- path validation ---
@@ -286,6 +329,7 @@ module Handlers
       # one for that shape must vote first, so do not move the checks above
       # below this line.
       deny_sensitive!(path, destination)
+      deny_aliases!(destination)
       deny_dangling_symlink!(path)
       deny_by_inode!(path)
     end
@@ -472,12 +516,44 @@ module Handlers
     # Denied wherever they appear under $HOME, not at one fixed location.
     DENIED_PATTERNS = [
       # Imported by every Python process the user starts.
-      %r{\A\.local/lib/python[^/]+/site-packages/(user|site)customize\.py\z},
-      # Hooks and config are run or read by every git command in that repo.
-      %r{(\A|/)\.git/(hooks(/|\z)|config\z)}
+      %r{\A\.local/lib/python[^/]+/site-packages/(user|site)customize\.py\z}
     ].freeze
 
+    # A denied name can itself be a symlink: `~/.bashrc -> ~/dots/bashrc` is a
+    # common way to keep dotfiles in a repository. The name is refused, but the
+    # file it points at is the one the shell reads, so that is refused too.
+    def self.deny_aliases!(resolved)
+      home = Pathname.new(Dir.home)
+      (DENIED_EXACT + DENIED_DIRS).each do |rel|
+        denied = home + rel
+        next unless denied.symlink?
+
+        target = link_destination(denied)
+        next unless resolved == target || path_under?(resolved, target)
+
+        raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
+      end
+    end
+
+    def self.link_destination(link)
+      link.exist? ? link.realpath : resolved_destination(resolve_link_chain(link))
+    rescue SystemCallError
+      link
+    end
+
+    # Nothing inside a `.git` directory, and no file named `.git`, in any
+    # allowed location. Hooks and config there are run or read by every git
+    # command in the repository, and a `.git` file can point git at a
+    # directory of them anywhere.
+    def self.deny_git_internals!(*paths)
+      return unless paths.any? { |path| path.each_filename.any? { |part| part.casecmp?('.git') } }
+
+      raise ForbiddenError, 'Access denied: git internals are not accessible through this API'
+    end
+
     def self.deny_sensitive!(requested, resolved)
+      deny_git_internals!(requested, resolved)
+
       # Compare against both the literal and resolved home: on systems where
       # home is reached through a symlink (/var -> /private/var on macOS) the
       # requested path and the resolved one sit under different prefixes, and
@@ -590,7 +666,8 @@ module Handlers
 
     private_class_method :allowed_path_roots, :path_under?, :find_real_parent,
                          :deny_sensitive!, :relative_to_home,
-                         :deny_by_inode!, :denied_inodes, :record_inode, :safe_lstat,
-                         :deny_recursive!
+                         :deny_by_inode!, :denied_inodes, :record_inode, :safe_lstat
   end
 end
+
+require_relative 'pinned_files'
