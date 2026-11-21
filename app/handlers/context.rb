@@ -4,6 +4,8 @@ require 'pathname'
 require_relative 'errors'
 
 module Handlers
+  # Reads the site policy fragments an administrator publishes for assistants,
+  # from /etc/ood/config/agents.d.
   module Context
     CONTEXT_PATH = ENV.fetch('OOD_API_CONTEXT_PATH', '/etc/ood/config/agents.d')
 

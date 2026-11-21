@@ -4,6 +4,8 @@ require 'ood_core'
 require_relative 'errors'
 
 module Handlers
+  # Looks up the site's clusters and what their schedulers report: accounts,
+  # queues and current utilisation.
   module Clusters
     def self.list(clusters:)
       clusters.select(&:job_allow?)

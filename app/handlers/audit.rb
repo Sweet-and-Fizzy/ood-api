@@ -3,6 +3,8 @@
 require_relative 'errors'
 
 module Handlers
+  # Writes one audit line per operation to the PUN log, in a form that a
+  # caller-supplied value cannot split or forge.
   module Audit
     def self.log(op:, user:, source:, **fields)
       start = Process.clock_gettime(Process::CLOCK_MONOTONIC)

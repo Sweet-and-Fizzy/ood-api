@@ -9,6 +9,8 @@ require_relative 'files'
 require_relative 'audit'
 
 module Handlers
+  # Scheduler jobs through ood_core: list, inspect, submit, cancel, hold and
+  # release, with the paths a job writes to checked like any other write.
   module Jobs
     def self.list(clusters:, cluster_id:, user:)
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
@@ -218,20 +220,21 @@ module Handlers
       args = native.map(&:to_s)
       index = 0
       while index < args.length
-        arg = args[index]
-        flag, inline = arg.split('=', 2)
-
-        if NATIVE_PATH_FLAGS.include?(flag) || long_path_flag?(flag)
-          # `--output=PATH` carries its value; `-o PATH` takes the next element.
-          job_path!(inline || args[index + 1])
-          index += inline ? 1 : 2
-        elsif (bundled = bundled_path(arg))
-          job_path!(bundled)
-          index += 1
-        else
-          index += 1
-        end
+        path, consumed = native_path_at(args, index)
+        job_path!(path) if path
+        index += consumed
       end
+    end
+
+    # @return [Array(String, Integer), Array(nil, Integer)] the path the
+    #   argument at `index` names, if it names one, and how many elements it
+    #   took up
+    def self.native_path_at(args, index)
+      flag, inline = args[index].split('=', 2)
+      # `--output=PATH` carries its value; `-o PATH` takes the next element.
+      return [inline || args[index + 1], inline ? 1 : 2] if NATIVE_PATH_FLAGS.include?(flag) || long_path_flag?(flag)
+
+      [bundled_path(args[index]), 1]
     end
 
     # `-o/path` with no separator. Long flags are excluded: `--outputfoo` is a
@@ -298,6 +301,19 @@ module Handlers
       # the link's target to the kernel, so passing the raw string on would
       # submit a path the check never saw.
       workdir = job_path!(workdir)
+      options = with_checked_paths(cluster, workdir, options)
+
+      script = build_script(script_content, workdir, options)
+      job_id = Handlers.with_adapter(cluster, 'submit job') do
+        cluster.job_adapter.submit(script, **options.slice(:after, :afterok, :afternotok, :afterany).compact)
+      end
+
+      [info_after_submit(cluster, job_id), cluster]
+    end
+
+    # The caller's options with the output and error paths checked,
+    # normalised and defaulted, and `native` refused unless the site allows it.
+    def self.with_checked_paths(cluster, workdir, options)
       options = options.merge(output_path: job_path!(options[:output_path]),
                               error_path:  job_path!(options[:error_path]))
       reject_native!(options[:native])
@@ -318,20 +334,9 @@ module Handlers
       # the caller omitted it. Sending stderr to the output file is what Slurm
       # does by default. Slurm only: other schedulers do not all accept one
       # file for both streams.
-      if options[:error_path].nil? && cluster.job_config[:adapter].to_s == 'slurm'
-        options = options.merge(error_path: options[:output_path])
-      end
+      return options unless options[:error_path].nil? && cluster.job_config[:adapter].to_s == 'slurm'
 
-      script = build_script(script_content, workdir, options)
-      deps = [:after, :afterok, :afternotok, :afterany].each_with_object({}) do |k, h|
-        h[k] = options[k] if options[k]
-      end
-
-      job_id = Handlers.with_adapter(cluster, 'submit job') do
-        cluster.job_adapter.submit(script, **deps)
-      end
-
-      [info_after_submit(cluster, job_id), cluster]
+      options.merge(error_path: options[:output_path])
     end
 
     # The job is queued by the time this runs. A failure looking up its status

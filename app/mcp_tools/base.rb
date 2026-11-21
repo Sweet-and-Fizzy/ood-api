@@ -13,7 +13,7 @@ module OodApi
       class << self
         # Entry point the mcp gem invokes. `server_context` is part of the
         # gem's signature and is not used by these tools.
-        def call(server_context: nil, **params)
+        def call(server_context: nil, **params) # rubocop:disable Lint/UnusedMethodArgument
           run(**params)
         rescue Handlers::Error => e
           error_response(e.message)

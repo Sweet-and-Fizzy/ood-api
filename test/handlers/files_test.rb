@@ -842,7 +842,7 @@ class HandlersFilesTest < Minitest::Test
     validated_as = Pathname.new(shared).realpath.join('out')
     File.symlink(victim, out)
     without_pinning
-    Handlers::Files.stubs(:expected_destination).returns(validated_as)
+    Handlers::PathCheckedFiles.stubs(:expected_destination).returns(validated_as)
 
     assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: out, content: 'overwritten') }
     assert_equal 'keep', File.read(victim)
@@ -855,7 +855,7 @@ class HandlersFilesTest < Minitest::Test
     validated_as = Pathname.new(@test_dir).realpath.join('out')
     File.symlink(secret, out)
     without_pinning
-    Handlers::Files.stubs(:expected_destination).returns(validated_as)
+    Handlers::PathCheckedFiles.stubs(:expected_destination).returns(validated_as)
 
     assert_raises(Handlers::ForbiddenError) { Handlers::Files.read(path: out) }
   end
@@ -1027,5 +1027,20 @@ class HandlersFilesTest < Minitest::Test
     assert_raises(Handlers::ForbiddenError) do
       Handlers::Files.write(path: File.join(@test_dir, 'repo', '.git', 'hooks', 'pre-commit'), content: 'x')
     end
+  end
+
+  # The path checks read the filesystem, and a path can vanish between two of
+  # their steps. That must surface as a client error, never a raw Errno.
+  def test_a_path_that_vanishes_during_validation_is_a_handler_error
+    file = File.join(@test_dir, 'f.txt')
+    File.write(file, 'x')
+    Handlers::Files.stubs(:validate_path!).raises(Errno::ENOENT)
+
+    assert_raises(Handlers::NotFoundError) { Handlers::Files.read(path: file) }
+    assert_raises(Handlers::NotFoundError) { Handlers::Files.write(path: file, content: 'y') }
+    assert_raises(Handlers::NotFoundError) { Handlers::Files.list(path: @test_dir) }
+    assert_raises(Handlers::NotFoundError) { Handlers::Files.delete(path: file) }
+    assert_raises(Handlers::NotFoundError) { Handlers::Files.touch(path: file) }
+    assert_raises(Handlers::NotFoundError) { Handlers::Files.mkdir(path: File.join(@test_dir, 'd')) }
   end
 end
