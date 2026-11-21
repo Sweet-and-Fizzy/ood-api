@@ -1187,4 +1187,30 @@ class HandlersFilesTest < Minitest::Test
     backend.stubs(:delete).raises(Errno::EBUSY)
     assert_raises(Handlers::ValidationError) { Handlers::Files.delete(path: file) }
   end
+
+  # The pattern-denied files count for a recursive delete as the named ones do.
+  def test_recursive_delete_refuses_a_tree_holding_a_pattern_denied_file
+    with_fake_home do |home|
+      packages = File.join(home, '.local', 'lib', 'python3.11', 'site-packages')
+      FileUtils.mkdir_p(packages)
+      File.write(File.join(packages, 'evil.pth'), 'import os')
+
+      err = assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.delete(path: File.join(home, '.local'), recursive: true)
+      end
+      assert_match(/evil\.pth/, err.message)
+      assert File.exist?(File.join(packages, 'evil.pth'))
+    end
+  end
+
+  # Removing a repository runs nothing, unlike writing into one.
+  def test_recursive_delete_removes_a_git_repository_inside_the_tree
+    project = File.join(@test_dir, 'project')
+    FileUtils.mkdir_p(File.join(project, '.git', 'hooks'))
+    File.write(File.join(project, '.git', 'config'), '[core]')
+
+    Handlers::Files.delete(path: project, recursive: true)
+
+    refute File.exist?(project)
+  end
 end

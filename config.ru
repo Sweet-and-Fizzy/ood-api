@@ -12,7 +12,6 @@ require_relative 'app/mcp_server'
 
 # Once per PUN start, so an admin can see what their settings produced.
 OodApi::Capabilities.announce
-warn "ood_api_audit op=app_tokens status=ok required=#{OodApi::AppAuth.enabled?}"
 
 file_access = Handlers::Files.access_mode
 warn "ood_api_audit op=file_access status=#{file_access == :unavailable ? 'error' : 'ok'} mode=#{file_access}"

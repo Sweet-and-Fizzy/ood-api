@@ -40,10 +40,13 @@ It reads, writes, deletes and lists files in the user's space; creates
 directories; submits, cancels, holds and releases scheduler jobs through
 `ood_core`; reads an allowlisted slice of the process environment; and serves
 site policy fragments from `/etc/ood/config/agents.d`. The same operations are
-available over REST and as 19 MCP tools.
+available over REST and as MCP tools: 12 on a fresh install, 19 with everything
+enabled.
 
 The app itself makes no outbound network calls, spawns no background processes,
-loads no code dynamically, and runs no shell. Scheduler interaction goes through
+and runs no shell. The one thing it evaluates is the ERB in the site's own
+`/etc/ood/config/ondemand.d` files, as the Dashboard does; in production only
+root-owned files there are read. Scheduler interaction goes through
 `ood_core`'s adapters, which use argv-form process spawning rather than a shell.
 The jobs it submits are shell scripts and are not constrained by any of this.
 
@@ -90,8 +93,10 @@ destination a symlink chain actually reaches — following the chain to its end
 rather than one hop. Names are compared case-folded, because on macOS and
 Windows filesystems `~/.SSH` and `~/.ssh` are the same directory. Hardlinks are
 caught by device and inode, since a second name for a denied file resolves to
-itself. A recursive delete is refused outright if a denied path lies anywhere
-in the tree.
+itself. A recursive delete is refused outright if a denied home path lies
+anywhere in the tree. A git repository inside the tree is removed with it:
+its internals are denied to writes because a hook is code that runs later,
+and removing one leaves nothing to run.
 
 The hard case is a path that does not exist yet: the kernel canonicalises
 nothing, so every check runs on the caller's spelling. That is where each
@@ -115,9 +120,10 @@ process flipping a symlink as fast as it can.
 This depends on `/proc/self/fd`, which every Linux host normally has. If a
 Linux host is missing it, the file operations are refused with an error that
 says so; the app does not fall back to a weaker method. Each start logs which
-method is in use (`op=file_access mode=pinned`). Two things remain: a
-recursive delete walks the tree by name, and a directory listing reads each
-entry's size and dates by name after the names were read safely.
+method is in use (`op=file_access mode=pinned`). A recursive delete holds
+each directory open as it descends and never follows a symlink. A listing
+describes each entry itself, so a symlink is reported as a link and says
+nothing about what it points at.
 
 On systems that never had `/proc/self/fd`, which means development on macOS,
 the app checks the path before and after the open instead. That narrows the
@@ -127,9 +133,12 @@ window without closing it, and is not a deployment configuration.
 on job submission (`jobs`) and file writes (`files_write`) as groups, removes
 individual tools by name, and can switch the REST API or the MCP endpoint off
 entirely. A tool that is off is absent from the MCP tool list, not listed and
-refused, and its REST route returns 403. Settings that name an unknown group
-or tool fall back to read-only and are reported in the PUN log, so a typo
-cannot leave a tool on. `test/capabilities_test.rb` covers each of these.
+refused, and its REST route returns 403. Settings the app cannot understand
+turn both surfaces off until they are fixed: an unknown group, tool or key, a
+switch that is neither true nor false, or a settings file that could not be
+read. The reason is in the PUN log and at `/health`. Changes to the settings
+file reach running PUNs within seconds, so a site can switch the app off
+without restarting them. `test/capabilities_test.rb` covers each of these.
 
 **Authentication.** Apache authenticates every request before it reaches the
 PUN; the app trusts that and identifies the user from the OS, not from anything

@@ -230,6 +230,8 @@ module OodApi
       content_type :json
       payload = if response.status >= 500
                   { error: 'internal_error', message: 'An unexpected error occurred' }
+                elsif response.status == 404
+                  { error: 'not_found', message: 'There is nothing at this address' }
                 else
                   { error: 'bad_request', message: 'Malformed request' }
                 end

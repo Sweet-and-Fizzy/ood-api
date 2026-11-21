@@ -107,11 +107,20 @@ GET /health
 **Response:**
 ```json
 {
-  "status": "ok"
+  "status": "ok",
+  "rest": true,
+  "mcp": true,
+  "tools": ["get_cluster", "get_cluster_info", "..."],
+  "app_tokens": false,
+  "file_access": "pinned",
+  "problems": []
 }
 ```
 
-Returns only that. No version, cluster list, or configuration is exposed.
+`status` is `ok` when REST or MCP is served, `disabled` when the site has
+switched both off, and `misconfigured`, with HTTP 503, when the site's
+settings could not be understood; `problems` then says why. `tools` lists what
+the site has enabled.
 
 **Authentication.** This is the one endpoint outside the application-token
 check — it is not under `/api/v1/`, which is what that filter guards. It is
@@ -119,7 +128,7 @@ check — it is not under `/api/v1/`, which is what that filter guards. It is
 with no valid session or JWT gets a **302** to your IdP rather than a 200. A
 monitoring probe therefore needs a credential like any other client, and a
 probe that follows redirects will report success on the IdP's login page —
-check for `200` with `{"status":"ok"}`, not merely a non-error.
+check for `200` with `"status":"ok"` in the body, not merely a non-error.
 
 **Errors:**
 - 302 - No valid session or bearer token (redirect to the IdP, from Apache)
@@ -603,7 +612,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 ### Files
 
-The Files API provides access to files on the cluster. Access is restricted to the user's home directory and system temp directories.
+The Files API provides access to files on the cluster. Access is restricted to the directories the site allows in the Open OnDemand file browser, or, when the site has set no allowlist, to the user's home directory and the system temp directories. Listing and reading are on by default; writing, creating and deleting are available only where the site has enabled `files_write`.
 
 **Denied paths.** Within those roots, a few locations are refused for both read
 and write, and return `403 forbidden`:
@@ -621,9 +630,18 @@ and write, and return `403 forbidden`:
 | `~/.config/autostart` | Launched on graphical login |
 | `~/.forward` | `\|command` is executed by MTAs that honour it |
 | `~/.pam_environment` | Read by PAM at session start where enabled |
+| `~/bin`, `~/.bashrc.d`, `~/.config/environment.d`, `~/.config/fish` | On `PATH` or read at login |
+| `.k5login`, `.rhosts`, `.shosts` | Decide who may log in as the user |
+| `.xsession`, `.xinitrc`, `.xprofile`, `.zlogout`, `.logout`, `.Rprofile` | Run at session start or end, or by every R process |
+| `~/.vnc`, `~/.jupyter`, `~/.ipython/profile_default/startup` | Run when a desktop, notebook or IPython session starts |
+| `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker`, `~/.gnupg`, `~/.config/gh`, `~/.config/rclone`, `.git-credentials`, `.pgpass`, `.my.cnf` | Credentials for other services |
+| Python `site-packages/*.pth`, `sitecustomize.py`, `usercustomize.py` under `~/.local/lib` | Run by every Python process the user starts |
+| The inside of any `.git` directory or bare repository, anywhere | Hooks and config are code git runs later |
 
 Symlinks and hardlinks into these paths are refused too, and a recursive delete
-of a parent directory is refused if a denied path lies beneath it. The user can
+of a parent directory is refused if one of the home paths above lies beneath
+it. A git repository inside a deleted tree is removed with it. A symlink that
+belongs to another user is not followed. The user can
 still edit these files by other means; the restriction exists so that an agent
 acting on untrusted input cannot establish access that outlives the session.
 
@@ -676,6 +694,12 @@ GET /api/v1/files?path=:path
   ]
 }
 ```
+
+Every entry also carries `"symlink": true` or `false`. A symlink is described
+as the link itself: `directory` is `false` and the size, owner and time are
+the link's own, whatever it points at. List or read the link's path to follow
+it; that is where the access rules are applied to its target. Entries are
+listed whether or not the user can read them.
 
 **Response (single file):**
 ```json
@@ -1408,7 +1432,7 @@ ever reaches ood-api.
 ### Generating a Token
 
 1. Log in to Open OnDemand in a browser
-2. Navigate to **Settings > API Tokens** (`/settings/api_tokens`)
+2. Go to `/pun/sys/dashboard/settings/api_tokens`
 3. Enter a descriptive name for your token (e.g., "My Script", "CI Pipeline")
 4. Click **Generate Token**
 5. **Copy the token immediately** - it will only be shown once
@@ -1473,7 +1497,7 @@ Tokens are stored in the user's home directory at `~/.config/ondemand/tokens.jso
 
 ### Revoking Tokens
 
-Tokens can be revoked through the web interface at **Settings > API Tokens**. Revoked tokens are immediately invalidated.
+Tokens can be revoked on the same page. Revoked tokens are immediately invalidated.
 
 ## Security Considerations
 
@@ -1493,7 +1517,7 @@ API-specific details not covered there:
   mode `600`, and compared in constant time. A token is shown once, when it is
   created.
 - A token carries no scope: it authenticates the user, and the request then has
-  everything that user has. Revoke through **Settings > API Tokens**.
+  everything that user has. Revoke on the API Tokens page.
 - A token expires. The lifetime is chosen when it is created (30, 90 or 365
   days, within the site's maximum), and a request with an expired token gets
   the same 401 as an unknown one. The token page shows each token's expiry.

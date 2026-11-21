@@ -20,7 +20,7 @@ process model.
 | **A site operator** | Drops a markdown file in `agents.d/` stating local policy — which partitions to use, which accounts to charge — and every AI client reads it before acting. |
 
 It is a headless API with no end-user UI, though an optional Dashboard plugin
-adds a token management page at `/settings/api_tokens`.
+adds a token management page at `/pun/sys/dashboard/settings/api_tokens`.
 
 This README is for administrators evaluating the app. The guides:
 
@@ -67,8 +67,8 @@ API:
 - **Writing a file**, replacing its contents.
 - **Deleting a file or directory**, recursively if asked.
 
-Submitting jobs is not destructive but does consume allocation, so a client in
-a loop costs real money.
+Submitting a job runs a script as the user, so it can do anything the user
+can, and it consumes allocation, so a client in a loop costs real money.
 
 All of this, reads plus the destructive operations above, is reachable by an
 LLM through the MCP endpoint, not just a person clicking through the dashboard.

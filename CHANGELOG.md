@@ -87,6 +87,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   be removed with `disable`, and `rest: false` or `mcp: false` switches a
   whole surface off. See
   [what to enable](docs/installation.md#what-to-enable).
+- **Settings the app cannot understand turn it off.** An unknown group, tool
+  or key under `ood_api`, a switch that is neither true nor false, or a
+  settings file that is not root-owned or does not parse makes both REST and
+  MCP answer 503, where a typo could previously leave on the thing it was
+  meant to remove. `/health` and the PUN log give the reason.
+- Changes to `/etc/ood/config/ondemand.d` reach running PUNs within a couple
+  of seconds, so a site can switch the app off without restarting them.
+- `/health` reports the settings in force (`status`, `rest`, `mcp`, `tools`,
+  `app_tokens`, `file_access`, `problems`) where it returned only
+  `{"status":"ok"}`. It answers 503 when the settings are not understood.
+- The app reads its own env file, `/etc/ood/config/apps/ood-api/env`.
+  `app_tokens` can be set under `ood_api` as well as in
+  `OOD_API_APP_TOKENS`. An environment variable set to nothing counts as
+  unset.
+- A directory listing describes each entry itself. A symlink has
+  `"symlink": true` and `"directory": false` and carries the link's own size
+  and dates, where the listing used to describe the link's target, including
+  targets outside the allowed directories. Entries the user cannot read are
+  now listed.
+- Reading, writing, touching or deleting one of the allowed top-level
+  directories itself returns 400 with a message that says so. Listing it
+  still works.
+- `touch` through a symlink follows the user's own links, as read and write
+  do.
+- Audit lines begin `ood_api_audit ts=<time> op=<operation>` whatever else
+  they carry; the token id used to come first when application tokens were
+  on.
+- An address the app does not serve returns `not_found`, not `bad_request`.
+- An empty `workdir` on job submission means the default directory.
+- Filesystem errors that used to surface as a 500 are reported: a read-only
+  filesystem and "operation not permitted" as 403, a busy file as 400, and
+  I/O errors and stale handles as a storage error. Error messages no longer
+  include internal paths.
 - `ostruct` is now a declared dependency. `ood_core` requires it, and Ruby
   4.0 no longer ships it by default, so the app did not load there.
 - RuboCop runs with Open OnDemand's own settings, including its method

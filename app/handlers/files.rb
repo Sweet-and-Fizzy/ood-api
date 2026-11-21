@@ -384,19 +384,29 @@ module Handlers
     # Refuse a recursive delete whose tree contains a denied path. Compares
     # prefixes rather than walking the tree: the denied set is small and fixed,
     # and walking a large home directory on every delete would be slow.
+    #
+    # A git repository inside the tree is removed with it. Its internals are
+    # denied to writes because a hook or a config line is code that runs
+    # later; removing them leaves nothing behind to run.
     def self.deny_recursive!(dir)
       home = Pathname.new(Dir.home)
       home = home.realpath if home.exist?
       root = dir.exist? ? dir.realpath : dir
 
-      (DENIED_DIRS + DENIED_EXACT).each do |rel|
-        denied = home + rel
-        next unless denied.exist?
-        next unless path_under?(denied.realpath, root) || denied.realpath == root
+      denied_in_home(home).each do |rel, denied|
+        next unless path_under?(denied, root)
 
         raise ForbiddenError,
               "Access denied: recursive delete would remove #{rel}, which is not accessible through this API"
       end
+    end
+
+    # @return [Array<Array(String, Pathname)>] each denied path that exists
+    #   in the home directory, as written on the deny-list and as resolved
+    def self.denied_in_home(home)
+      named = (DENIED_DIRS + DENIED_EXACT).map { |rel| home + rel }
+      matched = DENIED_GLOBS.flat_map { |glob| Pathname.glob(home.join(glob).to_s) }
+      (named + matched).select(&:exist?).map { |path| [path.relative_path_from(home).to_s, path.realpath] }
     end
 
     # Paths this API refuses to touch even though they sit inside the user's
@@ -464,6 +474,12 @@ module Handlers
       %r{\A\.local/lib/python[^/]+/site-packages/(user|site)customize\.py\z},
       # A .pth file there is executed line by line at interpreter start.
       %r{\A\.local/lib/python[^/]+/site-packages/[^/]+\.pth\z}
+    ].freeze
+
+    # The same files as DENIED_PATTERNS, in the form a directory search takes.
+    DENIED_GLOBS = [
+      '.local/lib/python*/site-packages/{user,site}customize.py',
+      '.local/lib/python*/site-packages/*.pth'
     ].freeze
 
     # A denied name can itself be a symlink: `~/.bashrc -> ~/dots/bashrc` is a

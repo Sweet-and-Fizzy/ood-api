@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'api_token'
+require_relative 'capabilities'
 
 module OodApi
   # Application-level token authentication, shared by the REST app and the MCP
@@ -26,8 +27,11 @@ module OodApi
 
     module_function
 
+    # `OOD_API_APP_TOKENS=true`, or `app_tokens: true` under `ood_api` in
+    # ondemand.d. A value that is neither true nor false is reported by
+    # OodApi::Capabilities, which serves nothing until it is fixed.
     def enabled?
-      ENV['OOD_API_APP_TOKENS'] == 'true'
+      Capabilities::ON.include?(SiteConfig.setting('OOD_API_APP_TOKENS', :app_tokens).to_s.strip.downcase)
     end
 
     # Returns the presented token, or nil.

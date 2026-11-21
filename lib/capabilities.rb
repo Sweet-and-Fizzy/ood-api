@@ -32,7 +32,7 @@ module OodApi
     ALL_TOOLS = GROUPS.values.flatten.freeze
     DEFAULT_GROUPS = ['read'].freeze
 
-    SETTINGS = [:capabilities, :disable, :rest, :mcp, :token_max_days, :token_allow_never].freeze
+    SETTINGS = [:capabilities, :disable, :rest, :mcp, :app_tokens, :token_max_days, :token_allow_never].freeze
     ON = ['true', '1', 'yes', 'on'].freeze
     OFF = ['false', '0', 'no', 'off'].freeze
 
@@ -64,14 +64,14 @@ module OodApi
 
     # One line for the PUN log, so an admin can see what their settings produced.
     def summary
-      "rest=#{rest?} mcp=#{mcp?} tools=#{enabled_tools.to_a.sort.join(',')}"
+      "rest=#{rest?} mcp=#{mcp?} app_tokens=#{AppAuth.enabled?} tools=#{enabled_tools.to_a.sort.join(',')}"
     end
 
     # Writes the settings in force to the PUN log: at startup, and again
     # whenever the files in ondemand.d change.
     def announce
       found = problems
-      found.each { |problem| warn "ood_api_audit op=capabilities status=error error=\"#{problem}\"" }
+      found.each { |problem| warn "ood_api_audit op=capabilities status=error error=\"#{problem.tr('"', "'")}\"" }
       note = found.empty? ? '' : ' error="settings could not be understood; nothing is served until they are fixed"'
       warn "ood_api_audit op=capabilities status=#{found.empty? ? 'ok' : 'error'} #{summary}#{note}"
     end
@@ -83,11 +83,12 @@ module OodApi
     def resolved
       groups = list_setting('OOD_API_CAPABILITIES', :capabilities) || DEFAULT_GROUPS
       disabled = list_setting('OOD_API_DISABLE', :disable) || []
-      rest = surface('OOD_API_REST', :rest)
-      mcp = surface('OOD_API_MCP', :mcp)
+      rest = switch('OOD_API_REST', :rest)
+      mcp = switch('OOD_API_MCP', :mcp)
       problems = SiteConfig.problems + unknown_settings +
                  unknown(groups, GROUPS.keys + ['all'], 'capability') + unknown(disabled, ALL_TOOLS, 'tool') +
-                 [rest, mcp].grep(String)
+                 [rest, mcp, switch('OOD_API_APP_TOKENS', :app_tokens, default: false),
+                  switch('OOD_API_TOKEN_ALLOW_NEVER', :token_allow_never, default: false)].grep(String)
       return { tools: Set.new, rest: false, mcp: false, problems: problems } unless problems.empty?
 
       groups = GROUPS.keys if groups.include?('all')
@@ -117,9 +118,9 @@ module OodApi
     end
 
     # @return [Boolean, String] on or off, or what is wrong with the value
-    def surface(env_name, key)
+    def switch(env_name, key, default: true)
       raw = SiteConfig.setting(env_name, key)
-      return true if raw.nil?
+      return default if raw.nil?
 
       value = raw.to_s.strip.downcase
       return true if ON.include?(value)
@@ -129,5 +130,7 @@ module OodApi
     end
   end
 end
+
+require_relative 'app_auth'
 
 OodApi::SiteConfig.on_change { OodApi::Capabilities.announce }

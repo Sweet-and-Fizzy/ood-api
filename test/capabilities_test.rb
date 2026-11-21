@@ -194,6 +194,32 @@ class CapabilitiesTest < Minitest::Test
     ENV['RACK_ENV'] = saved
   end
 
+  def test_app_tokens_can_be_required_from_the_settings_file
+    refute OodApi::AppAuth.enabled?
+    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  app_tokens: true\n")
+    OodApi::SiteConfig.reset!
+
+    assert OodApi::AppAuth.enabled?
+    assert_includes caps.summary, 'app_tokens=true'
+    get '/api/v1/clusters'
+    assert_equal 401, last_response.status
+  end
+
+  # Treating it as "off" would drop a requirement the site asked for.
+  def test_an_app_token_setting_that_is_not_a_switch_turns_everything_off
+    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  app_tokens: required\n")
+
+    assert_equal ['app_tokens must be true or false, not "required"'], caps.problems
+    refute caps.rest?
+  end
+
+  def test_an_unknown_address_says_so
+    get '/nope'
+
+    assert_equal 404, last_response.status
+    assert_equal 'not_found', JSON.parse(last_response.body)['error']
+  end
+
   # The switch an admin reaches for: no PUN restart.
   def test_a_change_on_disk_is_picked_up_by_a_running_app
     assert caps.rest?
