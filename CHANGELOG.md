@@ -55,6 +55,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A fresh install is now read-only.** Job submission and file writes are off
+  until the site enables them. To keep the previous behaviour, add
+  `ood_api: { capabilities: all }` to a file in `/etc/ood/config/ondemand.d`,
+  or set `OOD_API_CAPABILITIES=all` on the PUN. A tool that is off is absent
+  from the MCP tool list and its REST route returns 403. Individual tools can
+  be removed with `disable`, and `rest: false` or `mcp: false` switches a
+  whole surface off. See
+  [what to enable](docs/installation.md#what-to-enable).
 - Ruby 3.0 is no longer supported. The floor is 3.1 and CI covers 3.1 to 4.0,
   matching Open OnDemand's own test matrix. This lifts the `excon` pin, so the
   previously unpatched advisory GHSA-48rx-c7pg-q66r is resolved.

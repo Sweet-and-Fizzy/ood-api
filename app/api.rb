@@ -13,6 +13,7 @@ require 'ood_core'
 require_relative '../lib/api_token'
 require_relative '../lib/app_auth'
 require_relative '../lib/origin_check'
+require_relative '../lib/capabilities'
 require_relative 'handlers/audit'
 require_relative 'handlers/clusters'
 require_relative 'handlers/jobs'
@@ -76,7 +77,19 @@ module OodApi
     # filter runs, so a body Rack cannot parse is rejected before auth. See the
     # Rack::BadRequest handlers below.
     before '/api/v1/*' do
+      halt_error(404, 'not_found', 'The REST API is not enabled at this site') unless Capabilities.rest?
       authenticate!
+    end
+
+    # See OodApi::Capabilities. Runs after authentication, so only a signed-in
+    # user learns what the site has turned off.
+    before '/api/v1/*' do
+      tool = route_tool
+      next if tool.nil? || Capabilities.enabled?(tool)
+
+      Handlers::Audit.emit_event(op: tool, user: current_user, source: 'rest', status: 'disabled',
+                                 path: request.path_info)
+      halt_error(403, 'forbidden', "#{tool} is not enabled at this site")
     end
 
     # See OodApi::OriginCheck. Applied to state-changing requests; a
@@ -544,10 +557,44 @@ module OodApi
 
     # ============ Helpers ============
 
+    # The tool each route corresponds to, so one setting covers both surfaces.
+    ROUTE_TOOLS = [
+      ['GET',    %r{\A/api/v1/clusters\z},             'list_clusters'],
+      ['GET',    %r{\A/api/v1/clusters/[^/]+\z},       'get_cluster'],
+      ['GET',    %r{\A/api/v1/accounts\z},             'list_accounts'],
+      ['GET',    %r{\A/api/v1/queues\z},               'list_queues'],
+      ['GET',    %r{\A/api/v1/cluster_info\z},         'get_cluster_info'],
+      ['GET',    %r{\A/api/v1/jobs\z},                 'list_jobs'],
+      ['GET',    %r{\A/api/v1/jobs/historic\z},        'list_historic_jobs'],
+      ['GET',    %r{\A/api/v1/jobs/[^/]+\z},           'get_job'],
+      ['POST',   %r{\A/api/v1/jobs\z},                 'submit_job'],
+      ['DELETE', %r{\A/api/v1/jobs/[^/]+\z},           'cancel_job'],
+      ['POST',   %r{\A/api/v1/jobs/[^/]+/hold\z},      'hold_job'],
+      ['POST',   %r{\A/api/v1/jobs/[^/]+/release\z},   'release_job'],
+      ['GET',    %r{\A/api/v1/files\z},                'list_files'],
+      ['GET',    %r{\A/api/v1/files/content\z},        'read_file'],
+      ['PUT',    %r{\A/api/v1/files\z},                'write_file'],
+      ['DELETE', %r{\A/api/v1/files\z},                'delete_file'],
+      ['GET',    %r{\A/api/v1/env\z},                  'list_env'],
+      ['GET',    %r{\A/api/v1/env/[^/]+\z},            'get_env']
+    ].freeze
+
     # Accepted spellings for a boolean query param. See truthy_param?.
     TRUTHY_PARAM_VALUES = ['true', '1', 'yes', 'on'].freeze
 
     private
+
+    # nil for a route with no tool behind it, such as /api/v1/context.
+    def route_tool
+      # POST /files makes a directory or an empty file, which are different
+      # tools over MCP.
+      if request.post? && request.path_info == '/api/v1/files'
+        return params[:type] == 'directory' ? 'create_directory' : 'write_file'
+      end
+
+      method = request.head? ? 'GET' : request.request_method
+      ROUTE_TOOLS.find { |verb, pattern, _| verb == method && pattern.match?(request.path_info) }&.last
+    end
 
     # See OodApi::AppAuth. The same rule guards the MCP transport, so both
     # surfaces enforce app tokens identically.

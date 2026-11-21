@@ -40,8 +40,7 @@ class DocsTest < Minitest::Test
   # The README advertises a tool count. mcp_server.rb is the only place the
   # list actually lives.
   def test_documented_mcp_tool_count_matches_the_server
-    src = read_utf8(File.join(ROOT, 'app/mcp_server.rb'))
-    actual = src[/tools:\s*\[(.*?)\]/m, 1].scan(/\w+Tool/).uniq.size
+    actual = OodApi::MCP_TOOLS.size
 
     # Numerals only, and the number must sit directly before "tools" (or
     # "MCP tools"). Docs state the count as a numeral, which is more scannable

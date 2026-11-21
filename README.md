@@ -77,12 +77,12 @@ shell init files, and the app's own token store, an environment-variable
 allowlist, and audit logging of every operation. Every MCP tool declares
 whether it is read-only or destructive, so a client can ask the user before
 cancelling, overwriting, or deleting, but the app itself never asks for
-confirmation. Two gaps have no fix inside
-the app. **No rate limiting** means a looping agent can saturate a scheduler
-your other users share. **No read-only mode** means you cannot offer the read
-surface without also offering write, delete, and job submission.
-[Security posture](#security-posture) covers both gaps, including what you can
-do about them at the Apache and scheduler layers.
+confirmation. **A fresh install is read-only.** Job submission and file
+writes are off until you turn them on, and any single tool can be removed; see
+[what to enable](docs/installation.md#what-to-enable). One gap has no fix
+inside the app: **no rate limiting** means a looping agent can saturate a
+scheduler your other users share. [Security posture](#security-posture)
+covers what you can do about it at the Apache and scheduler layers.
 
 ## Architecture
 
@@ -219,12 +219,10 @@ app. Read it before you deploy.
   or per-association QOS limits bound the damage rather than the rate, and are
   worth having anyway. We have not tested any of these configurations, so
   verify whichever you choose on your own site.
-- **No read-only mode.** You cannot disable the write, delete, or job-submission
-  surface while keeping the read surface. There is no setting that approximates
-  one: `OOD_API_MAX_FILE_WRITE` bounds the body of *every* request, so lowering
-  it to block writes also rejects job submission, and setting it to `0` stops
-  the MCP endpoint from starting at all. If you need a read-only deployment,
-  do not install this app.
+- **Read-only unless you say otherwise.** Job submission and file writes are
+  opt-in, per site, and individual tools can be removed by name. A tool that
+  is off is absent from the MCP tool list and its REST route returns 403. See
+  [what to enable](docs/installation.md#what-to-enable).
 - **No per-user or per-group enablement.** As an OOD `sys` app it is available
   to everyone who can log into the portal. Restricting it means not installing
   it, or removing it from `/var/www/ood/apps/sys`.
@@ -279,7 +277,7 @@ the code, see [Contributing](CONTRIBUTING.md) and
 - MCP transport runs in stateless mode — server-initiated notifications are not supported (tool list is static, so this has no practical impact)
 - Job history, hold/release, and dependencies are scheduler-dependent — not all schedulers support all features
 - Account discovery, queue listing, cluster info, and historic jobs are only fully supported on Slurm — other schedulers return `501 not_implemented`. See the scheduler table under [Before you evaluate](#before-you-evaluate). Contributions to expand adapter coverage in `ood_core` would benefit all ood-api sites
-- No rate limiting, and no read-only mode — see [Security posture](#security-posture)
+- No rate limiting — see [Security posture](#security-posture)
 - Historic job listings are **filtered to the authenticated user** (`job_owner` must match); the raw accounting API may return broader data on some schedulers
 - Audit log output goes to stderr (PUN error.log) — no dedicated log file or rotation beyond OS logrotate
 

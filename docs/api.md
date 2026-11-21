@@ -1479,8 +1479,9 @@ Tokens can be revoked through the web interface at **Settings > API Tokens**. Re
 Every request runs as the authenticated user inside their PUN, so the API grants
 no privilege the user does not already have. What it *does* constrain — the path
 allowlist, the denied paths inside `$HOME`, size limits, the environment
-allowlist, audit logging — and what it deliberately does not — no rate limiting,
-no read-only mode, no per-user enablement — is documented in the README's
+allowlist, audit logging, the tools a site has enabled — and what it
+deliberately does not — no rate limiting, no per-user enablement — is
+documented in the README's
 **[SECURITY.md](../SECURITY.md)**. Read that before
 deploying.
 

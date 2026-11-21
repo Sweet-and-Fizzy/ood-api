@@ -8,6 +8,7 @@ require 'json'
 require 'stringio'
 require_relative '../lib/app_auth'
 require_relative '../lib/origin_check'
+require_relative '../lib/capabilities'
 require_relative 'mcp_tools/clusters'
 require_relative 'mcp_tools/jobs'
 require_relative 'mcp_tools/files'
@@ -49,19 +50,41 @@ MCP.configure do |config|
 end
 
 module OodApi
+  MCP_TOOLS = [
+    Tools::ListClustersTool, Tools::GetClusterTool, Tools::ListAccountsTool, Tools::ListQueuesTool,
+    Tools::GetClusterInfoTool,
+    Tools::ListJobsTool, Tools::GetJobTool, Tools::ListHistoricJobsTool, Tools::SubmitJobTool,
+    Tools::CancelJobTool, Tools::HoldJobTool, Tools::ReleaseJobTool,
+    Tools::ListFilesTool, Tools::ReadFileTool, Tools::WriteFileTool, Tools::CreateDirectoryTool,
+    Tools::DeleteFileTool,
+    Tools::ListEnvTool, Tools::GetEnvTool
+  ].freeze
+
+  # A tool the site has not turned on is left out of `tools/list` entirely,
+  # rather than listed and refused. A model shown a tool that says no will
+  # retry it or argue for it; one that is absent is not part of the
+  # conversation.
+  def self.enabled_mcp_tools
+    MCP_TOOLS.select { |tool| Capabilities.enabled?(tool.name_value) }
+  end
+
+  # What the server tells a client about itself. It describes only what the
+  # site has turned on, so a model is not told about tools it cannot see.
+  def self.mcp_instructions
+    parts = ['list clusters, discover accounts and queues, check cluster utilization, view jobs and job history, ' \
+             'list and read files, and query environment variables']
+    parts << 'submit, cancel, hold and release jobs' if Capabilities.enabled?('submit_job')
+    parts << 'write files, create directories and delete files' if Capabilities.enabled?('write_file')
+    "Open OnDemand HPC cluster tools. Use these tools to #{parts.join('; ')}. " \
+      'This site may not have every tool enabled. ' \
+      'Read the ood://context resource for site-specific policies before acting.'
+  end
+
   def self.build_mcp_server
     server = MCP::Server.new(
       name:         'ood-api',
-      instructions: 'Open OnDemand HPC cluster management tools. Use these tools to list clusters, discover accounts and queues, check cluster utilization, submit/cancel/hold/release jobs with optional dependencies, view job history, manage files (read, write, append, create directories, delete), and query environment variables. Read the ood://context resource for site-specific policies before acting.',
-      tools:        [
-        Tools::ListClustersTool, Tools::GetClusterTool, Tools::ListAccountsTool, Tools::ListQueuesTool,
-        Tools::GetClusterInfoTool,
-        Tools::ListJobsTool, Tools::GetJobTool, Tools::ListHistoricJobsTool, Tools::SubmitJobTool,
-        Tools::CancelJobTool, Tools::HoldJobTool, Tools::ReleaseJobTool,
-        Tools::ListFilesTool, Tools::ReadFileTool, Tools::WriteFileTool, Tools::CreateDirectoryTool,
-        Tools::DeleteFileTool,
-        Tools::ListEnvTool, Tools::GetEnvTool
-      ],
+      instructions: mcp_instructions,
+      tools:        enabled_mcp_tools,
       resources:    [Tools::CONTEXT_RESOURCE]
     )
 
@@ -270,6 +293,8 @@ module OodApi
   # The checks the REST app runs in its `before` filters. Returns a Rack
   # response to send, or nil to let the request through.
   def self.refuse_request(env)
+    return refusal(404, 'not_found', 'The MCP endpoint is not enabled at this site') unless Capabilities.mcp?
+
     user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
     Handlers::Audit.context = nil
     token = OodApi::AppAuth.authenticate(env)

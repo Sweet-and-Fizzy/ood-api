@@ -23,10 +23,11 @@ same home directory. A submitted script can write `~/.ssh/authorized_keys`, or
 anything else the user can, and none of the path controls below apply to what a
 running job does. While job submission is available to an agent, treat the
 agent as able to run code as the user. What stands between injected input and a
-submitted job is the client's approval step: `submit_job` is annotated as
-destructive and open-world so that MCP clients ask before calling it, and the
-audit log records a SHA-256 digest of every submitted script. There is not yet
-a way to turn job submission off; see the limitations below.
+submitted job is, first, the site's choice to enable it at all: job submission
+is off in a fresh install. Where it is on, the remaining safeguard is the
+client's approval step. `submit_job` is annotated as destructive and
+open-world so that MCP clients ask before calling it, and the audit log
+records a SHA-256 digest of every submitted script.
 
 Where a file control looks over-cautious for a user who has a shell anyway,
 the first paragraph is why.
@@ -93,12 +94,31 @@ aimed at it — dangling symlinks, symlinked parent directories, multi-hop
 chains, case variants, hardlink aliases, and traversal. Each of those tests was
 written against a specific bypass and verified to fail without its fix.
 
-Reads and writes are also checked after the file is opened. In a shared
-directory such as `/tmp`, another user can replace part of a path with a
-symlink between the check and the open. The open file must be a regular file,
-and must be the file the validated path resolved to, before anything is read,
-written or truncated. FIFOs and device nodes are refused, since opening one can
-block a worker indefinitely.
+Checking a path and then opening it resolves the path twice, and in a shared
+directory such as `/tmp` another user can replace part of it with a symlink
+in between. On Linux the app does not resolve twice. Each file operation
+opens the parent directory, asks the kernel where that open directory is,
+applies the rules above to that location, and then works on the entry by name
+inside it, refusing a symlink that appears in the entry's place. Missing
+parent directories are created the same way, one level at a time. Nothing is
+created, written, truncated or deleted before the check. FIFOs and device
+nodes are refused, since opening one can block a worker indefinitely.
+`test/handlers/pinned_files_test.rb` runs these swaps, including a second
+process flipping a symlink as fast as it can.
+
+This depends on `/proc/self/fd`. On other systems, which means development on
+macOS, the app checks the path before and after the open instead, which
+narrows the window but does not close it. Two things remain on Linux as well:
+a recursive delete walks the tree by name, and a directory listing reads each
+entry's size and dates by name after the names were read safely.
+
+**What is enabled.** A fresh install serves the read tools only. A site turns
+on job submission (`jobs`) and file writes (`files_write`) as groups, removes
+individual tools by name, and can switch the REST API or the MCP endpoint off
+entirely. A tool that is off is absent from the MCP tool list, not listed and
+refused, and its REST route returns 403. Settings that name an unknown group
+or tool fall back to read-only and are reported in the PUN log, so a typo
+cannot leave a tool on. `test/capabilities_test.rb` covers each of these.
 
 **Authentication.** Apache authenticates every request before it reaches the
 PUN; the app trusts that and identifies the user from the OS, not from anything
@@ -164,9 +184,8 @@ than one you know is missing.
 - **No rate limiting.** A looping client can saturate a shared scheduler.
   Apache fronts every request, so a request-rate module there covers the whole
   portal; scheduler-side limits such as `MaxJobCount` bound the damage.
-- **No read-only mode, and no way to disable job submission.** The read surface
-  cannot be offered without the write, delete and job-submission surfaces, and
-  job submission is code execution as the user (see the top of this document).
+- **Enablement is per site, not per user or per client.** A capability a site
+  turns on is on for everyone who can log in, and for every client and token.
 - **Secrets outside the deny-list are readable.** The list names a fixed set
   of paths. A credential kept anywhere else in an allowed directory can be
   read by an agent and end up in a model's context.
