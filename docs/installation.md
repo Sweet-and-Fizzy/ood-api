@@ -47,9 +47,18 @@ in to the whole portal, Shell included. Requiring the audience limits bearer
 access to tokens issued for Open OnDemand's own client. Use the client ID from
 `oidc_client_id` in `ood_portal.yml` (with the bundled Dex it is the portal's
 server name). Browser login is unaffected, because the session's ID token
-carries the same audience. If your IdP puts the client in a different claim
-(Keycloak access tokens use `azp`), require that claim instead, and check the
-result by presenting a token issued to another client: it must get a 401.
+carries the same audience.
+
+**Keycloak sites use `Require claim azp:YOUR_OOD_CLIENT_ID` instead.** A
+Keycloak access token carries `aud: account` and names the client in `azp`, so
+the `aud:` line above refuses every bearer token, the portal's own included.
+Do not require `aud:account`: it accepts tokens from every client in the realm
+and breaks browser login. Checked on Keycloak 26.0.8 with Open OnDemand 4.2.5:
+with the `azp:` line the portal client's token is accepted, another client's
+token gets a 401, and browser login still works.
+
+Whatever the IdP, check the result by presenting a token issued to another
+client: it must get a 401.
 
 ```bash
 sudo /opt/ood/ood-portal-generator/sbin/update_ood_portal

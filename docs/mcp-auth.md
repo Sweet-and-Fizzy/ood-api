@@ -241,10 +241,23 @@ Set `resource` to the full URL of the MCP endpoint, exactly as users
 configure it in their client. Set `authorization_servers` to your IdP's
 issuer URL, exactly as the IdP states it in its own metadata.
 
+If access depends on a scope (the Keycloak audience scope described under
+[Which clients may connect](#which-clients-may-connect)), add
+`"scopes_supported": ["email", "ood-mcp"]`. Clients request exactly this list,
+and use it when self-registering. Include the scope that carries your
+`OIDCOAuthRemoteUserClaim` (`email` in the tested setup), or the token arrives
+without a username and Apache answers 401 after a login that appeared to
+succeed. Leave `openid` out: Keycloak rejects a registration that names it.
+Every pre-registered client needs the listed scopes assigned too, or its login
+fails with `invalid_scope`.
+
 That is the only document to host. Clients fetch the authorization server's
-metadata from the IdP itself, at `<issuer>/.well-known/oauth-authorization-server`
-or `<issuer>/.well-known/openid-configuration`, and every IdP named in this
-guide publishes one. Do not host a copy on the OOD server: the `issuer` in
+metadata from the IdP itself. For an issuer with a path, such as Keycloak's
+`https://idp.example.edu/realms/hpc`, they try
+`https://idp.example.edu/.well-known/oauth-authorization-server/realms/hpc`
+first (Keycloak 26.8.2 serves it, 26.0.8 does not) and fall back to
+`<issuer>/.well-known/openid-configuration`, which every IdP named in this
+guide publishes. Do not host a copy on the OOD server: the `issuer` in
 that document has to match the URL it was fetched from, so clients reject a
 copy served from another host.
 
@@ -265,15 +278,36 @@ auth:
 
 Apache accepts a request that satisfies any one of the `Require` lines.
 
+On Keycloak write these as `azp:` lines (`Require claim
+azp:YOUR_OOD_CLIENT_ID`, `Require claim azp:YOUR_MCP_CLIENT_ID`), or give the
+MCP client an audience mapper that adds the OOD client to `aud`. `aud` may be
+an array; the line matches if any member equals the value. `azp:` and `aud:`
+lines can be mixed.
+
 This is why pre-registering one client for MCP use is the safe arrangement.
 With Dynamic Client Registration, any software can register a client at your
 IdP and get a new client ID, so there is no fixed list to allow. Accepting
 every client is the `Require valid-user` configuration, which lets a token
 issued to any service log in to the whole portal. DCR is safe only if your
-IdP puts the *resource* in the token's audience (RFC 8707 resource
-indicators), so that you can require
-`aud:https://ondemand.example.edu/pun/sys/ood-api/mcp`. That has not been
-tested with ood-api. Dex ignores the `resource` parameter.
+IdP puts the *resource* in the token's audience, so that you can require
+`aud:https://ondemand.example.edu/pun/sys/ood-api/mcp`. Dex and Keycloak
+(checked on 26.0.8 and 26.8.2) both ignore the RFC 8707 `resource` parameter.
+
+On Keycloak the same result comes from a client scope. Create a scope (for
+example `ood-mcp`) with an Audience mapper whose custom audience is the MCP
+URL, add it to the realm's *optional* default client scopes, and list it in
+`scopes_supported` in the discovery document (see Step 2) so clients request
+it. Self-registered clients then get the audience only on tokens they
+requested for Open OnDemand, and their other tokens are refused. Do not make
+it a *default* scope: every client created afterwards would carry the
+audience on every token. Keep a second line for the portal itself (`Require
+claim azp:YOUR_OOD_CLIENT_ID`), since its tokens do not carry the MCP
+audience. This was run end to end with the official MCP client SDK (1.32.2),
+including self-registration.
+
+This limits which *tokens* are accepted, not which software may register. Any
+client that can reach the registration endpoint can ask for the scope; the
+user's login and Keycloak's consent screen are what stand in its way.
 
 ### Step 3: Regenerate and restart
 
@@ -309,8 +343,10 @@ client you have not listed must get a 401.
 This setup was checked on Open OnDemand 4.2.5 with the bundled Dex: the
 official MCP client SDK (1.32.2) followed the 401 to the metadata and on to
 Dex, and a token from an authorization-code flow with PKCE through a
-pre-registered public client was accepted by `/mcp`. It has not been run
-against Keycloak or CILogon, or driven from an interactive MCP client.
+pre-registered public client was accepted by `/mcp`. It was also run against
+Keycloak 26.0.8, with a pre-registered client and with a self-registered one.
+It has not been run against CILogon, or driven from an interactive MCP
+client.
 
 ### Client configuration
 
@@ -379,7 +415,7 @@ Pre-registering one client is the arrangement this guide has tested.
 | Identity Provider | DCR Support |
 |-------------------|-------------|
 | CILogon | **No** — pre-register the client, see below |
-| Keycloak | Can be configured per-realm |
+| Keycloak | Yes, but anonymous registration is refused until you add the registering hosts to the realm's "Trusted Hosts" client registration policy (or hand out initial access tokens) |
 | Dex | Not supported — pre-register a client |
 
 DCR is a convenience for the operator, not a prerequisite. Without it,
@@ -460,6 +496,23 @@ validation. Left at the default, every request fails to map a user. Set it to
 a field your response actually contains, and make sure that value is one your
 [`user_map_match`](https://osc.github.io/ood-documentation/latest/reference/files/ood-portal-yml.html)
 accepts.
+
+**The audience line changes too.** The response has no `aud`, so `Require
+claim aud:...` from the install guide refuses every introspected token. The
+client is in `client_id` instead. Keep the `aud:` line, which browser
+sessions satisfy, and add a `client_id:` line for bearer tokens:
+
+```yaml
+auth:
+  - "AuthType auth-openidc"
+  - "Require claim aud:cilogon:/client_id/YOUR_CLIENT_ID"
+  - "Require claim client_id:cilogon:/client_id/YOUR_CLIENT_ID"
+```
+
+This follows from the fields listed above and from how the `Require` lines
+combine, which was checked with other IdPs. It has not been run against
+CILogon. Confirm it the same way as any other setup: a token issued to
+another client must get a 401.
 
 The other defaults are usually fine: client authentication is
 `client_secret_basic` and the token is sent as the `token` parameter.
