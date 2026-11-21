@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+# The operations behind both the REST routes and the MCP tools, and the
+# errors they raise.
 module Handlers
   # Parent of every error a handler raises on purpose, so callers can rescue
   # the family without listing each member.

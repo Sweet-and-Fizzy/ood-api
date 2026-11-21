@@ -5,6 +5,7 @@ require_relative '../handlers/jobs'
 
 module OodApi
   module Tools
+    # MCP tool: list the user's active jobs on a cluster.
     class ListJobsTool < Base
       tool_name 'list_jobs'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
@@ -37,6 +38,7 @@ module OodApi
       end
     end
 
+    # MCP tool: describe one job.
     class GetJobTool < Base
       tool_name 'get_job'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
@@ -74,6 +76,7 @@ module OodApi
       end
     end
 
+    # MCP tool: list the user's completed jobs on a cluster.
     class ListHistoricJobsTool < Base
       tool_name 'list_historic_jobs'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
@@ -107,6 +110,7 @@ module OodApi
       end
     end
 
+    # MCP tool: submit a batch job.
     class SubmitJobTool < Base
       tool_name 'submit_job'
       # A job script is arbitrary code run as the user on a compute node: it
@@ -144,44 +148,31 @@ module OodApi
       # Same fields as the REST twin: the scheduler writes these paths as the
       # user, so an audit record that omits them names nothing that was
       # written. Extracted to keep `call` within the method-length limit.
-      def self.audit_fields(cluster_id, output_path, error_path, workdir, native, script_content)
+      def self.audit_fields(cluster_id, script_content, options)
+        native = options[:native]
         { **Handlers::Jobs.script_audit(script_content),
-          cluster:     cluster_id,
-          output_path: output_path,
-          error_path:  error_path,
-          workdir:     workdir,
-          native:      native.is_a?(Array) ? native.join(' ') : native }
+          **options.slice(:output_path, :error_path, :workdir),
+          cluster: cluster_id,
+          native:  native.is_a?(Array) ? native.join(' ') : native }
       end
 
-      def self.run(cluster_id:, script_content:, workdir: nil,
-                   job_name: nil, queue_name: nil, accounting_id: nil,
-                   wall_time: nil, output_path: nil, error_path: nil,
-                   native: nil, after: nil, afterok: nil, afternotok: nil, afterany: nil, **_params)
-        audit = audit_fields(cluster_id, output_path, error_path, workdir, native, script_content)
-        job_info, cluster = audited('submit_job', **audit) do
-          Handlers::Jobs.submit(
-            clusters:       OodApi::App.clusters,
-            cluster_id:     cluster_id,
-            script_content: script_content,
-            workdir:        workdir,
-            job_name:       job_name,
-            queue_name:     queue_name,
-            accounting_id:  accounting_id,
-            wall_time:      wall_time,
-            output_path:    output_path,
-            error_path:     error_path,
-            native:         native,
-            after:          after,
-            afterok:        afterok,
-            afternotok:     afternotok,
-            afterany:       afterany
-          )
+      # The optional arguments, which are passed through to the handler as
+      # they are. Anything else a client sends is dropped here.
+      OPTIONS = [:workdir, :job_name, :queue_name, :accounting_id, :wall_time, :output_path, :error_path,
+                 :native, :after, :afterok, :afternotok, :afterany].freeze
+
+      def self.run(cluster_id:, script_content:, **params)
+        options = params.slice(*OPTIONS)
+        job_info, cluster = audited('submit_job', **audit_fields(cluster_id, script_content, options)) do
+          Handlers::Jobs.submit(clusters: OodApi::App.clusters, cluster_id: cluster_id,
+                                script_content: script_content, **options)
         end
         text = "Job submitted successfully.\nJob ID: #{job_info.id}\nCluster: #{cluster.id}\nStatus: #{job_info.status}"
         text_response(text)
       end
     end
 
+    # MCP tool: cancel a job.
     class CancelJobTool < Base
       tool_name 'cancel_job'
       annotations(read_only_hint: false, destructive_hint: true, idempotent_hint: true, open_world_hint: false)
@@ -209,6 +200,7 @@ module OodApi
       end
     end
 
+    # MCP tool: hold a queued job.
     class HoldJobTool < Base
       tool_name 'hold_job'
       annotations(read_only_hint: false, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
@@ -230,6 +222,7 @@ module OodApi
       end
     end
 
+    # MCP tool: release a held job.
     class ReleaseJobTool < Base
       tool_name 'release_job'
       annotations(read_only_hint: false, destructive_hint: false, idempotent_hint: true, open_world_hint: false)

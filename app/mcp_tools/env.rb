@@ -5,6 +5,7 @@ require_relative '../handlers/env'
 
 module OodApi
   module Tools
+    # MCP tool: list the allowed environment variables.
     class ListEnvTool < Base
       tool_name 'list_env'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
@@ -30,6 +31,7 @@ module OodApi
       end
     end
 
+    # MCP tool: read one allowed environment variable.
     class GetEnvTool < Base
       tool_name 'get_env'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)

@@ -179,7 +179,6 @@ class ApiToken
       tokens.reject! { |t| t[:id] == id }
       self.class.save_tokens(tokens)
     end
-    true
   end
 
   private
