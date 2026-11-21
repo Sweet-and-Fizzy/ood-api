@@ -72,6 +72,25 @@ module OodApi
       settings.is_a?(Hash) ? settings[key] : nil
     end
 
+    # One of the Dashboard's own on/off settings, read from where the
+    # Dashboard reads it: `OOD_<NAME>` in the environment or the Dashboard's
+    # env file, then the key in ondemand.d. They default to on. A value that
+    # is not plainly "on" counts as off, since these exist to restrict.
+    def dashboard_switch?(name)
+      env_name = "OOD_#{name.to_s.upcase}"
+      value = ENV.fetch(env_name) { dashboard_env.fetch(env_name) { config[name] } }
+      value.nil? || ['true', '1', 'yes', 'on'].include?(value.to_s.strip.downcase)
+    end
+
+    # The Dashboard serves no file browser when the Files app is not
+    # installed next to it, which is how a site removes file access.
+    def files_app_installed?
+      apps = Pathname.new(ENV['OOD_API_SYS_APPS'] || '/var/www/ood/apps/sys')
+      return true unless apps.directory?
+
+      apps.join('files', 'manifest.yml').readable?
+    end
+
     # Loads this app's own env file the way the Dashboard loads its own:
     # variables already in the environment win. Called once, before the app
     # is loaded, so a change needs a PUN restart.

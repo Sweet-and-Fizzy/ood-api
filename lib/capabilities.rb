@@ -92,8 +92,23 @@ module OodApi
       return { tools: Set.new, rest: false, mcp: false, problems: problems } unless problems.empty?
 
       groups = GROUPS.keys if groups.include?('all')
-      tools = (['read'] | groups).flat_map { |group| GROUPS.fetch(group) } - disabled
+      tools = (['read'] | groups).flat_map { |group| GROUPS.fetch(group) } - disabled - off_in_dashboard
       { tools: Set.new(tools), rest: rest, mcp: mcp, problems: [] }
+    end
+
+    FILE_TOOLS = ['list_files', 'read_file', 'write_file', 'create_directory', 'delete_file'].freeze
+
+    # What the site has already switched off in the Dashboard's file browser
+    # stays off here, whatever `ood_api` asks for: no Files app means no file
+    # tools, `download_enabled: false` means file contents cannot be read,
+    # and `upload_enabled: false` means they cannot be written.
+    def off_in_dashboard
+      return FILE_TOOLS unless SiteConfig.files_app_installed?
+
+      off = []
+      off << 'read_file' unless SiteConfig.dashboard_switch?(:download_enabled)
+      off << 'write_file' unless SiteConfig.dashboard_switch?(:upload_enabled)
+      off
     end
 
     def unknown(names, known, kind)

@@ -220,6 +220,54 @@ class CapabilitiesTest < Minitest::Test
     assert_equal 'not_found', JSON.parse(last_response.body)['error']
   end
 
+  # What the site switched off in the Dashboard's file browser is off here.
+  def test_the_dashboards_download_and_upload_switches_apply
+    ENV['OOD_API_CAPABILITIES'] = 'all'
+    File.write(File.join(@dir, 'files.yml'), "download_enabled: false\nupload_enabled: false\n")
+
+    refute caps.enabled?('read_file')
+    refute caps.enabled?('write_file')
+    assert caps.enabled?('list_files')
+    assert caps.enabled?('delete_file')
+    assert_empty caps.problems
+  end
+
+  def test_the_dashboards_switches_are_read_from_its_env_file_too
+    env_file = File.join(@dir, 'dashboard.env')
+    File.write(env_file, "OOD_DOWNLOAD_ENABLED=false\n")
+    ENV['OOD_DASHBOARD_ENV_FILE'] = env_file
+
+    refute caps.enabled?('read_file')
+    assert caps.enabled?('list_files')
+  ensure
+    ENV.delete('OOD_DASHBOARD_ENV_FILE')
+  end
+
+  def test_no_files_app_means_no_file_tools
+    ENV['OOD_API_CAPABILITIES'] = 'all'
+    apps = File.join(@dir, 'sys')
+    FileUtils.mkdir_p(File.join(apps, 'dashboard'))
+    ENV['OOD_API_SYS_APPS'] = apps
+
+    assert_empty caps.enabled_tools.to_a & caps::FILE_TOOLS
+    assert caps.enabled?('submit_job')
+
+    FileUtils.mkdir_p(File.join(apps, 'files'))
+    File.write(File.join(apps, 'files', 'manifest.yml'), 'name: Files')
+    assert caps.enabled?('read_file')
+  ensure
+    ENV.delete('OOD_API_SYS_APPS')
+  end
+
+  def test_a_hidden_cluster_is_not_offered
+    OodApi::App.stubs(:clusters).returns([mock_cluster(id: 'cluster1'), mock_cluster(id: 'secret', hidden: true)])
+
+    get '/api/v1/clusters'
+    assert_equal(['cluster1'], JSON.parse(last_response.body)['data'].map { |c| c['id'] })
+    get '/api/v1/clusters/secret'
+    assert_equal 404, last_response.status
+  end
+
   # The switch an admin reaches for: no PUN restart.
   def test_a_change_on_disk_is_picked_up_by_a_running_app
     assert caps.rest?

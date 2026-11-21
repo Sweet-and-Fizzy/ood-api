@@ -256,6 +256,16 @@ turned on. The tool name covers both surfaces: `delete_file` removes the MCP
 tool and makes `DELETE /api/v1/files` return 403. Over REST, creating an empty
 file with `POST /api/v1/files?touch=true` counts as `write_file`.
 
+What the site has switched off in the Dashboard stays off here, whatever
+`ood_api` asks for:
+
+| Dashboard setting | Effect here |
+|---|---|
+| The Files app is not installed (`/var/www/ood/apps/sys/files`) | No file tools at all |
+| `download_enabled: false` | `read_file` is off |
+| `upload_enabled: false` | `write_file` is off |
+| A cluster with `hidden: true` in its metadata | The cluster is not listed and cannot be used |
+
 `jobs` deserves thought before you enable it. A job script is code that runs
 as the user, so an assistant that can submit jobs can do anything the user
 can. See [SECURITY.md](../SECURITY.md).

@@ -101,6 +101,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `app_tokens` can be set under `ood_api` as well as in
   `OOD_API_APP_TOKENS`. An environment variable set to nothing counts as
   unset.
+- The Dashboard's own restrictions apply here. With `download_enabled: false`
+  `read_file` is off, with `upload_enabled: false` `write_file` is off, with
+  no Files app installed there are no file tools, and a cluster marked
+  `hidden` is not listed and cannot be used.
 - A directory listing describes each entry itself. A symlink has
   `"symlink": true` and `"directory": false` and carries the link's own size
   and dates, where the listing used to describe the link's target, including
