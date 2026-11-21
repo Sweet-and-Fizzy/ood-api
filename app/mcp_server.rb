@@ -126,8 +126,8 @@ module OodApi
     # Required because OOD's PUN recycles idle Passenger processes
     # (passenger_min_instances 0), which destroys in-memory state.
     # Stateless supports all tool calls and resource reads; the only
-    # thing lost is server-initiated notifications (tools/list changed),
-    # which we don't use since our tool list is static.
+    # thing lost is server-initiated notifications (tools/list changed);
+    # a client sees a changed tool list the next time it asks.
 
     # DNS-rebinding protection off, deliberately. mcp 1.0.0 added it defaulting
     # to on with an allowlist of loopback only, which 403s every request whose
@@ -274,7 +274,23 @@ module OodApi
     return jsonrpc_error(400, 'Method not found', JSONRPC_METHOD_NOT_FOUND) if unsupported_method?(parsed)
 
     problem = BODY_CHECKS.find { |check, _| send(check, parsed) }&.last
-    jsonrpc_error(400, "Invalid params: #{problem}", JSONRPC_INVALID_PARAMS) if problem
+    return jsonrpc_error(400, "Invalid params: #{problem}", JSONRPC_INVALID_PARAMS) if problem
+
+    record_disabled_tool_call(parsed)
+    nil
+  end
+
+  # A tool the site has switched off is not in the server at all, so the
+  # server answers "Tool not found" without the tool ever running. The call
+  # is recorded here, as the REST API records a refused route.
+  def self.record_disabled_tool_call(parsed)
+    return unless parsed.is_a?(Hash) && parsed['method'] == 'tools/call' && parsed['params'].is_a?(Hash)
+
+    name = parsed['params']['name'].to_s
+    return unless Capabilities::ALL_TOOLS.include?(name) && !Capabilities.enabled?(name)
+
+    user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
+    Handlers::Audit.emit_event(op: name, user: user, source: 'mcp', status: 'disabled')
   end
 
   # Each check that refuses a parsed body, with what to tell the client. The
@@ -300,7 +316,13 @@ module OodApi
   # The checks the REST app runs in its `before` filters. Returns a Rack
   # response to send, or nil to let the request through.
   def self.refuse_request(env)
-    return refusal(404, 'not_found', 'The MCP endpoint is not enabled at this site') unless Capabilities.mcp?
+    unless Capabilities.mcp?
+      if Capabilities.problems.any?
+        return refusal(503, 'misconfigured',
+                       "The MCP endpoint is off because this site's settings could not be understood")
+      end
+      return refusal(404, 'not_found', 'The MCP endpoint is not enabled at this site')
+    end
 
     user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
     Handlers::Audit.context = nil
@@ -323,7 +345,24 @@ module OodApi
     refusal(403, 'forbidden', 'Cross-site requests are not allowed')
   end
 
-  def self.mcp_rack_app(transport = build_mcp_transport)
+  TRANSPORT_LOCK = Mutex.new
+
+  # The transport for the tools that are on right now. The site's settings
+  # can change while the app runs, so the server is rebuilt when the set of
+  # enabled tools does; a transport built once at startup would go on
+  # listing, and running, tools the site has since switched off.
+  def self.current_mcp_transport
+    names = Capabilities.enabled_tools.to_a.sort
+    TRANSPORT_LOCK.synchronize do
+      @mcp_transport = nil unless @mcp_transport_tools == names
+      @mcp_transport_tools = names
+      @mcp_transport ||= build_mcp_transport
+    end
+  end
+
+  # @param transport [Object, nil] a fixed transport, for tests; otherwise the
+  #   one for the current settings is used on each request
+  def self.mcp_rack_app(transport = nil)
     # /mcp is mounted as a sibling Rack app in config.ru, outside the Sinatra
     # app and therefore outside its `before` filters. Without this the MCP
     # surface would serve the full toolset with no app-token check while
@@ -338,7 +377,7 @@ module OodApi
         return bad
       end
 
-      transport.handle_request(request)
+      (transport || current_mcp_transport).handle_request(request)
     rescue Interrupt, SystemExit
       raise
     rescue Exception => e # rubocop:disable Lint/RescueException

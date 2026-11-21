@@ -17,6 +17,17 @@ class HandlersAuditTest < Minitest::Test
     $stderr.string
   end
 
+  # A log shipper anchors on the start of the line, so it does not change
+  # with how the request was authenticated.
+  def test_every_line_starts_with_the_time_and_the_operation
+    Handlers::Audit.context = { token_id: 'abc' }
+    Handlers::Audit.log(op: 'test_op', user: 'drew', source: 'rest') { 1 }
+
+    assert_match(/\Aood_api_audit ts=\d{4}-\d\d-\d\dT[\d:.]+Z op=test_op user=drew .* token_id=abc\n\z/, stderr_output)
+  ensure
+    Handlers::Audit.context = nil
+  end
+
   def test_log_emits_on_success
     result = Handlers::Audit.log(op: 'test_op', user: 'drew', source: 'rest') { 42 }
 

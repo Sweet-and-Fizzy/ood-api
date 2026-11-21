@@ -8,11 +8,17 @@ module Handlers
   # queues and current utilisation.
   module Clusters
     def self.list(clusters:)
-      clusters.select(&:job_allow?)
+      clusters.select { |cluster| offered?(cluster) }
+    end
+
+    # A cluster the site marks `hidden` is left out of the Dashboard's
+    # cluster lists, so it is not offered here either.
+    def self.offered?(cluster)
+      cluster.job_allow? && !cluster.metadata.hidden
     end
 
     def self.get(clusters:, id:)
-      cluster = clusters.find { |c| c.id.to_s == id.to_s && c.job_allow? }
+      cluster = clusters.find { |c| c.id.to_s == id.to_s && offered?(c) }
       raise NotFoundError, 'Cluster not found' unless cluster
 
       cluster

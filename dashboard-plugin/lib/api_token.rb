@@ -191,15 +191,30 @@ class ApiToken
       false
     end
 
-    # The environment first, then the `ood_api` block the Dashboard has
-    # already read from ondemand.d.
+    # Where the API reads the same setting, in the same order: the
+    # environment, the API's own env file, then the `ood_api` block the
+    # Dashboard has already read from ondemand.d.
     def setting(env_name, key)
-      ENV.fetch(env_name) do
-        settings = ::Configuration.send(:config)[:ood_api]
-        settings.is_a?(Hash) ? settings[key] : nil
-      end
+      value = ENV.fetch(env_name, nil) || app_env[env_name]
+      return value unless value.nil? || value.strip.empty?
+
+      settings = ::Configuration.send(:config)[:ood_api]
+      settings.is_a?(Hash) ? settings[key] : nil
     rescue StandardError
       nil
+    end
+
+    # The API loads this file when it starts; the Dashboard never does.
+    def app_env
+      file = ENV['OOD_API_ENV_FILE'] || '/etc/ood/config/apps/ood-api/env'
+      return {} unless File.file?(file)
+
+      File.read(file, encoding: 'UTF-8').scrub.each_line.with_object({}) do |line, vars|
+        match = line.match(/\A\s*(?:export\s+)?(OOD_API_TOKEN_\w+)\s*=\s*["']?([^"'#\s]*)/)
+        vars[match[1]] = match[2] if match
+      end
+    rescue StandardError
+      {}
     end
 
     # Brings a stored entry up to date on its way back to disk: a plaintext

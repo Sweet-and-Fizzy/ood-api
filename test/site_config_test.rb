@@ -46,6 +46,14 @@ class SiteConfigTest < Minitest::Test
     assert_equal ['/from-env'], OodApi::SiteConfig.allowlist_paths.map(&:to_s)
   end
 
+  def test_an_empty_variable_does_not_hide_the_allowlist
+    File.write(File.join(@dir, 'files.yml'), "allowlist_path: /from-file\n")
+    ENV['OOD_ALLOWLIST_PATH'] = ''
+    ENV['WHITELIST_PATH'] = ' '
+
+    assert_equal ['/from-file'], OodApi::SiteConfig.allowlist_paths.map(&:to_s)
+  end
+
   # Where sites set it today: only the Dashboard process loads this file.
   def test_allowlist_from_the_dashboard_env_file
     File.write(File.join(@dir, 'dashboard.env'),

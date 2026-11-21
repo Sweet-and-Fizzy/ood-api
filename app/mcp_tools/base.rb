@@ -3,6 +3,7 @@
 require 'mcp'
 require_relative '../handlers/audit'
 require_relative '../handlers/errors'
+require_relative '../../lib/capabilities'
 
 module OodApi
   module Tools
@@ -13,10 +14,21 @@ module OodApi
       class << self
         # Entry point the mcp gem invokes. `server_context` is part of the
         # gem's signature and is not used by these tools.
+        #
+        # The site's settings are checked on every call, not only when the
+        # tool list is built: they can change while the app is running, and a
+        # tool switched off since then must stop working at once.
         def call(server_context: nil, **params) # rubocop:disable Lint/UnusedMethodArgument
+          return refuse_disabled unless Capabilities.enabled?(name_value)
+
           run(**params)
         rescue Handlers::Error => e
           error_response(e.message)
+        end
+
+        def refuse_disabled
+          Handlers::Audit.emit_event(op: name_value, user: current_user, source: 'mcp', status: 'disabled')
+          error_response("#{name_value} is not enabled at this site")
         end
 
         # The PUN runs as the authenticated user, so the OS user is the caller.

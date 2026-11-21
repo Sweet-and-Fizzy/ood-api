@@ -68,7 +68,7 @@ claude mcp add ood-hpc --transport http \
 
 That's it, the assistant handles the rest. Writing a script instead, or want
 the full detail on authentication? Keep reading below. [Section 3](#3-using-the-mcp-tools)
-covers the same ground in more depth if you want to see all 19 available
+covers the same ground in more depth if you want to see all the available
 tools or what's happening under the hood, it's not required reading if the
 steps above already worked for you.
 
@@ -114,7 +114,7 @@ Quick test that you can reach the API at all:
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
   https://<your-ood-host>/pun/sys/ood-api/health
-# -> {"status":"ok"}
+# -> {"status":"ok","rest":true,"mcp":true,"tools":[...],...}
 ```
 
 `/health` skips the application-token check, but Apache still guards it like
@@ -151,7 +151,8 @@ curl -H "Authorization: Bearer <your-jwt>" \
      https://<your-ood-host>/pun/sys/ood-api/api/v1/clusters
 ```
 
-JWTs expire (typically in minutes to an hour), so a long-running script will start
+JWTs expire (after minutes to a day, depending on your site's identity
+provider), so a long-running script will start
 getting `401` responses and must fetch a fresh token; `oidc-agent` will refresh
 one for you on demand. MCP clients using OAuth discovery (§3.1) handle this
 refresh automatically.
@@ -168,11 +169,11 @@ isn't available — use application tokens (§1.2) instead.
 Some sites enable application tokens as well — either because their IdP
 can't issue a verifiable JWT, or so you can hold a separate revocable credential
 per client. You'll know this applies if your OOD Dashboard has a
-**Settings → API Tokens** page (`/settings/api_tokens`). If it does, you can
+API Tokens page at `/pun/sys/dashboard/settings/api_tokens`. If it does, you can
 issue a token yourself:
 
 1. Open the OOD Dashboard in your browser and log in as usual.
-2. Go to **Settings → API Tokens**.
+2. Go to `/pun/sys/dashboard/settings/api_tokens`.
 3. Enter a descriptive name (e.g. "my laptop", "analysis script").
 4. Click **Generate Token** and **copy it immediately** — it is shown only once.
 
@@ -248,7 +249,10 @@ and Cursor — including auto-refreshing tokens — is in
 
 ### 3.2 Available tools
 
-19 tools, grouped by area, required parameters in **bold**. Chatting
+Up to 19 tools, grouped by area, required parameters in **bold**. A site
+chooses which to enable: by default only the ones that list and read, with job
+submission and file writes turned on separately. Your client shows the ones
+your site offers. Chatting
 with an AI client? You don't need to memorize this, it fills in the tool and
 parameters itself. This reference matters most for calling tools directly or
 scripting against the REST API.
@@ -307,7 +311,10 @@ that could let an assistant change how you log in or run commands later:
 `~/.ssh`, your shell startup files (`.bashrc`, `.zshrc`, `.profile`,
 `.bash_aliases`, …), `~/.local/bin`, `~/.config/ondemand`,
 `~/.config/systemd/user`, `~/.config/autostart`, `~/.config/git`,
-`.gitconfig`, `.netrc`, `.forward`, and `.pam_environment`. Reads and writes
+`.gitconfig`, `.netrc`, `.forward`, `.pam_environment`, cloud and cluster
+credentials (`~/.aws`, `~/.kube`, `~/.docker`, `~/.gnupg` and similar), and
+the inside of any `.git` directory. The [API guide](api.md#files) has the
+full list. Reads and writes
 both return "not accessible through this API". You can still edit them
 normally in a shell or the Files app — the restriction only stops an assistant
 from establishing access that outlasts the conversation.

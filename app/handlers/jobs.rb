@@ -288,6 +288,8 @@ module Handlers
       raise ValidationError, 'script.content cannot be empty' if script_content.strip.empty?
 
       # /tmp unless the site's file allowlist excludes it.
+      # An empty workdir means the same as none given.
+      workdir = nil if workdir.to_s.scrub.strip.empty?
       workdir ||= Files.path_allowed?('/tmp') ? '/tmp' : Dir.home
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
 
@@ -305,7 +307,7 @@ module Handlers
 
       script = build_script(script_content, workdir, options)
       job_id = Handlers.with_adapter(cluster, 'submit job') do
-        cluster.job_adapter.submit(script, **options.slice(:after, :afterok, :afternotok, :afterany).compact)
+        cluster.job_adapter.submit(script, **dependencies(options))
       end
 
       [info_after_submit(cluster, job_id), cluster]
@@ -313,6 +315,13 @@ module Handlers
 
     # The caller's options with the output and error paths checked,
     # normalised and defaulted, and `native` refused unless the site allows it.
+    # Only the dependencies that were given. `false` and an empty list are
+    # not job ids, and the adapter would pass them to the scheduler as one.
+    def self.dependencies(options)
+      options.slice(:after, :afterok, :afternotok, :afterany)
+             .reject { |_kind, jobs| !jobs || (jobs.respond_to?(:empty?) && jobs.empty?) }
+    end
+
     def self.with_checked_paths(cluster, workdir, options)
       options = options.merge(output_path: job_path!(options[:output_path]),
                               error_path:  job_path!(options[:error_path]))

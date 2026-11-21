@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'api_token'
+require_relative 'capabilities'
 
 module OodApi
   # Application-level token authentication, shared by the REST app and the MCP
@@ -26,8 +27,11 @@ module OodApi
 
     module_function
 
+    # `OOD_API_APP_TOKENS=true`, or `app_tokens: true` under `ood_api` in
+    # ondemand.d. A value that is neither true nor false is reported by
+    # OodApi::Capabilities, which serves nothing until it is fixed.
     def enabled?
-      ENV['OOD_API_APP_TOKENS'] == 'true'
+      Capabilities::ON.include?(SiteConfig.setting('OOD_API_APP_TOKENS', :app_tokens).to_s.strip.downcase)
     end
 
     # Returns the presented token, or nil.
@@ -39,7 +43,7 @@ module OodApi
     # An expired token is refused like an unknown one, but the log says which
     # token it was, so its owner can tell why a client stopped working.
     def log_expired(token)
-      warn "ood_api_audit op=authenticate status=expired token_id=#{token.id}"
+      warn "ood_api_audit ts=#{Time.now.utc.iso8601(3)} op=authenticate status=expired token_id=#{token.id}"
     end
 
     # Returns the ApiToken when authentication passes (or when app tokens are

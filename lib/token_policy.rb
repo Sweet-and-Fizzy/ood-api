@@ -28,6 +28,16 @@ module OodApi
       DEFAULT_MAX_DAYS
     end
 
+    # @return [Array<String>] what is wrong with the lifetime the site set
+    def problems
+      raw = setting('OOD_API_TOKEN_MAX_DAYS', :token_max_days)
+      return [] if raw.nil? || Integer(raw.to_s.strip, 10).positive?
+
+      ["token_max_days must be a number of days, not #{raw.inspect}"]
+    rescue ArgumentError
+      ["token_max_days must be a number of days, not #{raw.inspect}"]
+    end
+
     # @return [Boolean] whether a token may have no expiry at all
     def allow_never?
       ['true', '1', 'yes', 'on'].include?(setting('OOD_API_TOKEN_ALLOW_NEVER', :token_allow_never).to_s.strip.downcase)
@@ -75,10 +85,7 @@ module OodApi
     end
 
     def setting(env_name, key)
-      ENV.fetch(env_name) do
-        settings = SiteConfig.config[:ood_api]
-        settings.is_a?(Hash) ? settings[key] : nil
-      end
+      SiteConfig.setting(env_name, key)
     end
   end
 end

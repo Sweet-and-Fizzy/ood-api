@@ -25,6 +25,8 @@ module Handlers
 
         File.open(dir.entry(name), File::RDONLY | OPEN_SAFELY) do |file|
           raise ValidationError, 'Not a regular file' unless file.stat.file?
+
+          Files.deny_inode!(file.stat)
           raise PayloadTooLargeError, "File too large (max #{limit} bytes)" if refuse_larger && file.stat.size > limit
 
           file.read(limit) || ''
@@ -41,9 +43,20 @@ module Handlers
         File.open(dir.entry(name), flags) do |file|
           raise ValidationError, 'Not a regular file' unless file.stat.file?
 
+          Files.deny_inode!(file.stat)
           file.truncate(0) unless append
           file.write(content)
         end
+      end
+    end
+
+    # @return [File::Stat] the file itself, reached through the user's own
+    #   symlinks and looked at inside the pinned directory
+    def self.stat(path)
+      with_target(path) do |_dir, _name, _real, stat|
+        raise Errno::ENOENT if stat.nil?
+
+        stat
       end
     end
 
@@ -55,16 +68,18 @@ module Handlers
       end
     end
 
+    # Follows the user's own symlinks, as read and write do. The times are set
+    # on the entry by name without following a link, so a file the user owns
+    # but cannot open is still touched, and an entry swapped for a symlink
+    # after it was looked at changes nothing but the link.
     def self.touch(path)
-      pin(path) do |dir, name, _real|
+      with_target(path) do |dir, name, _real, stat|
+        next File.open(dir.entry(name), File::WRONLY | File::CREAT | OPEN_SAFELY, &:close) if stat.nil?
+        raise ValidationError, 'Not a regular file' unless stat.file? || stat.directory?
+
+        Files.deny_inode!(stat) if stat.file?
         now = Time.now
-        next File.utime(now, now, dir.entry(name)) if dir.lstat(name)&.directory?
-
-        File.open(dir.entry(name), File::WRONLY | File::CREAT | OPEN_SAFELY) do |file|
-          raise ValidationError, 'Not a regular file' unless file.stat.file?
-
-          File.utime(now, now, "#{PinnedDir::PROC_FD}/#{file.fileno}")
-        end
+        File.lutime(now, now, dir.entry(name))
       end
     end
 
@@ -82,14 +97,49 @@ module Handlers
 
     def self.remove_tree(dir, name, real)
       Files.deny_recursive!(real)
-      FileUtils.rm_rf(dir.entry(name))
+      remove_directory(dir, name)
     end
 
-    # @return [Array<String>] the names in the directory
+    # Removes a directory and everything in it, holding each level open and
+    # never following a symlink. Walking the tree by name would let whoever
+    # owns part of it swap a subdirectory for a symlink mid-walk and have the
+    # contents of the link's target deleted. Here a swapped entry makes the
+    # open or the unlink fail, and the removal stops.
+    def self.remove_directory(parent, name)
+      directory = open_for_removal(parent, name)
+      return Dir.rmdir(parent.entry(name)) unless directory
+
+      Dir.children(directory.entry('.')).each do |child|
+        next remove_directory(directory, child) if directory.lstat(child)&.directory?
+
+        File.unlink(directory.entry(child))
+      end
+      Dir.rmdir(parent.entry(name))
+    ensure
+      directory&.close
+    end
+
+    # A directory the user cannot read can still be removed if it is empty,
+    # so that is left to rmdir to decide.
+    #
+    # @return [PinnedDir, nil] nil when the directory cannot be opened
+    def self.open_for_removal(parent, name)
+      parent.descend(name)
+    rescue Errno::EACCES
+      nil
+    end
+
+    # @return [Array<Array(String, File::Stat)>] each name in the directory
+    #   with the stat of the entry itself, not of what a symlink points at
     def self.children(path)
       dir = PinnedDir.open(path)
       Files.validate_real!(dir.real)
-      Dir.children(dir.entry('.'))
+      Dir.children(dir.entry('.')).filter_map do |name|
+        stat = dir.lstat(name)
+        [name, stat, (File.readlink(dir.entry(name)) if stat.symlink?)] if stat
+      rescue SystemCallError
+        nil
+      end
     ensure
       dir&.close
     end
@@ -104,6 +154,9 @@ module Handlers
       dir = PinnedDir.open(existing)
       Files.validate_real!(dir.real)
       missing.each do |part|
+        # Checked before it is created, so a refused request leaves no
+        # directory behind.
+        Files.validate_real!(dir.real + part)
         deeper = dir.descend(part, create: true)
         dir.close
         dir = deeper
@@ -134,7 +187,7 @@ module Handlers
         link = nil
         result = pin(path, create_parents: create_parents) do |dir, name, real|
           stat = dir.lstat(name)
-          next link = link_target(dir, name, real) if stat&.symlink?
+          next link = link_target(dir, name, real, stat) if stat&.symlink?
 
           block.call(dir, name, real, stat)
         end
@@ -145,10 +198,20 @@ module Handlers
       raise ForbiddenError, 'Access denied: symbolic link could not be resolved'
     end
 
-    def self.link_target(dir, name, real)
+    # Where a symlink points, if it may be followed. Only the user's own
+    # links and root's are. The kernel refuses to follow another user's link
+    # in a sticky directory such as /tmp, and following it here by hand would
+    # sidestep that: someone else's link could steer a write onto one of the
+    # user's own files.
+    def self.link_target(dir, name, real, stat)
+      unless [Process.euid, 0].include?(stat.uid)
+        raise ForbiddenError, 'Access denied: symbolic link belongs to another user'
+      end
+
       Pathname.new(File.expand_path(File.readlink(dir.entry(name)), real.parent.to_s))
     end
 
-    private_class_method :pin, :split_existing, :with_target, :link_target, :remove_tree
+    private_class_method :pin, :split_existing, :with_target, :link_target, :remove_tree, :remove_directory,
+                         :open_for_removal
   end
 end
