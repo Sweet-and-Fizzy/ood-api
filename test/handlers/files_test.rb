@@ -28,14 +28,15 @@ class HandlersFilesTest < Minitest::Test
     assert_includes names, 'b.txt'
   end
 
-  def test_list_returns_pathname_for_single_file
+  def test_list_returns_the_entry_for_a_single_file
     file_path = File.join(@test_dir, 'single.txt')
     File.write(file_path, 'hello')
 
     result = Handlers::Files.list(path: file_path)
 
-    assert_kind_of Pathname, result
+    assert_kind_of Handlers::Files::Entry, result
     assert_equal 'single.txt', result.basename.to_s
+    assert_equal 5, result.stat.size
   end
 
   def test_list_raises_not_found_for_missing_path
@@ -1103,5 +1104,87 @@ class HandlersFilesTest < Minitest::Test
 
   def test_python_path_files_are_denied
     assert_denied('.local/lib/python3.11/site-packages/evil.pth')
+  end
+
+  # A listing describes each entry as it is. Following a link would report
+  # the size, owner and times of a file outside the allowed directories, and
+  # dropping a link to a missing file would say which paths exist.
+  def test_listing_reports_symlinks_as_links_and_says_nothing_about_their_targets
+    File.symlink('/etc/passwd', File.join(@test_dir, 'to-passwd'))
+    File.symlink('/no/such/file', File.join(@test_dir, 'dangling'))
+    File.write(File.join(@test_dir, 'plain'), 'x')
+
+    entries = Handlers::Files.list(path: @test_dir).to_h { |entry| [entry.basename.to_s, entry] }
+
+    assert_equal ['dangling', 'plain', 'to-passwd'], entries.keys.sort
+    assert entries['to-passwd'].symlink?
+    refute entries['to-passwd'].directory?
+    assert_equal File.lstat(File.join(@test_dir, 'to-passwd')).size, entries['to-passwd'].stat.size
+    refute entries['plain'].symlink?
+  end
+
+  # These used to answer "path not in allowed directories", which is false.
+  def test_an_allowed_directory_itself_is_refused_with_a_true_reason
+    ENV['OOD_ALLOWLIST_PATH'] = @test_dir
+    [
+      -> { Handlers::Files.write(path: @test_dir, content: 'x') },
+      -> { Handlers::Files.mkdir(path: @test_dir) },
+      -> { Handlers::Files.read(path: @test_dir) },
+      -> { Handlers::Files.touch(path: @test_dir) },
+      -> { Handlers::Files.delete(path: @test_dir, recursive: true) }
+    ].each do |operation|
+      err = assert_raises(Handlers::ValidationError, &operation)
+      assert_match(/allowed top-level directories/, err.message)
+    end
+    assert File.directory?(@test_dir)
+    assert_kind_of Array, Handlers::Files.list(path: @test_dir)
+  ensure
+    ENV.delete('OOD_ALLOWLIST_PATH')
+  end
+
+  def test_touch_works_through_the_users_own_symlink_and_on_a_read_only_file
+    target = File.join(@test_dir, 'target.txt')
+    File.write(target, 'keep')
+    old = Time.now - 86_400
+    File.utime(old, old, target)
+    link = File.join(@test_dir, 'link.txt')
+    File.symlink(target, link)
+
+    Handlers::Files.touch(path: link)
+    assert_in_delta Time.now, File.mtime(target), 5
+    assert_equal 'keep', File.read(target)
+
+    File.utime(old, old, target)
+    File.chmod(0o444, target)
+    Handlers::Files.touch(path: target)
+    assert_in_delta Time.now, File.mtime(target), 5
+  end
+
+  def test_error_messages_do_not_name_internal_paths
+    File.write(File.join(@test_dir, 'file.txt'), 'x')
+
+    err = assert_raises(Handlers::ValidationError) do
+      Handlers::Files.write(path: File.join(@test_dir, 'file.txt', 'below'), content: 'x')
+    end
+
+    assert_equal 'Not a directory', err.message
+  end
+
+  def test_content_and_max_size_of_the_wrong_type_are_refused_not_crashed_on
+    assert_raises(Handlers::ValidationError) { Handlers::Files.write(path: File.join(@test_dir, 'f'), content: 5) }
+    File.write(File.join(@test_dir, 'f'), 'hello')
+    assert_equal 'he', Handlers::Files.read(path: File.join(@test_dir, 'f'), max_size: '2')
+  end
+
+  def test_read_only_and_failing_filesystems_are_reported_not_raised
+    file = File.join(@test_dir, 'f.txt')
+    File.write(file, 'x')
+    backend = Handlers::Files.backend
+    backend.stubs(:write).raises(Errno::EROFS)
+    assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: file, content: 'y') }
+    backend.stubs(:read).raises(Errno::ESTALE)
+    assert_raises(Handlers::StorageError) { Handlers::Files.read(path: file) }
+    backend.stubs(:delete).raises(Errno::EBUSY)
+    assert_raises(Handlers::ValidationError) { Handlers::Files.delete(path: file) }
   end
 end

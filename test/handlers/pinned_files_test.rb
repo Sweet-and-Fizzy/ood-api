@@ -312,7 +312,7 @@ class PinnedFilesTest < Minitest::Test
       err = assert_raises(Handlers::StorageError) { files.mkdir(path: File.join(@home, 'd')) }
       assert_match(/quota/i, err.message)
 
-      File.stubs(:utime).raises(Errno::ENOSPC)
+      File.stubs(:open).raises(Errno::ENOSPC)
       assert_raises(Handlers::StorageError) { files.touch(path: File.join(@home, 'f.txt')) }
     end
   end

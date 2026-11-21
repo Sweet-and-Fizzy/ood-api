@@ -106,7 +106,7 @@ module OodApi
     # filter runs, so a body Rack cannot parse is rejected before auth. See the
     # Rack::BadRequest handlers below.
     before '/api/v1/*' do
-      halt_error(404, 'not_found', 'The REST API is not enabled at this site') unless Capabilities.rest?
+      refuse_unless_served!(Capabilities.rest?, 'The REST API')
       authenticate!
     end
 
@@ -277,9 +277,20 @@ module OodApi
       halt_error(500, 'internal_error', "Adapter error: #{env['sinatra.error'].message}")
     end
 
-    # Health check (no auth required)
+    # Health check (no app token required). Also where an admin sees what
+    # their settings produced: `disabled` when the site turned both surfaces
+    # off, `misconfigured` (503) when the settings could not be understood.
     get '/health' do
-      { status: 'ok' }.to_json
+      problems = Capabilities.problems
+      state = if problems.any? then 'misconfigured'
+              elsif Capabilities.rest? || Capabilities.mcp? then 'ok'
+              else
+                'disabled'
+              end
+      status 503 if problems.any?
+      { status: state, rest: Capabilities.rest?, mcp: Capabilities.mcp?,
+        tools: Capabilities.enabled_tools.to_a.sort, app_tokens: AppAuth.enabled?,
+        file_access: Handlers::Files.access_mode, problems: problems }.to_json
     end
 
     # ============ Clusters ============
@@ -594,6 +605,18 @@ module OodApi
 
     private
 
+    # 404 for a surface the site turned off, 503 when the settings could not
+    # be understood and nothing is served until they are fixed.
+    def refuse_unless_served!(served, surface)
+      return if served
+
+      if Capabilities.problems.any?
+        halt_error(503, 'misconfigured', "#{surface} is off because this site's settings could not be understood")
+      end
+
+      halt_error(404, 'not_found', "#{surface} is not enabled at this site")
+    end
+
     # Refuses the request unless the site has turned `tool` on.
     def require_tool!(tool)
       return true if Capabilities.enabled?(tool)
@@ -711,7 +734,8 @@ module OodApi
     end
 
     def halt_error(status_code, error_type, message)
-      halt status_code, { error: error_type, message: message }.to_json
+      # A scheduler's own words can hold bytes that are not valid UTF-8.
+      halt status_code, { error: error_type, message: json_safe(message) }.to_json
     end
 
     # Bounded read. The Content-Length filter cannot see a chunked body, which
@@ -786,21 +810,22 @@ module OodApi
       halt_error(503, 'service_unavailable', message)
     end
 
-    def file_json(path)
-      stat = path.stat
-      build_file_hash(path, stat)
-    rescue Errno::ENOENT
-      { path: path.to_s, name: path.basename.to_s, error: 'not found' }
+    # @param entry [Handlers::Files::Entry]
+    def file_json(entry)
+      build_file_hash(entry)
     rescue ArgumentError
-      build_file_hash(path, stat, use_ids: true)
+      # No name for the owner or group on this host.
+      build_file_hash(entry, use_ids: true)
     end
 
-    def build_file_hash(path, stat, use_ids: false)
+    def build_file_hash(entry, use_ids: false)
+      stat = entry.stat
       {
-        path:      json_safe(path.to_s),
-        name:      json_safe(path.basename.to_s),
-        directory: path.directory?,
-        size:      path.directory? ? nil : stat.size,
+        path:      json_safe(entry.to_s),
+        name:      json_safe(entry.basename.to_s),
+        directory: entry.directory?,
+        symlink:   entry.symlink?,
+        size:      entry.directory? ? nil : stat.size,
         mode:      stat.mode,
         owner:     json_safe(use_ids ? stat.uid.to_s : Etc.getpwuid(stat.uid).name),
         group:     json_safe(use_ids ? stat.gid.to_s : Etc.getgrgid(stat.gid).name),

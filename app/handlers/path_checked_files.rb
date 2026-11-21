@@ -72,9 +72,14 @@ module Handlers
       FileUtils.rm_rf(path)
     end
 
-    # @return [Array<String>] the names in the directory
+    # @return [Array<Array(String, File::Stat)>] each name in the directory
+    #   with the stat of the entry itself
     def self.children(path)
-      path.children.map { |child| child.basename.to_s }
+      path.children.filter_map do |child|
+        [child.basename.to_s, child.lstat]
+      rescue Errno::ENOENT
+        nil
+      end
     end
 
     # Resolves the path and applies the policy to the result, so the

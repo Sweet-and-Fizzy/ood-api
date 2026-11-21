@@ -55,16 +55,17 @@ module Handlers
       end
     end
 
+    # Follows the user's own symlinks, as read and write do. The times are set
+    # on the entry by name without following a link, so a file the user owns
+    # but cannot open is still touched, and an entry swapped for a symlink
+    # after it was looked at changes nothing but the link.
     def self.touch(path)
-      pin(path) do |dir, name, _real|
+      with_target(path) do |dir, name, _real, stat|
+        next File.open(dir.entry(name), File::WRONLY | File::CREAT | OPEN_SAFELY, &:close) if stat.nil?
+        raise ValidationError, 'Not a regular file' unless stat.file? || stat.directory?
+
         now = Time.now
-        next touch_directory(dir, name, now) if dir.lstat(name)&.directory?
-
-        File.open(dir.entry(name), File::WRONLY | File::CREAT | OPEN_SAFELY) do |file|
-          raise ValidationError, 'Not a regular file' unless file.stat.file?
-
-          File.utime(now, now, "#{PinnedDir::PROC_FD}/#{file.fileno}")
-        end
+        File.lutime(now, now, dir.entry(name))
       end
     end
 
@@ -78,15 +79,6 @@ module Handlers
 
         Dir.rmdir(dir.entry(name))
       end
-    end
-
-    # Opened without following a symlink, so the directory whose times change
-    # is the one that was looked at.
-    def self.touch_directory(dir, name, now)
-      directory = dir.descend(name)
-      File.utime(now, now, directory.entry('.'))
-    ensure
-      directory&.close
     end
 
     def self.remove_tree(dir, name, real)
@@ -111,11 +103,15 @@ module Handlers
       directory&.close
     end
 
-    # @return [Array<String>] the names in the directory
+    # @return [Array<Array(String, File::Stat)>] each name in the directory
+    #   with the stat of the entry itself, not of what a symlink points at
     def self.children(path)
       dir = PinnedDir.open(path)
       Files.validate_real!(dir.real)
-      Dir.children(dir.entry('.'))
+      Dir.children(dir.entry('.')).filter_map do |name|
+        stat = dir.lstat(name)
+        [name, stat] if stat
+      end
     ensure
       dir&.close
     end
@@ -187,7 +183,6 @@ module Handlers
       Pathname.new(File.expand_path(File.readlink(dir.entry(name)), real.parent.to_s))
     end
 
-    private_class_method :pin, :split_existing, :with_target, :link_target, :remove_tree, :remove_directory,
-                         :touch_directory
+    private_class_method :pin, :split_existing, :with_target, :link_target, :remove_tree, :remove_directory
   end
 end

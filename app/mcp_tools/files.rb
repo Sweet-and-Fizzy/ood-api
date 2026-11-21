@@ -41,7 +41,10 @@ module OodApi
         end
         if result.is_a?(Array)
           lines = result.map do |p|
-            type = p.directory? ? 'dir ' : 'file'
+            type = if p.directory? then 'dir '
+                   else
+                     p.symlink? ? 'link' : 'file'
+                   end
             "  #{type}  #{p.basename}"
           end
           text = "Directory: #{path}\n#{lines.join("\n")}"

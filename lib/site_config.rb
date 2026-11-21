@@ -10,6 +10,9 @@ module OodApi
   # own env file, then /etc/ood/config/ondemand.d.
   module SiteConfig
     ALLOWLIST_KEYS = ['OOD_ALLOWLIST_PATH', 'WHITELIST_PATH'].freeze
+    REFRESH_SECONDS = 1
+    # A file that mentions one of these holds settings this app acts on.
+    OWN_SETTINGS = /\bood_api\b|\ballowlist_path\b/
 
     module_function
 
@@ -36,21 +39,86 @@ module OodApi
     #
     # @return [Hash{String => String}] the variables set in that file
     def dashboard_env
-      @dashboard_env ||= read_env_file(
-        Pathname.new(ENV['OOD_DASHBOARD_ENV_FILE'] || '/etc/ood/config/apps/dashboard/env')
-      )
+      refresh
+      @dashboard_env ||= read_env_file(dashboard_env_file)
+    end
+
+    def dashboard_env_file
+      Pathname.new(ENV['OOD_DASHBOARD_ENV_FILE'] || '/etc/ood/config/apps/dashboard/env')
     end
 
     # @return [Hash] the merged contents of the ondemand.d files
     def config
+      refresh
       @config ||= read_config
     end
 
-    # Forget the cached files. For tests, and for nothing else: a PUN picks up
-    # a config change when it restarts.
+    # @return [Array<String>] files that hold settings for this app and could
+    #   not be read. Their contents are unknown, so the app serves nothing
+    #   until they are fixed (see OodApi::Capabilities).
+    def problems
+      config
+      @problems || []
+    end
+
+    # A setting an admin can give either way: the environment variable when it
+    # is set to something, otherwise the key under `ood_api` in ondemand.d. An
+    # empty variable counts as unset, so it cannot hide the file's value.
+    def setting(env_name, key)
+      value = ENV.fetch(env_name, nil)
+      return value unless value.nil? || value.strip.empty?
+
+      settings = config[:ood_api]
+      settings.is_a?(Hash) ? settings[key] : nil
+    end
+
+    # Loads this app's own env file the way the Dashboard loads its own:
+    # variables already in the environment win. Called once, before the app
+    # is loaded, so a change needs a PUN restart.
+    def load_app_env!(file)
+      read_env_file(Pathname.new(file)).each { |key, value| ENV[key] ||= value }
+    end
+
+    # Run when the files on disk change, with the new settings in place.
+    def on_change(&block)
+      (@listeners ||= []) << block
+    end
+
+    # Forget the cached files.
     def reset!
       @config = nil
       @dashboard_env = nil
+      @problems = nil
+      @fingerprint = nil
+      @checked_at = nil
+    end
+
+    # The files are read again when they change, so an admin can turn the app
+    # off for every running PUN by editing ondemand.d. Looked at no more than
+    # once a second.
+    def refresh
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      return if @checked_at && now - @checked_at < REFRESH_SECONDS
+
+      @checked_at = now
+      current = fingerprint
+      changed = @fingerprint && @fingerprint != current
+      @fingerprint = current
+      return unless changed
+
+      @dashboard_env = nil
+      @config = read_config
+      (@listeners || []).each(&:call)
+    end
+
+    def fingerprint
+      watched = Pathname.glob(config_directory.join('*')) + [dashboard_env_file]
+      watched.sort.map do |file|
+        stat = file.stat
+        [file.to_s, stat.mtime.to_f, stat.size, stat.uid]
+      rescue SystemCallError
+        [file.to_s]
+      end
     end
 
     # Parses the KEY=value lines of a dotenv file. Quotes around a value are
@@ -71,24 +139,48 @@ module OodApi
     # settings: every file goes through ERB, YAML anchors are allowed, files
     # are merged key by key, and a file that fails is skipped on its own. In
     # production only root-owned files count.
+    #
+    # The Dashboard skips such files quietly. Here a skipped file is a
+    # problem when it holds settings for this app, because what it said is
+    # then unknown: it may have been the file that turned something off.
     def read_config
+      @problems = []
       config_files.each_with_object({}) do |file, merged|
+        unless trusted?(file)
+          skipped(file, 'is not owned by root')
+          next
+        end
         content = ERB.new(file.read(encoding: 'UTF-8'), trim_mode: '-').result
         parsed = YAML.safe_load(content, aliases: true, symbolize_names: true)
         deep_merge!(merged, parsed) if parsed.is_a?(Hash)
       rescue StandardError, ScriptError => e
         # The Dashboard's ERB can call Dashboard code this app does not have.
-        # Such a file is skipped here though the Dashboard reads it, so say
-        # which one: a setting in it will not apply to this app.
-        warn "ood_api_audit op=site_config status=error file=#{file.basename} error=#{e.class}"
+        skipped(file, "could not be read (#{e.class})")
       end
     end
 
     def config_files
-      files = Pathname.glob(config_directory.join('*.{yml,yaml,yml.erb,yaml.erb}')).sort
-      return files unless (ENV['RAILS_ENV'] || ENV.fetch('RACK_ENV', nil)) == 'production'
+      Pathname.glob(config_directory.join('*.{yml,yaml,yml.erb,yaml.erb}')).sort
+    end
 
-      files.select { |file| file.stat.uid.zero? }
+    def trusted?(file)
+      return true unless (ENV['RAILS_ENV'] || ENV.fetch('RACK_ENV', nil)) == 'production'
+
+      file.stat.uid.zero?
+    end
+
+    def skipped(file, reason)
+      ours = holds_own_settings?(file)
+      @problems << "#{file.basename} #{reason}" if ours
+      warn "ood_api_audit op=site_config status=#{ours ? 'error' : 'skipped'} " \
+           "file=#{file.basename} error=\"#{reason}\""
+    end
+
+    # A file that cannot be read at all is assumed to.
+    def holds_own_settings?(file)
+      file.read(encoding: 'UTF-8').scrub.match?(OWN_SETTINGS)
+    rescue SystemCallError
+      true
     end
 
     def deep_merge!(base, other)

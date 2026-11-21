@@ -96,18 +96,113 @@ class CapabilitiesTest < Minitest::Test
     assert_equal 403, last_response.status
   end
 
-  # A typo must not leave the tool it was meant to remove switched on.
-  def test_an_unknown_name_falls_back_to_read_only_and_is_reported
+  # A typo must not leave on the thing it was meant to remove, and there is
+  # no telling what that was, so nothing is served until it is fixed.
+  def test_an_unknown_name_turns_everything_off_and_is_reported
     ENV['OOD_API_CAPABILITIES'] = 'all'
     ENV['OOD_API_DISABLE'] = 'cancle_job'
 
-    assert_equal caps::GROUPS['read'].sort, caps.enabled_tools.to_a.sort
+    assert_empty caps.enabled_tools
+    refute caps.rest?
+    refute caps.mcp?
     assert_equal ['unknown tool "cancle_job"'], caps.problems
 
     ENV.delete('OOD_API_DISABLE')
     ENV['OOD_API_CAPABILITIES'] = 'read,job'
-    refute caps.enabled?('submit_job')
+    refute caps.enabled?('list_jobs')
     assert_equal ['unknown capability "job"'], caps.problems
+  end
+
+  def test_a_misspelt_switch_or_key_turns_everything_off
+    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  mcp: flase\n")
+    refute caps.mcp?
+    refute caps.rest?
+    assert_equal ['mcp must be true or false, not "flase"'], caps.problems
+
+    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  disabled: [read_file]\n  rest: none\n")
+    OodApi::SiteConfig.reset!
+    assert_equal ['unknown setting ood_api.disabled', 'rest must be true or false, not "none"'], caps.problems
+    refute caps.enabled?('read_file')
+  end
+
+  def test_misconfigured_settings_answer_503_on_both_surfaces_and_in_health
+    ENV['OOD_API_DISABLE'] = 'cancle_job'
+
+    get '/api/v1/clusters'
+    assert_equal 503, last_response.status
+    assert_equal 'misconfigured', JSON.parse(last_response.body)['error']
+    status, = OodApi.mcp_rack_app.call(Rack::MockRequest.env_for('/', method: 'POST', input: '{}'))
+    assert_equal 503, status
+    get '/health'
+    assert_equal 503, last_response.status
+    body = JSON.parse(last_response.body)
+    assert_equal 'misconfigured', body['status']
+    assert_equal ['unknown tool "cancle_job"'], body['problems']
+  end
+
+  def test_health_shows_the_settings_in_force
+    ENV['OOD_API_DISABLE'] = 'read_file'
+    ENV['OOD_API_MCP'] = 'off'
+
+    get '/health'
+    body = JSON.parse(last_response.body)
+    assert_equal 'ok', body['status']
+    assert_equal false, body['mcp']
+    refute_includes body['tools'], 'read_file'
+    assert_includes body['tools'], 'list_files'
+
+    ENV['OOD_API_REST'] = '0'
+    get '/health'
+    assert last_response.ok?
+    assert_equal 'disabled', JSON.parse(last_response.body)['status']
+  end
+
+  # An empty variable is what a templated env file leaves behind.
+  def test_an_empty_variable_does_not_hide_the_file
+    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  disable: [read_file]\n  mcp: false\n")
+    ENV['OOD_API_DISABLE'] = ''
+    ENV['OOD_API_MCP'] = ' '
+
+    refute caps.enabled?('read_file')
+    refute caps.mcp?
+  end
+
+  # The file that could not be read may be the one that turned something off.
+  def test_an_unreadable_settings_file_turns_everything_off
+    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  rest: <%= Configuration.nope %>\n")
+
+    refute caps.rest?
+    assert_equal ['ood_api.yml could not be read (NameError)'], caps.problems
+  end
+
+  def test_a_broken_file_about_something_else_is_only_skipped
+    File.write(File.join(@dir, 'other.yml'), "pinned_apps: <%= Configuration.nope %>\n")
+
+    assert caps.rest?
+    assert_empty caps.problems
+  end
+
+  def test_settings_not_owned_by_root_are_a_problem_in_production
+    skip 'runs as root' if Process.uid.zero?
+    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  rest: false\n")
+    saved = ENV.fetch('RACK_ENV', nil)
+    ENV['RACK_ENV'] = 'production'
+
+    assert_equal ['ood_api.yml is not owned by root'], caps.problems
+    refute caps.rest?
+  ensure
+    ENV['RACK_ENV'] = saved
+  end
+
+  # The switch an admin reaches for: no PUN restart.
+  def test_a_change_on_disk_is_picked_up_by_a_running_app
+    assert caps.rest?
+
+    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  rest: false\n  mcp: false\n")
+    OodApi::SiteConfig.instance_variable_set(:@checked_at, nil)
+
+    refute caps.rest?
+    refute caps.mcp?
   end
 
   def test_settings_can_come_from_ondemand_d

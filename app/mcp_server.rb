@@ -300,7 +300,13 @@ module OodApi
   # The checks the REST app runs in its `before` filters. Returns a Rack
   # response to send, or nil to let the request through.
   def self.refuse_request(env)
-    return refusal(404, 'not_found', 'The MCP endpoint is not enabled at this site') unless Capabilities.mcp?
+    unless Capabilities.mcp?
+      if Capabilities.problems.any?
+        return refusal(503, 'misconfigured',
+                       "The MCP endpoint is off because this site's settings could not be understood")
+      end
+      return refusal(404, 'not_found', 'The MCP endpoint is not enabled at this site')
+    end
 
     user = ENV['USER'] || ENV['LOGNAME'] || 'unknown'
     Handlers::Audit.context = nil

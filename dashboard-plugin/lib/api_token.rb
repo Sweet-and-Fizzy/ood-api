@@ -194,10 +194,11 @@ class ApiToken
     # The environment first, then the `ood_api` block the Dashboard has
     # already read from ondemand.d.
     def setting(env_name, key)
-      ENV.fetch(env_name) do
-        settings = ::Configuration.send(:config)[:ood_api]
-        settings.is_a?(Hash) ? settings[key] : nil
-      end
+      value = ENV.fetch(env_name, nil)
+      return value unless value.nil? || value.strip.empty?
+
+      settings = ::Configuration.send(:config)[:ood_api]
+      settings.is_a?(Hash) ? settings[key] : nil
     rescue StandardError
       nil
     end

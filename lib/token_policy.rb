@@ -75,10 +75,7 @@ module OodApi
     end
 
     def setting(env_name, key)
-      ENV.fetch(env_name) do
-        settings = SiteConfig.config[:ood_api]
-        settings.is_a?(Hash) ? settings[key] : nil
-      end
+      SiteConfig.setting(env_name, key)
     end
   end
 end

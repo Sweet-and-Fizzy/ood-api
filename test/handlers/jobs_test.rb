@@ -527,6 +527,22 @@ class HandlersJobsTest < Minitest::Test
     )
   end
 
+  # `false` is not a job id; the adapter would hand it to the scheduler.
+  def test_submit_drops_dependencies_given_as_false
+    @adapter.expects(:submit).with { |_script, **kwargs| kwargs.empty? }.returns('300')
+    @adapter.stubs(:info).returns(mock_job_info(id: '300'))
+
+    Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: '#!/bin/bash',
+                          after: false, afterok: false, afternotok: nil, afterany: false)
+  end
+
+  def test_submit_treats_an_empty_workdir_as_not_given
+    @adapter.expects(:submit).with { |script| !script.workdir.to_s.empty? }.returns('300')
+    @adapter.stubs(:info).returns(mock_job_info(id: '300'))
+
+    Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: '#!/bin/bash', workdir: '')
+  end
+
   # cancel / hold / release
   #
   # These three confirm the job exists before acting, because ood_core swallows

@@ -37,6 +37,20 @@ module Handlers
       Errno.const_get(name) if Errno.const_defined?(name)
     end.freeze
 
+    # What a client is told for each thing the filesystem can say. ENXIO is a
+    # FIFO with no reader; with one, the open succeeds and the type check on
+    # the open file refuses it.
+    FILESYSTEM_ERRORS = {
+      [Errno::EACCES]                => [ForbiddenError, 'Permission denied'],
+      [Errno::EPERM]                 => [ForbiddenError, 'Operation not permitted'],
+      [Errno::EROFS]                 => [ForbiddenError, 'Read-only file system'],
+      [Errno::ENXIO]                 => [ValidationError, 'Not a regular file'],
+      [Errno::ENOTEMPTY]             => [ValidationError, 'Directory not empty'],
+      [Errno::EEXIST]                => [ValidationError, 'Path already exists'],
+      [Errno::EBUSY, Errno::ETXTBSY] => [ValidationError, 'File or directory is in use'],
+      [Errno::EIO, Errno::ESTALE]    => [StorageError, 'The filesystem reported an error']
+    }.freeze
+
     def self.out_of_space_message(err)
       case err
       when Errno::EDQUOT then 'Disk quota exceeded'
@@ -67,14 +81,25 @@ module Handlers
             'and file operations cannot be done safely without it'
     end
 
+    # One thing in a listing: where it is, and what it is. The stat is of the
+    # entry itself, so a symlink is reported as a link and says nothing about
+    # what it points at, which may be outside the allowed directories.
+    Entry = Struct.new(:path, :stat) do
+      def basename = path.basename
+      def directory? = stat.directory?
+      def symlink? = stat.symlink?
+      def to_s = path.to_s
+    end
+
+    # @return [Array<Entry>, Entry] the directory's entries, or the file itself
     def self.list(path:)
       translating_errors do
         p = checked_path(path)
         raise Errno::ENOENT unless p.exist?
-        next p unless p.directory?
+        next Entry.new(p, p.stat) unless p.directory?
 
-        children = backend.children(p).map { |name| p + name }
-        children.select(&:readable?).sort_by { |c| [c.directory? ? 0 : 1, c.basename.to_s.downcase] }
+        entries = backend.children(p).map { |name, stat| Entry.new(p + name, stat) }
+        entries.sort_by { |entry| [entry.directory? ? 0 : 1, entry.basename.to_s.downcase] }
       end
     end
 
@@ -95,29 +120,30 @@ module Handlers
       # /\A\d+\z/ blocks that spelling, so MCP was the only way in.
       raise ValidationError, 'max_size must be greater than zero' if max_size && !positive_size?(max_size)
 
-      limit = max_size ? [max_size, MAX_FILE_READ].min : MAX_FILE_READ
+      limit = max_size ? [Integer(max_size), MAX_FILE_READ].min : MAX_FILE_READ
       translating_errors('File not found') do
-        backend.read(checked_path(path), limit: limit, refuse_larger: !max_size)
+        backend.read(inside_root(checked_path(path)), limit: limit, refuse_larger: !max_size)
       end
     end
 
     def self.write(path:, content:, append: false)
+      raise ValidationError, 'content must be a string' unless content.is_a?(String)
       raise PayloadTooLargeError, "Content too large (max #{MAX_FILE_WRITE} bytes)" if content.bytesize > MAX_FILE_WRITE
 
       translating_errors do
-        checked_path(path).tap { |p| backend.write(p, content, append: append) }
+        inside_root(checked_path(path)).tap { |p| backend.write(p, content, append: append) }
       end
     end
 
     def self.mkdir(path:)
       translating_errors do
-        checked_path(path).tap { |p| backend.mkdir(p) }
+        inside_root(checked_path(path)).tap { |p| backend.mkdir(p) }
       end
     end
 
     def self.touch(path:)
       translating_errors do
-        checked_path(path).tap { |p| backend.touch(p) }
+        inside_root(checked_path(path)).tap { |p| backend.touch(p) }
       end
     end
 
@@ -128,7 +154,7 @@ module Handlers
         p.symlink? ? validate_link_location!(p) : validate_path!(p)
         raise Errno::ENOENT unless p.exist? || p.symlink?
 
-        backend.delete(p, recursive: recursive)
+        backend.delete(inside_root(p), recursive: recursive)
         { path: p.to_s, deleted: true }
       end
     end
@@ -140,6 +166,16 @@ module Handlers
       normalized = normalize_path(path)
       validate_path!(normalized)
       normalized
+    end
+
+    # An allowed directory can be listed but not read, written, replaced or
+    # removed as a whole. Said plainly here: the operations work from the
+    # parent directory, which for one of these is outside what is allowed,
+    # and "not in allowed directories" would be the wrong answer.
+    def self.inside_root(path)
+      return path unless path.directory? && allowed_path_roots.include?(path.realpath)
+
+      raise ValidationError, 'This is one of the allowed top-level directories; work on something inside it'
     end
 
     # How the operations are carried out on this host. See access_mode.
@@ -155,20 +191,16 @@ module Handlers
       yield
     rescue Errno::ENOENT
       raise NotFoundError, not_found
-    rescue Errno::EACCES
-      raise ForbiddenError, 'Permission denied'
-    rescue Errno::ENXIO
-      # A FIFO with no reader. With one, the open succeeds and the type check
-      # on the open file refuses it.
-      raise ValidationError, 'Not a regular file'
-    rescue Errno::ENOTEMPTY
-      raise ValidationError, 'Directory not empty'
-    rescue Errno::EEXIST
-      raise ValidationError, 'Path already exists'
     rescue *OUT_OF_SPACE_ERRORS => e
       raise StorageError, out_of_space_message(e)
-    rescue *BAD_PATH_ERRORS => e
-      raise ValidationError, e.message.sub(/ @ .*/, '')
+    rescue SystemCallError => e
+      kind, message = FILESYSTEM_ERRORS.find { |errors, _| errors.any? { |error| e.is_a?(error) } }&.last
+      raise kind, message if kind
+      # Ruby appends the call and the path, which here is an internal
+      # descriptor path and not the one the caller gave.
+      raise ValidationError, e.message.sub(/ (@|-) .*/m, '') if BAD_PATH_ERRORS.any? { |error| e.is_a?(error) }
+
+      raise
     end
 
     # Removing a symlink unlinks the link and never touches its target, so the
