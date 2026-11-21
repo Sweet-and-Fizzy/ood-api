@@ -1283,4 +1283,9 @@ class HandlersFilesTest < Minitest::Test
 
     assert_match(/may already have been removed/, err.message)
   end
+
+  # R reads it before .Rprofile, and it can name another file to run.
+  def test_the_r_environment_file_is_denied
+    assert_denied('.Renviron')
+  end
 end

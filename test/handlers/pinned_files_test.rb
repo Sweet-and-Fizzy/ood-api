@@ -3,6 +3,7 @@
 require 'timeout'
 require_relative '../test_helper'
 require_relative '../../app/handlers/files'
+require_relative '../../app/mcp_tools/files'
 
 # Path-swap races. A directory another user controls is re-pointed at a
 # protected location between the policy check and the file operation. These
@@ -313,6 +314,8 @@ class PinnedFilesTest < Minitest::Test
       File.write(File.join(@dir, 'good'), 'x')
 
       names = files.list(path: @dir).map { |entry| entry.basename.to_s.b }
+      text = OodApi::Tools::ListFilesTool.run(path: @dir).content.first[:text]
+      assert_includes text, 'good'
 
       assert_equal ["bad\xFFname".b, 'good'.b], names.sort
     end
@@ -328,6 +331,7 @@ class PinnedFilesTest < Minitest::Test
       begin
         assert_raises(Handlers::ForbiddenError) { files.read(path: link) }
         assert_raises(Handlers::ForbiddenError) { files.write(path: link, content: 'overwritten') }
+        assert_raises(Handlers::ForbiddenError) { files.touch(path: link) }
       ensure
         files.define_singleton_method(:deny_by_inode!, original)
       end

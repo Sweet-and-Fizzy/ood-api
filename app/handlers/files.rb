@@ -465,6 +465,8 @@ module Handlers
       '.zlogout', '.logout', '.xsession', '.xinitrc', '.xprofile',
       # Run by every R session.
       '.Rprofile',
+      # Read by R before .Rprofile, and can name another file to run in its place.
+      '.Renviron',
       # Credentials in plaintext.
       '.git-credentials', '.pgpass', '.my.cnf'
     ].freeze

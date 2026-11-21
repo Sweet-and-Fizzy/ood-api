@@ -51,10 +51,11 @@ module OodApi
 
       # One line of a listing. A symlink shows the path written in it.
       def self.line_for(entry)
-        return "  dir   #{entry.basename}" if entry.directory?
-        return "  link  #{entry.basename} -> #{entry.link_target}" if entry.symlink?
+        name = McpText.safe_text(entry.basename.to_s)
+        return "  dir   #{name}" if entry.directory?
+        return "  link  #{name} -> #{McpText.safe_text(entry.link_target)}" if entry.symlink?
 
-        "  file  #{entry.basename}"
+        "  file  #{name}"
       end
     end
 

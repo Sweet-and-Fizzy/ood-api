@@ -632,7 +632,7 @@ and write, and return `403 forbidden`:
 | `~/.pam_environment` | Read by PAM at session start where enabled |
 | `~/bin`, `~/.bashrc.d`, `~/.config/environment.d`, `~/.config/fish` | On `PATH` or read at login |
 | `.k5login`, `.rhosts`, `.shosts` | Decide who may log in as the user |
-| `.xsession`, `.xinitrc`, `.xprofile`, `.zlogout`, `.logout`, `.Rprofile` | Run at session start or end, or by every R process |
+| `.xsession`, `.xinitrc`, `.xprofile`, `.zlogout`, `.logout`, `.Rprofile`, `.Renviron` | Run at session start or end, or by every R process |
 | `~/.vnc`, `~/.jupyter`, `~/.ipython/profile_default/startup` | Run when a desktop, notebook or IPython session starts |
 | `~/.aws`, `~/.azure`, `~/.config/gcloud`, `~/.kube`, `~/.docker`, `~/.gnupg`, `~/.config/gh`, `~/.config/rclone`, `.git-credentials`, `.pgpass`, `.my.cnf` | Credentials for other services |
 | Python `site-packages/*.pth`, `sitecustomize.py`, `usercustomize.py` under `~/.local/lib` | Run by every Python process the user starts |

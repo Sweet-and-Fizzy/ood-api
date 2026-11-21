@@ -77,6 +77,7 @@ module Handlers
         next File.open(dir.entry(name), File::WRONLY | File::CREAT | OPEN_SAFELY, &:close) if stat.nil?
         raise ValidationError, 'Not a regular file' unless stat.file? || stat.directory?
 
+        Files.deny_inode!(stat) if stat.file?
         now = Time.now
         File.lutime(now, now, dir.entry(name))
       end
