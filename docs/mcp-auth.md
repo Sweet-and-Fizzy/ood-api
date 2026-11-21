@@ -178,48 +178,49 @@ Method 2 adds OAuth discovery so MCP clients can authenticate
 automatically — the user is prompted to log in via browser and the
 client handles the rest.
 
-This requires two additional pieces on top of the core setup:
-1. Discovery documents that tell clients where to authenticate
+This requires three additional pieces on top of the core setup:
+1. A discovery document that tells clients where to authenticate
 2. Apache directives that return 401 (instead of a redirect) for
    non-browser requests, triggering the client's OAuth flow
+3. An entry allowing the OAuth client your MCP clients use
 
 ### Step 1: Add Apache directives
 
 Add these to your `oidc_settings` and `custom_vhost_directives` in
-`/etc/ood/config/ood_portal.yml` (in addition to the core setup):
+`/etc/ood/config/ood_portal.yml` (in addition to the core setup). Replace
+`https://ondemand.example.edu` with your portal's URL in the last line.
 
 ```yaml
 oidc_settings:
   # ... existing settings from core setup ...
   OIDCUnAuthAction: '401 "%{HTTP_ACCEPT} !~ m#text/html#"'
 custom_vhost_directives:
-  - 'Alias "/.well-known/oauth-protected-resource" "/etc/ood/config/mcp/oauth-protected-resource.json"'
-  - '<Location "/.well-known/oauth-protected-resource">'
+  - 'AliasMatch "^/\.well-known/oauth-protected-resource(/pun/sys/ood-api/mcp)?$" "/etc/ood/config/mcp/oauth-protected-resource.json"'
+  - '<LocationMatch "^/\.well-known/oauth-protected-resource">'
   - '  Require all granted'
   - '  Header always set Content-Type "application/json"'
   - '  Header always set Access-Control-Allow-Origin "*"'
-  - '</Location>'
-  - 'Alias "/.well-known/oauth-authorization-server" "/etc/ood/config/mcp/oauth-authorization-server.json"'
-  - '<Location "/.well-known/oauth-authorization-server">'
+  - '</LocationMatch>'
+  - '<Directory "/etc/ood/config/mcp">'
   - '  Require all granted'
-  - '  Header always set Content-Type "application/json"'
-  - '  Header always set Access-Control-Allow-Origin "*"'
-  - '</Location>'
-  - 'Header always set WWW-Authenticate "Bearer" "expr=%{REQUEST_STATUS} == 401"'
+  - '</Directory>'
+  - 'Header always set WWW-Authenticate "Bearer resource_metadata=\"https://ondemand.example.edu/.well-known/oauth-protected-resource/pun/sys/ood-api/mcp\"" "expr=%{REQUEST_STATUS} == 401"'
 ```
 
 `OIDCUnAuthAction` returns 401 for non-browser requests (MCP clients
 send `Accept: application/json`, not `text/html`) instead of
 redirecting to the IdP login page. Browser users still get the normal
-redirect. The `WWW-Authenticate: Bearer` header on 401 responses
-signals to MCP clients that OAuth is available.
+redirect.
+
+The `WWW-Authenticate` header on a 401 carries `resource_metadata`, the URL
+of the document that tells the client where to authenticate (RFC 9728). The
+document is served at that URL and at the bare
+`/.well-known/oauth-protected-resource`, which older clients try.
 
 If you already have `custom_vhost_directives` in your config, append
 these lines to the existing list.
 
-### Step 2: Create discovery documents
-
-Create the directory:
+### Step 2: Create the discovery document
 
 ```bash
 sudo mkdir -p /etc/ood/config/mcp
@@ -227,106 +228,52 @@ sudo mkdir -p /etc/ood/config/mcp
 
 **Protected resource metadata** (`/etc/ood/config/mcp/oauth-protected-resource.json`):
 
-This is the primary discovery document (RFC 9728). MCP clients fetch
-it first to learn where to authenticate.
-
 ```json
 {
-  "resource": "https://ondemand.example.edu",
+  "resource": "https://ondemand.example.edu/pun/sys/ood-api/mcp",
   "authorization_servers": ["https://your-idp.example.edu"],
   "bearer_methods_supported": ["header"],
   "resource_name": "Open OnDemand"
 }
 ```
 
-Set `resource` to your OOD host URL. Set `authorization_servers` to
-your IdP's issuer URL.
+Set `resource` to the full URL of the MCP endpoint, exactly as users
+configure it in their client. Set `authorization_servers` to your IdP's
+issuer URL, exactly as the IdP states it in its own metadata.
 
-**Authorization server metadata** (`/etc/ood/config/mcp/oauth-authorization-server.json`):
+That is the only document to host. Clients fetch the authorization server's
+metadata from the IdP itself, at `<issuer>/.well-known/oauth-authorization-server`
+or `<issuer>/.well-known/openid-configuration`, and every IdP named in this
+guide publishes one. Do not host a copy on the OOD server: the `issuer` in
+that document has to match the URL it was fetched from, so clients reject a
+copy served from another host.
 
-This tells clients the IdP's OAuth endpoints. If your IdP already
-publishes its own at `https://your-idp/.well-known/oauth-authorization-server`,
-you can skip this file — clients will fetch it from the IdP directly.
+### Which clients may connect
 
-**CILogon example.** The endpoints below are correct, but note that CILogon
-issues opaque access tokens unless a token handler is configured for your
-client — so Method 2 does not work end-to-end there without the introspection
-setup described under
-[If your IdP issues opaque access tokens](#if-your-idp-issues-opaque-access-tokens).
-Kept here because the endpoint list is still the right reference for a CILogon
-site.
+A client that authenticates this way gets a token issued to *its own* OAuth
+client ID, not to Open OnDemand's. The audience requirement from
+[installation step 2](installation.md#2-configure-authentication) refuses
+that token until you allow the client. Add one line per client ID to `auth`
+in `ood_portal.yml`:
 
-```json
-{
-  "issuer": "https://cilogon.org",
-  "authorization_endpoint": "https://cilogon.org/authorize",
-  "token_endpoint": "https://cilogon.org/oauth2/token",
-  "registration_endpoint": "https://cilogon.org/oauth2/oidc-cm",
-  "device_authorization_endpoint": "https://cilogon.org/oauth2/device_authorization",
-  "revocation_endpoint": "https://cilogon.org/oauth2/revoke",
-  "introspection_endpoint": "https://cilogon.org/oauth2/introspect",
-  "jwks_uri": "https://cilogon.org/oauth2/certs",
-  "response_types_supported": ["code"],
-  "grant_types_supported": [
-    "authorization_code",
-    "refresh_token",
-    "urn:ietf:params:oauth:grant-type:device_code"
-  ],
-  "code_challenge_methods_supported": ["plain", "S256"],
-  "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"]
-}
+```yaml
+auth:
+  - "AuthType auth-openidc"
+  - "Require claim aud:YOUR_OOD_CLIENT_ID"
+  - "Require claim aud:YOUR_MCP_CLIENT_ID"
 ```
 
-> **Note:** this is a minimal example listing only what MCP clients need.
-> CILogon's live metadata at
-> `https://cilogon.org/.well-known/openid-configuration` advertises more,
-> including `client_credentials` and RFC 8693 token-exchange. It also
-> lists its registration endpoint as `/oauth2/oidc-cm`, which is the
-> RFC 7592 management endpoint and cannot create a client — client
-> registration is the manual web form at `/oauth2/register`. See Dynamic
-> Client Registration below. Prefer fetching the live document over
-> copying this file when your IdP publishes its own.
+Apache accepts a request that satisfies any one of the `Require` lines.
 
-> **Note on other CILogon grants.** Beyond the authorization code flow
-> used here, CILogon's published metadata also advertises
-> `refresh_token`, `device_code`, `client_credentials`, and RFC 8693
-> token-exchange, plus revocation and introspection endpoints. These are
-> **not tested against ood-api** and are not part of either method
-> documented here — see [Token lifecycle](#token-lifecycle-partly-untested)
-> below before relying on them.
-
-**Keycloak example:**
-
-```json
-{
-  "issuer": "https://keycloak.example.edu/realms/YOUR_REALM",
-  "authorization_endpoint": "https://keycloak.example.edu/realms/YOUR_REALM/protocol/openid-connect/auth",
-  "token_endpoint": "https://keycloak.example.edu/realms/YOUR_REALM/protocol/openid-connect/token",
-  "jwks_uri": "https://keycloak.example.edu/realms/YOUR_REALM/protocol/openid-connect/certs",
-  "response_types_supported": ["code"],
-  "grant_types_supported": ["authorization_code"],
-  "code_challenge_methods_supported": ["S256"],
-  "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"]
-}
-```
-
-**Dex (OOD built-in) example:**
-
-```json
-{
-  "issuer": "https://your-ood-host/dex",
-  "authorization_endpoint": "https://your-ood-host/dex/auth",
-  "token_endpoint": "https://your-ood-host/dex/token",
-  "jwks_uri": "https://your-ood-host/dex/keys",
-  "response_types_supported": ["code"],
-  "grant_types_supported": ["authorization_code"],
-  "code_challenge_methods_supported": ["S256", "plain"],
-  "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post"]
-}
-```
-
-Note: The `issuer` field should be your IdP's issuer URL, not your OOD
-host URL. MCP clients use this to validate tokens.
+This is why pre-registering one client for MCP use is the safe arrangement.
+With Dynamic Client Registration, any software can register a client at your
+IdP and get a new client ID, so there is no fixed list to allow. Accepting
+every client is the `Require valid-user` configuration, which lets a token
+issued to any service log in to the whole portal. DCR is safe only if your
+IdP puts the *resource* in the token's audience (RFC 8707 resource
+indicators), so that you can require
+`aud:https://ondemand.example.edu/pun/sys/ood-api/mcp`. That has not been
+tested with ood-api. Dex ignores the `resource` parameter.
 
 ### Step 3: Regenerate and restart
 
@@ -337,11 +284,10 @@ sudo systemctl restart httpd
 
 ### Step 4: Verify
 
-Test the discovery endpoints (no auth required):
+Test the discovery document (no auth required):
 
 ```bash
-curl -s https://ondemand.example.edu/.well-known/oauth-protected-resource | python3 -m json.tool
-curl -s https://ondemand.example.edu/.well-known/oauth-authorization-server | python3 -m json.tool
+curl -s https://ondemand.example.edu/.well-known/oauth-protected-resource/pun/sys/ood-api/mcp | python3 -m json.tool
 ```
 
 Test the 401 response for non-browser requests:
@@ -353,7 +299,18 @@ curl -v -X POST https://ondemand.example.edu/pun/sys/ood-api/mcp \
   -d '{}' 2>&1 | grep -i "www-authenticate\|HTTP/"
 ```
 
-Expected: `HTTP/1.1 401` with `WWW-Authenticate: Bearer`.
+Expected: `HTTP/1.1 401` with
+`WWW-Authenticate: Bearer resource_metadata="https://ondemand.example.edu/.well-known/oauth-protected-resource/pun/sys/ood-api/mcp"`.
+
+Then check both directions of the audience rule: a token obtained through
+your MCP client ID must get a 200 from `/mcp`, and a token issued to any
+client you have not listed must get a 401.
+
+This setup was checked on Open OnDemand 4.2.5 with the bundled Dex: the
+official MCP client SDK (1.32.2) followed the 401 to the metadata and on to
+Dex, and a token from an authorization-code flow with PKCE through a
+pre-registered public client was accepted by `/mcp`. It has not been run
+against Keycloak or CILogon, or driven from an interactive MCP client.
 
 ### Client configuration
 
@@ -412,9 +369,12 @@ If your IdP does not support Dynamic Client Registration:
 
 ### Dynamic Client Registration
 
-For the smoothest experience, the IdP should support Dynamic Client
-Registration (RFC 7591). This lets MCP clients register themselves
-automatically.
+Dynamic Client Registration (RFC 7591) lets MCP clients register
+themselves at the IdP automatically. Read
+[Which clients may connect](#which-clients-may-connect) before turning it
+on: a self-registered client gets a client ID you have not allowed, so its
+tokens are refused unless your IdP can put the resource in the audience.
+Pre-registering one client is the arrangement this guide has tested.
 
 | Identity Provider | DCR Support |
 |-------------------|-------------|
@@ -659,7 +619,9 @@ is missing or the config wasn't regenerated.
 echo '<token>' | cut -d. -f2 | base64 -d 2>/dev/null | python3 -m json.tool
 ```
 
-Verify the `iss` (issuer) and `exp` (expiration) fields.
+Verify the `iss` (issuer) and `exp` (expiration) fields, and that `aud`
+names a client ID listed in a `Require claim aud:` line. A valid token
+issued to a client you have not listed gets a 401 by design.
 
 **Check the JWKS URI:** Confirm Apache can reach it:
 
@@ -669,7 +631,7 @@ curl -s https://your-idp/certs | python3 -m json.tool
 
 ### Discovery document returns 404
 
-Check that the `Alias` directives are in your Apache config:
+Check that the `AliasMatch` directive is in your Apache config:
 
 ```bash
 grep well-known /etc/httpd/conf.d/ood-portal.conf

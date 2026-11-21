@@ -63,6 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The OAuth discovery setup in `docs/mcp-auth.md` now follows RFC 9728: the
+  401 carries `resource_metadata`, and the metadata names the MCP endpoint as
+  the resource. The guide no longer has sites host a copy of the IdP's
+  authorization-server metadata, which clients reject, and it explains how
+  to allow the OAuth client that MCP clients use.
 - Hold and release report the job's real status when it has already started.
   They used to answer `queued_held` and `queued` for a job that was running.
 - A symlink can be deleted when its target is missing or outside the allowed
