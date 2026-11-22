@@ -21,14 +21,22 @@ class ApiToken
   attr_reader :id, :name, :token_digest, :created_at, :last_used_at, :expires_at
 
   class << self
-    # The API's directory under /etc/ood/config/apps, named after the
-    # directory the API is installed in. That name is taken from where this
-    # plugin is linked from, following the plugin's own link and no further,
-    # which is the name the API itself is served under.
+    # The API's directory under /etc/ood/config/apps.
     def app_config_root
       return ENV.fetch('OOD_API_CONFIG_ROOT', nil) unless ENV['OOD_API_CONFIG_ROOT'].to_s.strip.empty?
 
-      plugin = File.expand_path('..', __dir__)
+      # __FILE__ is the path this file was loaded by, with the plugin's link
+      # still in it; __dir__ has already followed the link.
+      config_root_for(File.expand_path('..', File.dirname(__FILE__)))
+    end
+
+    # The directory is named after the directory the API is installed in,
+    # which is the name the API is served under. That name is read from the
+    # plugin's link, one step and no further. A plugin that is not a link
+    # gives no name, so the usual one is assumed.
+    #
+    # @param plugin [String] the plugin directory as the Dashboard sees it
+    def config_root_for(plugin)
       app = 'ood-api'
       if File.symlink?(plugin)
         target = File.expand_path(File.readlink(plugin), File.dirname(plugin))

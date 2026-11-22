@@ -60,8 +60,7 @@ module OodApi
     #
     # @return [Pathname]
     def app_config_root
-      @hosted_root || (@app_config_root ||= Pathname.new(ENV['OOD_API_CONFIG_ROOT'] || File.join(DEFAULT_ROOT,
-                                                                                                 app_name)))
+      @hosted_root || (@app_config_root ||= Pathname.new(given_root || File.join(DEFAULT_ROOT, app_name)))
     end
 
     # For the Dashboard plugin, which runs this code inside the Dashboard's
@@ -73,10 +72,20 @@ module OodApi
       @hosted_root = root && Pathname.new(root)
     end
 
+    # A blank variable is the same as none.
+    def given_root
+      root = ENV.fetch('OOD_API_CONFIG_ROOT', '').strip
+      root.empty? ? nil : root
+    end
+
     # What `/health` and the PUN log say about where the settings came
     # from, so a site that wrote them somewhere else can see that.
     def settings_source
       "#{settings_file} (#{settings_file.exist? ? 'found' : 'not found'})"
+    end
+
+    def env_source
+      "#{env_file} (#{env_file.exist? ? 'found' : 'not found'})"
     end
 
     def settings_file
@@ -151,10 +160,21 @@ module OodApi
     # empty variable counts as unset, so it cannot hide the file's value.
     def setting(env_name, key)
       value = ENV.fetch(env_name, nil)&.scrub
-      value = read_env_file(env_file)[env_name] if @hosted_root && (value.nil? || value.strip.empty?)
+      value = hosted_env[env_name] if @hosted_root && (value.nil? || value.strip.empty?)
       return value unless value.nil? || value.strip.empty?
 
       settings[key]
+    end
+
+    # The env file as the token page reads it. A file the API itself would
+    # refuse to load counts for nothing here either.
+    def hosted_env
+      file = env_file
+      return {} unless file.file? && trusted?(file)
+
+      parse_env(file.read(encoding: 'UTF-8'))
+    rescue StandardError
+      {}
     end
 
     # A size or count from the environment. Empty, zero or not a number
@@ -205,10 +225,13 @@ module OodApi
       file = Pathname.new(file)
       @env_problems = []
       begin
-        file.stat
+        # The entry itself, so a link that points nowhere is not mistaken
+        # for no file.
+        file.lstat
       rescue Errno::ENOENT, Errno::ENOTDIR
         return
       end
+      raise ArgumentError, 'not a regular file' unless file.stat.file?
       raise ArgumentError, 'not owned by root, or writable by everyone' unless trusted?(file)
 
       vars = parse_env(file.read(encoding: 'UTF-8'))
@@ -254,9 +277,12 @@ module OodApi
       @fingerprint = current
       return unless changed
 
+      # Forgotten, not read again here: each is read when something asks for
+      # it, so the token page never evaluates ondemand.d for a lookup that
+      # only needs the app's own settings.
       @dashboard_env = nil
-      @config = read_config
-      @settings = read_settings
+      @config = nil
+      @settings = nil
       (@listeners || []).each(&:call)
     end
 
@@ -338,13 +364,22 @@ module OodApi
 
       found = root.children.select { |file| file.basename.to_s.match?(/\Aconfig\.ya?ml(\.erb)?\z/i) }
       (found - [settings_file]).map { |file| "settings are read from config.yml, not #{file.basename}" }
+    rescue Errno::EACCES
+      # A directory users may enter but not list. Its files are still read
+      # by name; only this search cannot be made.
+      []
     end
 
     def settings_under_the_usual_name
-      usual = Pathname.new(DEFAULT_ROOT).join(USUAL_NAME, 'config.yml')
-      return [] if usual == settings_file || !usual.exist? || settings_file.exist?
+      usual = Pathname.new(DEFAULT_ROOT).join(USUAL_NAME)
+      return [] if usual == app_config_root
 
-      ["settings are in #{usual}, but this app is installed as #{app_name} and reads #{settings_file}"]
+      [['config.yml', settings_file], ['env', env_file]].filter_map do |name, read|
+        there = usual.join(name)
+        next unless there.exist? && !read.exist?
+
+        "#{name} is in #{usual}, but this app is installed as #{app_name} and reads #{read}"
+      end
     end
 
     def load_settings(file)

@@ -100,7 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/etc/ood/config/apps/ood-api/`: `config.yml` for what is enabled and the
   token policy, `env` for environment variables. That is where Open OnDemand
   keeps settings for its other apps. `OOD_API_CONFIG_ROOT` moves it.
-  `/health` and the PUN log name the file being read. The file is plain YAML and nothing in it is evaluated.
+  `/health` names the settings file and the env file being read and whether
+  each was found. Settings in a misnamed file, a key with no value, and
+  settings or an env file left under `apps/ood-api` when the app is installed
+  under another name turn the app off. The file is plain YAML and nothing in it is evaluated.
 - Changes to `config.yml` reach running PUNs within a couple of seconds, so
   a site can switch the app off without restarting them.
 - `/health` reports the settings in force (`status`, `rest`, `mcp`, `tools`,
@@ -126,11 +129,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cluster definitions are read again when they change, so hiding or removing
   a cluster takes effect without a PUN restart.
 - The development server (`bin/dev`) answers only to a loopback `Host`, on
-  both REST and MCP. It is unauthenticated, and without the check a page on
+  both REST and MCP, whatever environment it is started in. It is unauthenticated, and without the check a page on
   another site could reach it through the developer's browser by pointing
   its own hostname at 127.0.0.1. In a PUN, behind Apache, nothing changes.
 - The cross-site check counts only the last value of `X-Forwarded-Host`,
-  which is the one the nearest proxy wrote.
+  which is the one the nearest proxy wrote. A site whose front proxy
+  rewrites the hostname lists its public origin in `OOD_API_ALLOWED_ORIGINS`.
+- A token whose stored expiry is not a time, such as `false` in a
+  hand-edited file, is given the site maximum.
 - A directory listing describes each entry itself. A symlink has
   `"symlink": true` and `"directory": false` and carries the link's own size
   and dates, where the listing used to describe the link's target, including

@@ -38,10 +38,11 @@ module OodApi
       !fetch_site.empty? && !SAME_SITE_VALUES.include?(fetch_site)
     end
 
-    # Apache may sit behind another proxy that rewrites Host, so the forwarded
-    # host counts too. Only its last value does: each proxy appends the host
-    # it saw, so the last is the one the nearest proxy wrote, and anything
-    # before it may have come from the client.
+    # The forwarded host counts as well as Host, but only its last value:
+    # each proxy appends the host it saw, so the last is the one the nearest
+    # proxy wrote, and anything before it may have come from the client. A
+    # site whose front proxy rewrites the hostname lists its public origin in
+    # OOD_API_ALLOWED_ORIGINS.
     def same_host?(origin, env)
       authority = authority_of(origin)
       return false unless authority

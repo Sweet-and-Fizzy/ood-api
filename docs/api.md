@@ -113,6 +113,9 @@ GET /health
   "tools": ["get_cluster", "get_cluster_info", "..."],
   "app_tokens": false,
   "file_access": "pinned",
+  "from_environment": [],
+  "settings": "/etc/ood/config/apps/ood-api/config.yml (found)",
+  "env": "/etc/ood/config/apps/ood-api/env (not found)",
   "problems": []
 }
 ```
@@ -120,7 +123,9 @@ GET /health
 `status` is `ok` when REST or MCP is served, `disabled` when the site has
 switched both off, and `misconfigured`, with HTTP 503, when the site's
 settings could not be understood; `problems` then says why. `tools` lists what
-the site has enabled.
+the site has enabled. `settings` and `env` name the two files the app reads
+its configuration from, and `from_environment` lists the settings held by
+environment variables.
 
 **Authentication.** This is the one endpoint outside the application-token
 check — it is not under `/api/v1/`, which is what that filter guards. It is

@@ -39,7 +39,7 @@ module OodApi
       @token_digest = attrs[:token_digest] || attrs['token_digest']
       @created_at = attrs[:created_at] || attrs['created_at']
       @last_used_at = attrs[:last_used_at] || attrs['last_used_at']
-      @expires_at = attrs[:expires_at] || attrs['expires_at']
+      @expires_at = attrs.fetch(:expires_at) { attrs['expires_at'] }
     end
 
     # A token with no expiry recorded has not expired: either the site allows

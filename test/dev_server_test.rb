@@ -46,6 +46,17 @@ class DevServerTest < Minitest::Test
     assert_equal 403, result['evil.example:9292']['mcp']
   end
 
+  # The check must not depend on the environment the server was started in.
+  def test_the_check_holds_whatever_environment_the_server_runs_as
+    ['production', 'test'].each do |environment|
+      result = statuses('RACK_ENV' => environment)
+
+      assert_equal 200, result['localhost:9292']['health'], environment
+      assert_equal 403, result['evil.example:9292']['health'], environment
+      assert_equal 403, result['evil.example:9292']['mcp'], environment
+    end
+  end
+
   def test_in_a_pun_any_host_is_served
     result = statuses('PASSENGER_BASE_URI' => '/pun/sys/ood-api', 'RACK_ENV' => 'production')
 

@@ -84,6 +84,34 @@ class DashboardPluginTest < Minitest::Test
     assert_nil(ApiToken.expiry_for('never').then { |value| value && nil })
   end
 
+  # The directory is named after where the plugin's link points, one step.
+  def test_the_config_directory_takes_the_name_the_api_is_installed_under
+    Dir.mktmpdir('ood-api-plugin-link') do |dir|
+      FileUtils.mkdir_p(File.join(dir, 'sys', 'api', 'dashboard-plugin'))
+      link = File.join(dir, 'plugins', 'ood-api')
+      FileUtils.mkdir_p(File.dirname(link))
+      File.symlink(File.join(dir, 'sys', 'api', 'dashboard-plugin'), link)
+
+      assert_equal '/etc/ood/config/apps/api', ApiToken.config_root_for(link)
+      assert_equal '/etc/ood/config/apps/ood-api', ApiToken.config_root_for(File.join(dir, 'sys', 'api'))
+    end
+  end
+
+  # `false` is not a time, and is not "never" either.
+  def test_an_expiry_that_is_not_a_time_is_replaced
+    FileUtils.mkdir_p(OodApi::ApiToken::TOKENS_DIR)
+    plain = 'a' * 64
+    File.write(OodApi::ApiToken::TOKENS_FILE,
+               JSON.generate([{ id: '1', name: 'edited', token_digest: OodApi::ApiToken.digest(plain),
+                                created_at: Time.now.iso8601, expires_at: false }]))
+
+    OodApi::ApiToken.touch(OodApi::ApiToken.find_by_token(plain))
+
+    stored = JSON.parse(File.read(OodApi::ApiToken::TOKENS_FILE)).first['expires_at']
+    assert_kind_of String, stored
+    assert_in_delta Time.now + (365 * 86_400), Time.iso8601(stored), 60
+  end
+
   def test_a_hand_written_timestamp_does_not_break_the_page
     token = ApiToken.new(id: '1', name: 'x', created_at: 'yesterday-ish', expires_at: nil)
 

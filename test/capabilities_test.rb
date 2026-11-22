@@ -311,6 +311,44 @@ class CapabilitiesTest < Minitest::Test
     refute caps.rest?
   end
 
+  def test_a_blank_config_root_variable_is_the_same_as_none
+    ENV['OOD_API_CONFIG_ROOT'] = ' '
+    OodApi::SiteConfig.reset!
+
+    assert_equal "/etc/ood/config/apps/#{OodApi::SiteConfig.app_name}", OodApi::SiteConfig.app_config_root.to_s
+  ensure
+    ENV['OOD_API_CONFIG_ROOT'] = @app
+  end
+
+  def test_an_env_file_that_is_a_dangling_link_is_a_problem
+    file = File.join(@app, 'env')
+    File.symlink(File.join(@app, 'nowhere'), file)
+    OodApi::SiteConfig.load_app_env!(file)
+
+    assert_match(/env could not be used/, caps.problems.join)
+    refute caps.rest?
+  ensure
+    OodApi::SiteConfig.load_app_env!(File.join(@app, 'absent'))
+  end
+
+  # Installed under another name, the app reads another directory. Settings
+  # left under the usual one are restrictions the site believes are in force.
+  def test_settings_or_an_env_file_left_under_the_usual_name_are_a_problem
+    Dir.mktmpdir('ood-api-apps') do |apps|
+      FileUtils.mkdir_p(File.join(apps, 'ood-api'))
+      File.write(File.join(apps, 'ood-api', 'env'), "OOD_API_REST=false\n")
+      root = OodApi::SiteConfig.send(:remove_const, :DEFAULT_ROOT)
+      OodApi::SiteConfig.const_set(:DEFAULT_ROOT, apps)
+      begin
+        assert_match(/env is in .*ood-api, but this app is installed as/, caps.problems.join)
+        refute caps.rest?
+      ensure
+        OodApi::SiteConfig.send(:remove_const, :DEFAULT_ROOT)
+        OodApi::SiteConfig.const_set(:DEFAULT_ROOT, root)
+      end
+    end
+  end
+
   def test_the_config_directory_cannot_be_moved_from_its_own_env_file
     file = File.join(@app, 'env')
     File.write(file, "OOD_API_CONFIG_ROOT=/somewhere/else\n")

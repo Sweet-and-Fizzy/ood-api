@@ -62,6 +62,9 @@ module OodApi
     def needs_expiry?(attrs, now = Time.now)
       return true unless attrs.key?(:expires_at)
       return !allow_never? if attrs[:expires_at].nil?
+      # Anything else must be a time. `false` or a number in a hand-edited
+      # file would otherwise read as "never" and never be corrected.
+      return true unless attrs[:expires_at].is_a?(String)
 
       beyond_maximum?(attrs[:expires_at], now)
     end

@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'ipaddr'
 require 'sinatra/base'
 # Rack autoloads these; require them explicitly so QueryParser::QueryLimitError
 # and the multipart error classes are defined by the time the error handlers
@@ -66,11 +67,13 @@ module OodApi
     # nothing reaches the app except through Apache, which has authenticated
     # the request first.
     #
-    # The development server keeps the check. It has no Apache and no
-    # authentication, and the localhost-only rule is what stops a page on
-    # another site from pointing its own hostname at 127.0.0.1 and calling
-    # the API from the developer's browser.
-    set :host_authorization, { permitted_hosts: [] } if SiteConfig.behind_portal?
+    # Anywhere else only a loopback Host is served, whatever environment
+    # Sinatra is running as. The development server has no Apache and no
+    # authentication, and this is what stops a page on another site from
+    # pointing its own hostname at 127.0.0.1 and calling the API from the
+    # developer's browser.
+    LOOPBACK_HOSTS = ['localhost', IPAddr.new('127.0.0.1'), IPAddr.new('::1')].freeze
+    set :host_authorization, { permitted_hosts: SiteConfig.behind_portal? ? [] : LOOPBACK_HOSTS }
 
     # Configuration via environment variables
     CLUSTERS_PATH = ENV.fetch('OOD_CLUSTERS', '/etc/ood/config/clusters.d')
@@ -328,7 +331,7 @@ module OodApi
       { status: state, rest: Capabilities.rest?, mcp: Capabilities.mcp?,
         tools: Capabilities.enabled_tools.to_a.sort, app_tokens: AppAuth.enabled?,
         file_access: Handlers::Files.access_mode, from_environment: Capabilities.from_environment,
-        settings: SiteConfig.settings_source,
+        settings: SiteConfig.settings_source, env: SiteConfig.env_source,
         problems: problems }.to_json
     end
 

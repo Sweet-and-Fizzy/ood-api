@@ -223,7 +223,9 @@ The response shows the settings in force:
 
 ```json
 {"status":"ok","rest":true,"mcp":true,"tools":["get_cluster","..."],
- "app_tokens":false,"file_access":"pinned","problems":[]}
+ "app_tokens":false,"file_access":"pinned","from_environment":[],
+ "settings":"/etc/ood/config/apps/ood-api/config.yml (not found)",
+ "env":"/etc/ood/config/apps/ood-api/env (not found)","problems":[]}
 ```
 
 `status` is `ok` when at least one of REST and MCP is served, `disabled` when
@@ -252,8 +254,8 @@ Everything a site sets for this app lives in that directory, the same place
 Open OnDemand keeps settings for its other apps, so nothing in the app's own
 checkout is ever edited. The directory takes the name the app is installed
 under: installed as `/var/www/ood/apps/sys/api`, the app reads
-`/etc/ood/config/apps/api/`. `/health` and the PUN log name the file being
-read and say whether it was found. The file is plain YAML, must be owned by
+`/etc/ood/config/apps/api/`. `/health` names the settings file and the env file being read
+and says whether each was found; the PUN log names the settings file. The file is plain YAML, must be owned by
 root, and must be readable by every portal user.
 
 | Group | Tools |
@@ -461,8 +463,9 @@ site" means `rest` or `mcp` is switched off in the settings.
 A browser request arrived with an `Origin` that is not the portal's own
 hostname. The app compares it with the `Host` header and with the last value
 of `X-Forwarded-Host`, as the Dashboard does. If a front end on another
-hostname is meant to call the API, list its origin in
-`OOD_API_ALLOWED_ORIGINS`.
+hostname is meant to call the API, or a proxy in front of Open OnDemand
+rewrites the hostname so that the public name reaches the app as neither of
+those, list the public origin in `OOD_API_ALLOWED_ORIGINS`.
 
 ### PUN not spawning for API requests
 
