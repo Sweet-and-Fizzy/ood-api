@@ -64,7 +64,8 @@ module OodApi
 
     # One line for the PUN log, so an admin can see what their settings produced.
     def summary
-      "rest=#{rest?} mcp=#{mcp?} app_tokens=#{AppAuth.enabled?} tools=#{enabled_tools.to_a.sort.join(',')}"
+      "rest=#{rest?} mcp=#{mcp?} app_tokens=#{AppAuth.enabled?} tools=#{enabled_tools.to_a.sort.join(',')} " \
+        "settings=\"#{SiteConfig.settings_source}\""
     end
 
     # Writes the settings in force to the PUN log: at startup, and again
@@ -128,8 +129,12 @@ module OodApi
       (names - known).map { |name| "unknown #{kind} #{name.inspect}" }
     end
 
+    # A key with nothing after it is a mistake too: `rest:` reads as if the
+    # site had said something, and means the default.
     def unknown_settings
-      (SiteConfig.settings.keys - SETTINGS).map { |key| "unknown setting #{key}" }
+      settings = SiteConfig.settings
+      (settings.keys - SETTINGS).map { |key| "unknown setting #{key}" } +
+        settings.select { |key, value| SETTINGS.include?(key) && value.nil? }.keys.map { |key| "#{key} has no value" }
     end
 
     # A comma-separated environment variable, or a list (or comma-separated

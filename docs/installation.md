@@ -114,6 +114,9 @@ sudo mkdir -p /etc/ood/config/plugins
 sudo ln -s /var/www/ood/apps/sys/ood-api/dashboard-plugin /etc/ood/config/plugins/ood-api
 ```
 
+Link it, do not copy it: the token page finds the app's settings by following
+that link.
+
 Every request to `/api/v1/*` and `/mcp` must then carry `X-OOD-API-Token:
 <token>` **in addition to** whatever Apache accepts. The token is never a
 credential on its own, and it can be revoked per client. It is not an
@@ -247,8 +250,10 @@ app_tokens: false
 Everything a site sets for this app lives in that directory, the same place
 Open OnDemand keeps settings for its other apps, so nothing in the app's own
 checkout is ever edited. The directory takes the name the app is installed
-under. The file is plain YAML, must be owned by root, and must be readable by
-every portal user.
+under: installed as `/var/www/ood/apps/sys/api`, the app reads
+`/etc/ood/config/apps/api/`. `/health` and the PUN log name the file being
+read and say whether it was found. The file is plain YAML, must be owned by
+root, and must be readable by every portal user.
 
 | Group | Tools |
 |-------|-------|
@@ -330,10 +335,10 @@ same variable. A variable wins over the same setting in `config.yml`, so a
 setting given both ways cannot be switched off from the file. Unlike
 `config.yml`, environment variables are read once, when the PUN starts. The
 env file must be owned by root and not writable by others, or the app
-answers 503. The Dashboard's token page reads the token settings when its
-own PUN starts, so restart PUNs after changing `token_max_days` or
-`token_allow_never`; until then the page may offer a lifetime the API will
-shorten on first use.
+answers 503. The Dashboard's token page reads `config.yml` and the env file
+each time it is shown, while the API reads the env file only when its PUN
+starts. So after changing a token setting in the env file, restart PUNs;
+until then the page may offer a lifetime the API will shorten on first use.
 
 ### Restarting PUNs
 
@@ -384,7 +389,7 @@ the first second after a restart can get a 502 while the PUN starts.
 | `OOD_API_REST` | No | `true` | Set to `false` to switch off `/api/v1`. |
 | `OOD_API_MCP` | No | `true` | Set to `false` to switch off `/mcp`. |
 | `OOD_API_ALLOWED_ORIGINS` | No | unset | Comma-separated origins (for example `https://portal.example.edu`) whose browser requests are accepted in addition to the portal's own. Only needed if a front end on another origin calls this API. |
-| `OOD_APP_CONFIG_ROOT` | No | `/etc/ood/config/apps/<app>` | The directory holding the app's `config.yml` and `env`, as for the apps that ship with Open OnDemand. `<app>` is the name the app is installed under. |
+| `OOD_API_CONFIG_ROOT` | No | `/etc/ood/config/apps/<app>` | The directory holding the app's `config.yml` and `env`. `<app>` is the name the app is installed under. Set it in `pun_custom_env` if you need it; it cannot be set in the env file it locates. |
 | `OOD_DOWNLOAD_ENABLED`, `OOD_UPLOAD_ENABLED` | No | `true` | The Dashboard's own switches, read from the PUN environment, the Dashboard's env file, or `download_enabled` and `upload_enabled` in `ondemand.d`. See [what to enable](#what-to-enable). |
 | `OOD_ALLOWLIST_PATH` | No | unset | Open OnDemand's own file allowlist. It is read from the PUN environment, from the Dashboard's env file (`/etc/ood/config/apps/dashboard/env`), and from `allowlist_path` in `/etc/ood/config/ondemand.d`, in that order. The Dashboard in Open OnDemand 4.2 and earlier does not read `allowlist_path` from `ondemand.d`, so on those releases set the allowlist in the Dashboard's env file, which confines both. When set, file access through this API is confined to the same colon-separated paths as the Dashboard file browser. Unset, it is confined to the home and temp directories. |
 

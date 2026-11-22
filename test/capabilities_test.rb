@@ -9,18 +9,18 @@ class CapabilitiesTest < Minitest::Test
   SETTINGS = ['OOD_API_CAPABILITIES', 'OOD_API_DISABLE', 'OOD_API_REST', 'OOD_API_MCP'].freeze
 
   def setup
-    @saved = ENV.to_h.slice(*SETTINGS, 'OOD_CONFIG_D_DIRECTORY', 'OOD_APP_CONFIG_ROOT')
+    @saved = ENV.to_h.slice(*SETTINGS, 'OOD_CONFIG_D_DIRECTORY', 'OOD_API_CONFIG_ROOT')
     SETTINGS.each { |k| ENV.delete(k) }
     @dir = Dir.mktmpdir('ood-api-capabilities')
     ENV['OOD_CONFIG_D_DIRECTORY'] = @dir
     @app = Dir.mktmpdir('ood-api-app-config')
-    ENV['OOD_APP_CONFIG_ROOT'] = @app
+    ENV['OOD_API_CONFIG_ROOT'] = @app
     OodApi::SiteConfig.reset!
     OodApi::App.stubs(:clusters).returns([mock_cluster(id: 'cluster1')])
   end
 
   def teardown
-    (SETTINGS + ['OOD_CONFIG_D_DIRECTORY', 'OOD_APP_CONFIG_ROOT']).each { |k| ENV.delete(k) }
+    (SETTINGS + ['OOD_CONFIG_D_DIRECTORY', 'OOD_API_CONFIG_ROOT']).each { |k| ENV.delete(k) }
     @saved.each { |k, v| ENV[k] = v }
     FileUtils.rm_rf(@dir)
     FileUtils.rm_rf(@app)
@@ -294,6 +294,52 @@ class CapabilitiesTest < Minitest::Test
     end
   end
 
+  # Each of these leaves the site believing it has restricted something.
+  def test_settings_written_where_they_are_not_read_are_a_problem
+    File.write(File.join(@app, 'config.yaml'), "rest: false\n")
+    OodApi::SiteConfig.reset!
+    assert_equal ['settings are read from config.yml, not config.yaml'], caps.problems
+    FileUtils.rm_f(File.join(@app, 'config.yaml'))
+
+    write_settings("rest:\nmcp: ~\n")
+    assert_equal ['rest has no value', 'mcp has no value'], caps.problems
+
+    FileUtils.rm_f(File.join(@app, 'config.yml'))
+    File.symlink(File.join(@app, 'nowhere.yml'), File.join(@app, 'config.yml'))
+    OodApi::SiteConfig.reset!
+    assert_match(/config.yml could not be read/, caps.problems.join)
+    refute caps.rest?
+  end
+
+  def test_the_config_directory_cannot_be_moved_from_its_own_env_file
+    file = File.join(@app, 'env')
+    File.write(file, "OOD_API_CONFIG_ROOT=/somewhere/else\n")
+    OodApi::SiteConfig.load_app_env!(file)
+
+    assert_match(/cannot be set in the env file/, caps.problems.join)
+    assert_equal @app, OodApi::SiteConfig.app_config_root.to_s
+  ensure
+    OodApi::SiteConfig.load_app_env!(File.join(@app, 'absent'))
+  end
+
+  def test_health_and_the_log_name_the_settings_file
+    write_settings("mcp: false\n")
+
+    get '/health'
+
+    assert_equal "#{File.join(@app, 'config.yml')} (found)", JSON.parse(last_response.body)['settings']
+    assert_includes caps.summary, "settings=\"#{File.join(@app, 'config.yml')} (found)\""
+  end
+
+  # 030 is thirty days, not twenty-four.
+  def test_a_token_lifetime_with_a_leading_zero_is_read_as_decimal
+    ENV['OOD_API_TOKEN_MAX_DAYS'] = '030'
+
+    assert_equal 30, OodApi::TokenPolicy.max_days
+  ensure
+    ENV.delete('OOD_API_TOKEN_MAX_DAYS')
+  end
+
   # The settings were never read from there, so a site that put its
   # restrictions there would have none.
   def test_settings_left_in_ondemand_d_are_a_problem
@@ -422,7 +468,7 @@ class CapabilitiesTest < Minitest::Test
 
     get '/health'
 
-    assert_equal ['OOD_API_MCP'], JSON.parse(last_response.body)['from_environment']
+    assert_includes JSON.parse(last_response.body)['from_environment'], 'OOD_API_MCP'
   end
 
   def test_a_call_to_a_tool_that_is_off_is_recorded_over_mcp

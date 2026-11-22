@@ -56,7 +56,7 @@ class ApiToken
 
     # @return [Integer] the longest lifetime a token may be given, in days
     def max_days
-      days = Integer(setting('OOD_API_TOKEN_MAX_DAYS', :token_max_days) || DEFAULT_MAX_DAYS)
+      days = Integer((setting('OOD_API_TOKEN_MAX_DAYS', :token_max_days) || DEFAULT_MAX_DAYS).to_s.strip, 10)
       days.positive? ? days : DEFAULT_MAX_DAYS
     rescue ArgumentError, TypeError
       DEFAULT_MAX_DAYS
@@ -192,21 +192,31 @@ class ApiToken
     end
 
     # Where the API reads the same setting, in the same order: the
-    # environment, the API's env file, then its config.yml.
+    # environment, the API's env file, then its config.yml. The files are
+    # read on each call, so the page follows a change without a restart.
     def setting(env_name, key)
-      value = ENV.fetch(env_name, nil) || app_env[env_name]
-      return value unless value.nil? || value.strip.empty?
-
+      [ENV.fetch(env_name, nil), app_env[env_name]].each do |value|
+        return value.strip unless value.nil? || value.strip.empty?
+      end
       app_settings[key.to_s]
     rescue StandardError
       nil
     end
 
-    # The API's directory under /etc/ood/config/apps. It is named after the
-    # directory the API is installed in, which is where this plugin's files
-    # really are, whatever the plugin link is called.
+    # The API's directory under /etc/ood/config/apps, named after the
+    # directory the API is installed in. That name is taken from where this
+    # plugin is linked from, following the plugin's own link and no further,
+    # which is the name the API itself is served under. A plugin that was
+    # copied in place has no link to follow, so the usual name is assumed.
     def app_config_root
-      app = File.basename(File.expand_path('../..', File.realpath(__dir__)))
+      return ENV.fetch('OOD_API_CONFIG_ROOT', nil) unless ENV['OOD_API_CONFIG_ROOT'].to_s.strip.empty?
+
+      plugin = File.expand_path('..', __dir__)
+      app = 'ood-api'
+      if File.symlink?(plugin)
+        target = File.expand_path(File.readlink(plugin), File.dirname(plugin))
+        app = File.basename(File.dirname(target))
+      end
       File.join('/etc/ood/config/apps', app)
     end
 
@@ -216,8 +226,8 @@ class ApiToken
       return {} unless File.file?(file)
 
       File.read(file, encoding: 'UTF-8').scrub.each_line.with_object({}) do |line, vars|
-        match = line.match(/\A\s*(?:export\s+)?(OOD_API_TOKEN_\w+)\s*=\s*["']?([^"'#\s]*)/)
-        vars[match[1]] = match[2] if match
+        match = line.match(/\A\s*(?:export\s+)?(OOD_API_TOKEN_\w+)\s*=\s*["']?([^"'#]*)/)
+        vars[match[1]] = match[2].strip if match
       end
     rescue StandardError
       {}
@@ -227,7 +237,7 @@ class ApiToken
       file = File.join(app_config_root, 'config.yml')
       return {} unless File.file?(file)
 
-      parsed = YAML.safe_load(File.read(file, encoding: 'UTF-8'))
+      parsed = YAML.safe_load(File.read(file, encoding: 'UTF-8'), aliases: true)
       parsed.is_a?(Hash) ? parsed : {}
     rescue StandardError
       {}

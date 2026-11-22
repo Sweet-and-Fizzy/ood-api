@@ -20,6 +20,10 @@ module OodApi
   module SiteConfig
     ALLOWLIST_KEYS = ['OOD_ALLOWLIST_PATH', 'WHITELIST_PATH'].freeze
     REFRESH_SECONDS = 1
+    DEFAULT_ROOT = '/etc/ood/config/apps'
+    # The name the install guide uses. Settings left under it are noticed
+    # when the app is installed under another name.
+    USUAL_NAME = 'ood-api'
     # The settings this app reads from its config.yml.
     OWN_NAMES = [:capabilities, :disable, :rest, :mcp, :app_tokens, :token_max_days, :token_allow_never].freeze
     # A file in ondemand.d that names one of these holds a setting this app
@@ -29,7 +33,7 @@ module OodApi
     KNOWN_VARIABLES = ['ALLOW_NATIVE', 'ALLOWED_ORIGINS', 'APP_TOKENS', 'CAPABILITIES', 'CONTEXT_PATH', 'DISABLE',
                        'ENV_ALLOWLIST', 'MAX_CONTEXT_BYTES', 'MAX_CONTEXT_TOTAL_BYTES', 'MAX_FILE_READ',
                        'MAX_FILE_WRITE', 'MCP', 'REST', 'SYS_APPS', 'TOKEN_ALLOW_NEVER',
-                       'TOKEN_MAX_DAYS', 'DEV_BIND'].map { |name| "OOD_API_#{name}" }.freeze
+                       'TOKEN_MAX_DAYS', 'DEV_BIND', 'CONFIG_ROOT'].map { |name| "OOD_API_#{name}" }.freeze
 
     module_function
 
@@ -40,12 +44,22 @@ module OodApi
       File.basename(ENV['PASSENGER_BASE_URI'] || File.expand_path('..', __dir__))
     end
 
-    # Where the site keeps this app's configuration. `OOD_APP_CONFIG_ROOT`
-    # moves it, as it does for the apps that ship with Open OnDemand.
+    # Where the site keeps this app's configuration. Worked out once, before
+    # the env file there is loaded, so nothing in that file can move it.
+    #
+    # `OOD_API_CONFIG_ROOT` moves it. The apps that ship with Open OnDemand
+    # use `OOD_APP_CONFIG_ROOT`, but each reads that from its own checkout;
+    # set for the whole PUN it would move the Dashboard's directory too.
     #
     # @return [Pathname]
     def app_config_root
-      Pathname.new(ENV['OOD_APP_CONFIG_ROOT'] || "/etc/ood/config/apps/#{app_name}")
+      @app_config_root ||= Pathname.new(ENV['OOD_API_CONFIG_ROOT'] || File.join(DEFAULT_ROOT, app_name))
+    end
+
+    # What `/health` and the PUN log say about where the settings came
+    # from, so a site that wrote them somewhere else can see that.
+    def settings_source
+      "#{settings_file} (#{settings_file.exist? ? 'found' : 'not found'})"
     end
 
     def settings_file
@@ -169,6 +183,7 @@ module OodApi
     # A file that is there but cannot be read is a problem, not an empty
     # file: it may be where the site required application tokens.
     def load_app_env!(file = env_file)
+      app_config_root
       file = Pathname.new(file)
       @env_problems = []
       begin
@@ -178,9 +193,14 @@ module OodApi
       end
       raise ArgumentError, 'not owned by root, or writable by everyone' unless trusted?(file)
 
-      parse_env(file.read(encoding: 'UTF-8')).each do |key, value|
-        ENV[key] = value if ENV.fetch(key, '').strip.empty?
+      vars = parse_env(file.read(encoding: 'UTF-8'))
+      # The file is found through this setting, so it cannot be set in it.
+      if vars.key?('OOD_API_CONFIG_ROOT')
+        raise ArgumentError,
+              'OOD_API_CONFIG_ROOT cannot be set in the env file it locates'
       end
+
+      vars.each { |key, value| ENV[key] = value if ENV.fetch(key, '').strip.empty? }
     rescue StandardError => e
       @env_problems = ["#{file} could not be used (#{e.message.scrub[0, 80]})"]
       OodApi::Log.line "op=site_config status=error file=#{file.basename} error=#{e.class}"
@@ -194,6 +214,7 @@ module OodApi
     # Forget the cached files.
     def reset!
       @config = nil
+      @app_config_root = nil
       @settings = nil
       @settings_problems = nil
       @dashboard_env = nil
@@ -264,22 +285,52 @@ module OodApi
     # evaluated. Anything wrong with it is a problem, since what it meant to
     # switch off is then unknown.
     def read_settings
-      @settings_problems = []
+      @settings_problems = misplaced_settings
       file = settings_file
       begin
-        file.stat
-      rescue Errno::ENOENT, Errno::ENOTDIR
+        # The entry itself: a link that points nowhere is something wrong,
+        # not the absence of settings.
+        file.lstat
+      rescue Errno::ENOENT
         return {}
       end
       load_settings(file)
     rescue StandardError => e
       reason = e.is_a?(ArgumentError) ? e.message : "could not be read (#{e.class})"
-      @settings_problems = ["#{file.basename} #{reason}"]
+      @settings_problems = misplaced_settings + ["#{file.basename} #{reason}"]
       OodApi::Log.line "op=site_config status=error file=#{file.basename} error=\"#{reason}\""
       {}
     end
 
+    # Settings a site wrote where they will not be read: under another
+    # spelling of the file's name, or under the usual directory when the app
+    # is installed under a different name. Either way the site believes it
+    # has restricted something.
+    def misplaced_settings
+      root = app_config_root
+      return ["#{root} is not a directory"] if root.exist? && !root.directory?
+
+      misnamed_settings(root) + settings_under_the_usual_name
+    rescue SystemCallError => e
+      ["#{app_config_root} could not be read (#{e.class})"]
+    end
+
+    def misnamed_settings(root)
+      return [] unless root.directory?
+
+      found = root.children.select { |file| file.basename.to_s.match?(/\Aconfig\.ya?ml(\.erb)?\z/i) }
+      (found - [settings_file]).map { |file| "settings are read from config.yml, not #{file.basename}" }
+    end
+
+    def settings_under_the_usual_name
+      usual = Pathname.new(DEFAULT_ROOT).join(USUAL_NAME, 'config.yml')
+      return [] if usual == settings_file || !usual.exist? || settings_file.exist?
+
+      ["settings are in #{usual}, but this app is installed as #{app_name} and reads #{settings_file}"]
+    end
+
     def load_settings(file)
+      raise ArgumentError, 'is not a regular file' unless file.stat.file?
       raise ArgumentError, 'is not owned by root, or is writable by everyone' unless trusted?(file)
 
       raw = file.binread.force_encoding('UTF-8')

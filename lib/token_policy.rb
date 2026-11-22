@@ -21,7 +21,7 @@ module OodApi
 
     # @return [Integer] the longest lifetime a token may be given, in days
     def max_days
-      days = Integer(setting('OOD_API_TOKEN_MAX_DAYS', :token_max_days) || DEFAULT_MAX_DAYS)
+      days = Integer((setting('OOD_API_TOKEN_MAX_DAYS', :token_max_days) || DEFAULT_MAX_DAYS).to_s.strip, 10)
       days.positive? ? days : DEFAULT_MAX_DAYS
     rescue ArgumentError, TypeError
       DEFAULT_MAX_DAYS

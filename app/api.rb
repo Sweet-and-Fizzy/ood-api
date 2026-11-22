@@ -340,6 +340,7 @@ module OodApi
       { status: state, rest: Capabilities.rest?, mcp: Capabilities.mcp?,
         tools: Capabilities.enabled_tools.to_a.sort, app_tokens: AppAuth.enabled?,
         file_access: Handlers::Files.access_mode, from_environment: Capabilities.from_environment,
+        settings: SiteConfig.settings_source,
         problems: problems }.to_json
     end
 

@@ -25,7 +25,7 @@ require 'mocha/minitest'
 # Never read a real site's settings: this suite may run on an OOD host.
 ENV['OOD_CONFIG_D_DIRECTORY'] = File.join(Dir.tmpdir, 'ood-api-no-such-config')
 ENV['OOD_DASHBOARD_ENV_FILE'] = File.join(Dir.tmpdir, 'ood-api-no-such-env')
-ENV['OOD_APP_CONFIG_ROOT'] = File.join(Dir.tmpdir, 'ood-api-no-such-app-config')
+ENV['OOD_API_CONFIG_ROOT'] = File.join(Dir.tmpdir, 'ood-api-no-such-app-config')
 
 # The suite exercises every tool; the read-only default has its own tests.
 ENV['OOD_API_CAPABILITIES'] = 'all'

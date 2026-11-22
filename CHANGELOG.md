@@ -99,8 +99,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The app's settings live in its own directory**,
   `/etc/ood/config/apps/ood-api/`: `config.yml` for what is enabled and the
   token policy, `env` for environment variables. That is where Open OnDemand
-  keeps settings for its other apps, and `OOD_APP_CONFIG_ROOT` moves it in
-  the same way. The file is plain YAML and nothing in it is evaluated.
+  keeps settings for its other apps. `OOD_API_CONFIG_ROOT` moves it.
+  `/health` and the PUN log name the file being read. The file is plain YAML and nothing in it is evaluated.
 - Changes to `config.yml` reach running PUNs within a couple of seconds, so
   a site can switch the app off without restarting them.
 - `/health` reports the settings in force (`status`, `rest`, `mcp`, `tools`,
