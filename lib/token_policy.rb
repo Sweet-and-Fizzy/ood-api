@@ -12,7 +12,7 @@ module OodApi
   #   token_max_days: 180
   #   token_allow_never: true
   #
-  # The Dashboard plugin reads the same settings to decide what to offer.
+  # The Dashboard token page calls this module to decide what to offer.
   module TokenPolicy
     DEFAULT_MAX_DAYS = 365
     DAY = 86_400

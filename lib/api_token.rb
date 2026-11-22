@@ -13,9 +13,8 @@ require 'time'
 require_relative 'token_policy'
 
 module OodApi
-  # Manages API tokens stored in user's home directory
-  # Tokens are stored at ~/.config/ondemand/tokens.json
-  # Compatible with OOD Dashboard's ApiToken model
+  # The user's API tokens, stored at ~/.config/ondemand/tokens.json. The
+  # Dashboard token page uses this class too, from the Dashboard's process.
   class ApiToken
     TOKENS_DIR = File.expand_path('~/.config/ondemand')
     TOKENS_FILE = File.join(TOKENS_DIR, 'tokens.json')
@@ -168,9 +167,9 @@ module OodApi
         false
       end
 
-      # Serialises read-modify-write across processes. The Dashboard plugin
-      # writes the same file, so the lock has to be visible to a separate
-      # application, not just to threads here.
+      # Serialises read-modify-write across processes. The Dashboard token
+      # page runs this same code in another process, so the lock has to be
+      # visible across processes, not just to threads here.
       #
       # Without this, a revoke racing the per-request touch is a lost update:
       # both load the full array, both write their own copy back, and the

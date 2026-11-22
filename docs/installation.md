@@ -114,8 +114,9 @@ sudo mkdir -p /etc/ood/config/plugins
 sudo ln -s /var/www/ood/apps/sys/ood-api/dashboard-plugin /etc/ood/config/plugins/ood-api
 ```
 
-Link it, do not copy it: the token page finds the app's settings by following
-that link.
+Link it rather than copying it. A link lets the token page find the app it
+belongs to wherever that is installed; a copy assumes
+`/var/www/ood/apps/sys/ood-api`.
 
 Every request to `/api/v1/*` and `/mcp` must then carry `X-OOD-API-Token:
 <token>` **in addition to** whatever Apache accepts. The token is never a
@@ -454,6 +455,14 @@ one all get 401; an expired token also leaves
 itself off. `/health` lists the reasons under `problems`; fix them and the
 app comes back within a couple of seconds. 404 with "not enabled at this
 site" means `rest` or `mcp` is switched off in the settings.
+
+### 403 "Cross-site requests are not allowed"
+
+A browser request arrived with an `Origin` that is not the portal's own
+hostname. The app compares it with the `Host` header and with the last value
+of `X-Forwarded-Host`, as the Dashboard does. If a front end on another
+hostname is meant to call the API, list its origin in
+`OOD_API_ALLOWED_ORIGINS`.
 
 ### PUN not spawning for API requests
 

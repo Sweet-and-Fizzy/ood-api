@@ -60,7 +60,17 @@ module OodApi
     #
     # @return [Pathname]
     def app_config_root
-      @app_config_root ||= Pathname.new(ENV['OOD_API_CONFIG_ROOT'] || File.join(DEFAULT_ROOT, app_name))
+      @hosted_root || (@app_config_root ||= Pathname.new(ENV['OOD_API_CONFIG_ROOT'] || File.join(DEFAULT_ROOT,
+                                                                                                 app_name)))
+    end
+
+    # For the Dashboard plugin, which runs this code inside the Dashboard's
+    # process to show the token page. The Dashboard has its own URL and its
+    # own environment, so it is told where this app's directory is, and the
+    # env file is consulted on each lookup because nothing loaded it into
+    # that process when it started.
+    def hosted_by_dashboard!(root)
+      @hosted_root = root && Pathname.new(root)
     end
 
     # What `/health` and the PUN log say about where the settings came
@@ -141,6 +151,7 @@ module OodApi
     # empty variable counts as unset, so it cannot hide the file's value.
     def setting(env_name, key)
       value = ENV.fetch(env_name, nil)&.scrub
+      value = read_env_file(env_file)[env_name] if @hosted_root && (value.nil? || value.strip.empty?)
       return value unless value.nil? || value.strip.empty?
 
       settings[key]
