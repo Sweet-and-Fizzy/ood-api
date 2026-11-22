@@ -26,6 +26,9 @@ require 'mocha/minitest'
 ENV['OOD_CONFIG_D_DIRECTORY'] = File.join(Dir.tmpdir, 'ood-api-no-such-config')
 ENV['OOD_DASHBOARD_ENV_FILE'] = File.join(Dir.tmpdir, 'ood-api-no-such-env')
 ENV['OOD_API_CONFIG_ROOT'] = File.join(Dir.tmpdir, 'ood-api-no-such-app-config')
+# The suite exercises the app as it runs in a PUN, where Passenger sets this.
+# The development server's stricter Host checks have their own tests.
+ENV['PASSENGER_BASE_URI'] = '/pun/sys/ood-api'
 
 # The suite exercises every tool; the read-only default has its own tests.
 ENV['OOD_API_CAPABILITIES'] = 'all'

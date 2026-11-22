@@ -39,14 +39,15 @@ module OodApi
     end
 
     # Apache may sit behind another proxy that rewrites Host, so the forwarded
-    # host counts too. A cross-site page cannot set either header.
+    # host counts too. Only its last value does: each proxy appends the host
+    # it saw, so the last is the one the nearest proxy wrote, and anything
+    # before it may have come from the client.
     def same_host?(origin, env)
       authority = authority_of(origin)
       return false unless authority
 
-      [env['HTTP_HOST'], env['HTTP_X_FORWARDED_HOST']].any? do |host|
-        host.to_s.split(',').any? { |h| strip_default_port(h.strip.downcase) == authority }
-      end
+      forwarded = env['HTTP_X_FORWARDED_HOST'].to_s.split(',').last
+      [env['HTTP_HOST'], forwarded].any? { |host| strip_default_port(host.to_s.strip.downcase) == authority }
     end
 
     def authority_of(origin)

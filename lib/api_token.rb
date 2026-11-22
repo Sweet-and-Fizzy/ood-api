@@ -197,7 +197,7 @@ module OodApi
         # authenticated request into a 500.
         return parsed if parsed.is_a?(Array) && parsed.all?(Hash)
 
-        warn 'ood_api_audit op=token_load status=corrupt error=unexpected_shape'
+        OodApi::Log.line 'op=token_load status=corrupt error=unexpected_shape'
         []
       rescue JSON::ParserError => e
         # Failing open to [] means "you have no tokens", which 401s the user

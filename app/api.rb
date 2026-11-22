@@ -60,29 +60,17 @@ module OodApi
     # expected them, by the handler for StandardError.
     set :dump_errors, false
 
-    # Sinatra 4 added host authorization. Its restrictive allowlist —
-    # localhost only — applies in the development environment; production and
-    # test already default to permit-all, so this setting changes nothing for
-    # a `sys` or `usr` app, which nginx_stage runs in production.
+    # Sinatra 4 checks the Host header, and outside production and test it
+    # allows only localhost. In a PUN that check is switched off: Host there
+    # is the portal's name, which this app has no reliable way to know, and
+    # nothing reaches the app except through Apache, which has authenticated
+    # the request first.
     #
-    # It is kept for the /pun/dev/ case, which does run in development and
-    # would otherwise reject every request with "Host not permitted", and so
-    # that a future Sinatra tightening the production default cannot take the
-    # app offline the way the MCP transport's equivalent did in v0.2.0.
-    #
-    # Disabling it is safe because the protection has already happened
-    # upstream, not merely because the app is behind a proxy. OOD's generated
-    # portal config sets a single ServerName with no ServerAlias, so Apache
-    # canonicalises any other Host to it — a request carrying an
-    # attacker-chosen hostname is 301'd to the portal's own name before it
-    # ever reaches the PUN. Sinatra would be re-checking a value that can only
-    # be the ServerName by the time it arrives.
-    #
-    # The alternative — reading the site's FQDN from config and passing it as
-    # permitted_hosts — was rejected: it adds a setting every site must get
-    # right, to re-verify something Apache has already normalised, and gets it
-    # wrong by silently 403ing if the two ever disagree.
-    set :host_authorization, { permitted_hosts: [] }
+    # The development server keeps the check. It has no Apache and no
+    # authentication, and the localhost-only rule is what stops a page on
+    # another site from pointing its own hostname at 127.0.0.1 and calling
+    # the API from the developer's browser.
+    set :host_authorization, { permitted_hosts: [] } if SiteConfig.behind_portal?
 
     # Configuration via environment variables
     CLUSTERS_PATH = ENV.fetch('OOD_CLUSTERS', '/etc/ood/config/clusters.d')

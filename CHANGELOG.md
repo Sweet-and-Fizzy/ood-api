@@ -125,6 +125,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   settings held by environment variables under `from_environment`.
 - Cluster definitions are read again when they change, so hiding or removing
   a cluster takes effect without a PUN restart.
+- The development server (`bin/dev`) answers only to a loopback `Host`, on
+  both REST and MCP. It is unauthenticated, and without the check a page on
+  another site could reach it through the developer's browser by pointing
+  its own hostname at 127.0.0.1. In a PUN, behind Apache, nothing changes.
+- The cross-site check counts only the last value of `X-Forwarded-Host`,
+  which is the one the nearest proxy wrote.
 - A directory listing describes each entry itself. A symlink has
   `"symlink": true` and `"directory": false` and carries the link's own size
   and dates, where the listing used to describe the link's target, including

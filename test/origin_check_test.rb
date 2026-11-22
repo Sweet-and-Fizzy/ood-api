@@ -48,6 +48,17 @@ class OriginCheckTest < Minitest::Test
     refute OodApi::OriginCheck.cross_site?(env)
   end
 
+  # Each proxy appends the host it saw, so only the last value was written
+  # by the proxy in front of this app. Earlier ones may be the client's.
+  def test_only_the_last_forwarded_host_counts
+    env = { 'HTTP_HOST' => 'internal:8080', 'HTTP_X_FORWARDED_HOST' => 'evil.example, ood.example.edu',
+            'HTTP_ORIGIN' => 'https://evil.example' }
+    assert OodApi::OriginCheck.cross_site?(env)
+
+    env['HTTP_ORIGIN'] = 'https://ood.example.edu'
+    refute OodApi::OriginCheck.cross_site?(env)
+  end
+
   def test_site_can_allow_additional_origins
     ENV['OOD_API_ALLOWED_ORIGINS'] = 'https://portal.example.edu/, https://other.example.edu'
 

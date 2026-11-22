@@ -1,6 +1,6 @@
 ---
-name: OOD API
-description: REST API for HPC cluster management
+name: Open OnDemand API
+description: REST and MCP API for HPC cluster management via Open OnDemand
 role: passenger_app
 icon: fa://cog
 category: System

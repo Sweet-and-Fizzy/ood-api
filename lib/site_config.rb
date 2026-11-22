@@ -37,6 +37,13 @@ module OodApi
 
     module_function
 
+    # Whether the app is running in a PUN, with Open OnDemand's Apache in
+    # front of it. Passenger gives the app its URL there. The development
+    # server (bin/dev) has neither, and nothing authenticates its requests.
+    def behind_portal?
+      !ENV.fetch('PASSENGER_BASE_URI', '').strip.empty?
+    end
+
     # The name this app is installed under, which is the name of its
     # directory in /etc/ood/config/apps. Passenger gives the app its URL; in
     # development the checkout's own name stands in.

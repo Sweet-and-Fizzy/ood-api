@@ -129,20 +129,26 @@ module OodApi
     # thing lost is server-initiated notifications (tools/list changed);
     # a client sees a changed tool list the next time it asks.
 
-    # DNS-rebinding protection off, deliberately. mcp 1.0.0 added it defaulting
-    # to on with an allowlist of loopback only, which 403s every request whose
-    # Host is a real hostname — that is every OOD site. It is also redundant
-    # here: Apache terminates the request, validates Host against the portal's
-    # ServerName, and authenticates before anything reaches the PUN. Nothing
-    # can address this app except through that proxy.
+    # DNS-rebinding protection is off in a PUN and on everywhere else.
     #
-    # This shipped broken in v0.2.0 and went unnoticed because every check ran
-    # against localhost, which is inside the gem's default allowlist.
+    # The gem allows only loopback names by default, which would refuse
+    # every request at a real site, where Host is the portal's name. In a
+    # PUN it is also redundant: nothing reaches the app except through
+    # Apache, which has authenticated the request first.
+    #
+    # The development server has no Apache and no authentication. There the
+    # check is what stops a page on another site from pointing its own
+    # hostname at 127.0.0.1 and calling the tools from the developer's
+    # browser.
+    #
+    # This shipped broken in v0.2.0, switched on everywhere, and went
+    # unnoticed because every check ran against localhost, which is inside
+    # the gem's default allowlist.
     MCP::Server::Transports::StreamableHTTPTransport.new(
       server,
       stateless:                true,
       max_request_bytes:        max_request_bytes,
-      dns_rebinding_protection: false
+      dns_rebinding_protection: !SiteConfig.behind_portal?
     )
   end
 
