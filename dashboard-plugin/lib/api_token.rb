@@ -192,27 +192,43 @@ class ApiToken
     end
 
     # Where the API reads the same setting, in the same order: the
-    # environment, the API's own env file, then the `ood_api` block the
-    # Dashboard has already read from ondemand.d.
+    # environment, the API's env file, then its config.yml.
     def setting(env_name, key)
       value = ENV.fetch(env_name, nil) || app_env[env_name]
       return value unless value.nil? || value.strip.empty?
 
-      settings = ::Configuration.send(:config)[:ood_api]
-      settings.is_a?(Hash) ? settings[key] : nil
+      app_settings[key.to_s]
     rescue StandardError
       nil
     end
 
+    # The API's directory under /etc/ood/config/apps. It is named after the
+    # directory the API is installed in, which is where this plugin's files
+    # really are, whatever the plugin link is called.
+    def app_config_root
+      app = File.basename(File.expand_path('../..', File.realpath(__dir__)))
+      File.join('/etc/ood/config/apps', app)
+    end
+
     # The API loads this file when it starts; the Dashboard never does.
     def app_env
-      file = ENV['OOD_API_ENV_FILE'] || '/etc/ood/config/apps/ood-api/env'
+      file = File.join(app_config_root, 'env')
       return {} unless File.file?(file)
 
       File.read(file, encoding: 'UTF-8').scrub.each_line.with_object({}) do |line, vars|
         match = line.match(/\A\s*(?:export\s+)?(OOD_API_TOKEN_\w+)\s*=\s*["']?([^"'#\s]*)/)
         vars[match[1]] = match[2] if match
       end
+    rescue StandardError
+      {}
+    end
+
+    def app_settings
+      file = File.join(app_config_root, 'config.yml')
+      return {} unless File.file?(file)
+
+      parsed = YAML.safe_load(File.read(file, encoding: 'UTF-8'))
+      parsed.is_a?(Hash) ? parsed : {}
     rescue StandardError
       {}
     end

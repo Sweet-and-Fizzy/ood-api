@@ -106,7 +106,7 @@ Skip this unless you want per-client credentials — one token per laptop or CI
 runner, each revocable on its own from the API Tokens page, where a JWT is
 all-or-nothing.
 
-Set `app_tokens: true` under `ood_api` (see [What to enable](#what-to-enable))
+Set `app_tokens: true` in the app's settings (see [What to enable](#what-to-enable))
 and install the Dashboard plugin (OOD 4.0+):
 
 ```bash
@@ -234,19 +234,21 @@ has not been done.
 
 A fresh install is read-only. It can list clusters, accounts, queues, jobs and
 files, read file contents, and read the allowed environment variables. Turn on
-more in `/etc/ood/config/ondemand.d/ood_api.yml`:
+more in `/etc/ood/config/apps/ood-api/config.yml`:
 
 ```yaml
-ood_api:
-  capabilities: [read, jobs, files_write]
-  disable: [cancel_job]
-  mcp: true
-  rest: true
-  app_tokens: false
+capabilities: [read, jobs, files_write]
+disable: [cancel_job]
+mcp: true
+rest: true
+app_tokens: false
 ```
 
-The file must be owned by root and readable by every portal user, like the
-rest of `ondemand.d`.
+Everything a site sets for this app lives in that directory, the same place
+Open OnDemand keeps settings for its other apps, so nothing in the app's own
+checkout is ever edited. The directory takes the name the app is installed
+under. The file is plain YAML, must be owned by root, and must be readable by
+every portal user.
 
 | Group | Tools |
 |-------|-------|
@@ -260,14 +262,14 @@ tool and makes `DELETE /api/v1/files` return 403. Over REST, creating an empty
 file with `POST /api/v1/files?touch=true` counts as `write_file`.
 
 What the site has switched off in the Dashboard stays off here, whatever
-`ood_api` asks for:
+the settings above ask for:
 
 | Dashboard setting | Effect here |
 |---|---|
 | The Files app is not installed (`/var/www/ood/apps/sys/files`) | No file tools at all |
 | `download_enabled: false` | `read_file` is off |
 | `upload_enabled: false` | `write_file` is off |
-| A cluster with `hidden: true` in its metadata | The cluster is not listed and cannot be used |
+| A cluster with `hidden: true` in its metadata | The cluster is not listed and cannot be used, as in the Dashboard's own job tools, which leave hidden clusters out |
 
 `download_enabled` and `upload_enabled` are the Dashboard's own settings: a
 top-level key in any `ondemand.d` file, or `OOD_DOWNLOAD_ENABLED` and
@@ -280,20 +282,19 @@ can. See [SECURITY.md](../SECURITY.md).
 
 **Settings the app cannot understand turn it off.** An unknown group, tool
 or key, a switch that is neither `true` nor `false`, a misspelt `OOD_API_`
-variable, a settings file that holds this app's settings and is not owned by
-root or cannot be parsed, an env file that is not owned by root, or an `ood_api` block that is nested, repeated or split across files:
-any of these makes both REST and MCP answer 503 until it is fixed. Keep the
-whole `ood_api` block in one file. A typo in `disable` would otherwise leave on the
+variable, a setting written twice, a settings or env file that is not owned
+by root or cannot be parsed: any of these makes both REST and MCP answer 503
+until it is fixed. So does a file in `ondemand.d` that sets the file
+allowlist or the Dashboard switches above and cannot be read. A typo in `disable` would otherwise leave on the
 tool it was meant to remove, and the app has no way to tell which that was.
 `/health` and the PUN log both say what is wrong.
 
-**Changes to `ondemand.d` take effect within a couple of seconds, with no
+**Changes to `config.yml` take effect within a couple of seconds, with no
 restart.** That makes this the way to switch the app off in a hurry:
 
 ```yaml
-ood_api:
-  rest: false
-  mcp: false
+rest: false
+mcp: false
 ```
 
 Every running PUN stops serving on its next request. The exception is a
@@ -314,9 +315,9 @@ ood_api_audit op=capabilities status=ok rest=true mcp=true app_tokens=false tool
 Switches accept `true`, `yes`, `on` or `1`, and `false`, `no`, `off` or `0`.
 Group and tool names are matched whatever their case.
 
-Every setting under `ood_api` can also be given as an environment variable
+Every setting in `config.yml` can also be given as an environment variable
 (see the table below), and the limits can only be given that way. Put them in
-the app's own env file, `/etc/ood/config/apps/ood-api/env`, one `NAME=value`
+the env file beside it, `/etc/ood/config/apps/ood-api/env`, one `NAME=value`
 per line:
 
 ```
@@ -325,9 +326,9 @@ OOD_API_MAX_FILE_READ=1048576
 
 `pun_custom_env` in `/etc/ood/config/nginx_stage.yml` also works but applies
 to every app in the PUN, and wins over the app's env file when both set the
-same variable. A variable wins over the same setting in `ondemand.d`, so a
+same variable. A variable wins over the same setting in `config.yml`, so a
 setting given both ways cannot be switched off from the file. Unlike
-`ondemand.d`, environment variables are read once, when the PUN starts. The
+`config.yml`, environment variables are read once, when the PUN starts. The
 env file must be owned by root and not writable by others, or the app
 answers 503. The Dashboard's token page reads the token settings when its
 own PUN starts, so restart PUNs after changing `token_max_days` or
@@ -368,9 +369,9 @@ the first second after a restart can get a 502 while the PUN starts.
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `OOD_CLUSTERS` | No | `/etc/ood/config/clusters.d` | Path to cluster config directory |
-| `OOD_API_APP_TOKENS` | No | unset | Set to `true` to require a per-client `X-OOD-API-Token` header in addition to Apache's auth. Also `app_tokens` under `ood_api`. See [application tokens](#optional-application-tokens). |
-| `OOD_API_TOKEN_MAX_DAYS` | No | `365` | The longest lifetime an application token may be given, in days. Also `token_max_days` under `ood_api` in `ondemand.d`. A stored expiry beyond it, such as one written into the token file by hand, is pulled back to it the next time the token is used, and tokens created before expiry existed get it the same way. Lowering it shortens existing tokens. |
-| `OOD_API_TOKEN_ALLOW_NEVER` | No | unset | Set to `true` to let users create tokens that never expire. Also `token_allow_never` under `ood_api`. |
+| `OOD_API_APP_TOKENS` | No | unset | Set to `true` to require a per-client `X-OOD-API-Token` header in addition to Apache's auth. Also `app_tokens` in `config.yml`. See [application tokens](#optional-application-tokens). |
+| `OOD_API_TOKEN_MAX_DAYS` | No | `365` | The longest lifetime an application token may be given, in days. Also `token_max_days` in `config.yml`. A stored expiry beyond it, such as one written into the token file by hand, is pulled back to it the next time the token is used, and tokens created before expiry existed get it the same way. Lowering it shortens existing tokens. |
+| `OOD_API_TOKEN_ALLOW_NEVER` | No | unset | Set to `true` to let users create tokens that never expire. Also `token_allow_never` in `config.yml`. |
 | `OOD_API_MAX_FILE_READ` | No | `10485760` (10 MB) | Maximum file read size in bytes (REST and MCP `read_file`) |
 | `OOD_API_MAX_FILE_WRITE` | No | `52428800` (50 MB) | Maximum request body size in bytes for **every** `/api/v1/*` request, not only file writes — job submission and the MCP envelope are bounded by it too. Lowering it to restrict uploads also caps how large a job script may be. |
 | `OOD_API_ENV_ALLOWLIST` | No | See [docs/api.md](api.md#environment-variable-allowlist) | Comma-separated allowlist for env vars endpoint. Entries ending in `*` are prefix matches. |
@@ -383,7 +384,7 @@ the first second after a restart can get a 502 while the PUN starts.
 | `OOD_API_REST` | No | `true` | Set to `false` to switch off `/api/v1`. |
 | `OOD_API_MCP` | No | `true` | Set to `false` to switch off `/mcp`. |
 | `OOD_API_ALLOWED_ORIGINS` | No | unset | Comma-separated origins (for example `https://portal.example.edu`) whose browser requests are accepted in addition to the portal's own. Only needed if a front end on another origin calls this API. |
-| `OOD_API_ENV_FILE` | No | `/etc/ood/config/apps/ood-api/env` | Where the app's own env file is. Only needed if the app is installed under another name. |
+| `OOD_APP_CONFIG_ROOT` | No | `/etc/ood/config/apps/<app>` | The directory holding the app's `config.yml` and `env`, as for the apps that ship with Open OnDemand. `<app>` is the name the app is installed under. |
 | `OOD_DOWNLOAD_ENABLED`, `OOD_UPLOAD_ENABLED` | No | `true` | The Dashboard's own switches, read from the PUN environment, the Dashboard's env file, or `download_enabled` and `upload_enabled` in `ondemand.d`. See [what to enable](#what-to-enable). |
 | `OOD_ALLOWLIST_PATH` | No | unset | Open OnDemand's own file allowlist. It is read from the PUN environment, from the Dashboard's env file (`/etc/ood/config/apps/dashboard/env`), and from `allowlist_path` in `/etc/ood/config/ondemand.d`, in that order. The Dashboard in Open OnDemand 4.2 and earlier does not read `allowlist_path` from `ondemand.d`, so on those releases set the allowlist in the Dashboard's env file, which confines both. When set, file access through this API is confined to the same colon-separated paths as the Dashboard file browser. Unset, it is confined to the home and temp directories. |
 
@@ -489,13 +490,12 @@ Do it in this order. Deleting the settings file while PUNs are still running
 makes them fall back to the defaults, which would lift any restriction the
 file held, including the application-token requirement.
 
-1. Switch the app off in `/etc/ood/config/ondemand.d/ood_api.yml`. Running
+1. Switch the app off in `/etc/ood/config/apps/ood-api/config.yml`. Running
    PUNs stop serving within a couple of seconds:
 
    ```yaml
-   ood_api:
-     rest: false
-     mcp: false
+   rest: false
+   mcp: false
    ```
 
 2. Remove the app and its plugin:
@@ -512,7 +512,6 @@ file held, including the application-token requirement.
 4. Only then remove the settings:
 
    ```bash
-   sudo rm -f /etc/ood/config/ondemand.d/ood_api.yml
    sudo rm -rf /etc/ood/config/apps/ood-api
    ```
 

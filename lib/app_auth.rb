@@ -27,8 +27,8 @@ module OodApi
 
     module_function
 
-    # `OOD_API_APP_TOKENS=true`, or `app_tokens: true` under `ood_api` in
-    # ondemand.d. A value that is neither true nor false is reported by
+    # `OOD_API_APP_TOKENS=true`, or `app_tokens: true` in the app's
+    # config.yml. A value that is neither true nor false is reported by
     # OodApi::Capabilities, which serves nothing until it is fixed.
     def enabled?
       Capabilities::ON.include?(SiteConfig.setting('OOD_API_APP_TOKENS', :app_tokens).to_s.strip.downcase)

@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Application tokens expire. The token page offers 30, 90 or 365 days (90 by
   default) and shows each token's expiry. `token_max_days` sets the site
   maximum and `token_allow_never` permits tokens with no expiry; both go
-  under `ood_api` in `ondemand.d` or in `OOD_API_TOKEN_MAX_DAYS` and
+  in the app's `config.yml` or in `OOD_API_TOKEN_MAX_DAYS` and
   `OOD_API_TOKEN_ALLOW_NEVER`. An expired token gets a 401 and an audit line
   naming it. Existing tokens are given the site maximum, counted from their
   first use after the upgrade. The API applies the maximum as well as the
@@ -63,9 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Anything inside a `.git` directory, and any file named `.git`, is refused in
   every allowed location.
 - If a denied name such as `~/.bashrc` is a symlink, its target is refused too.
-- Site settings in `ondemand.d` are read the way the Dashboard reads them:
-  through ERB, with YAML anchors, merged file by file. A file that cannot be
-  read and holds settings for this app turns the app off; see Changed.
+- The Dashboard's settings in `ondemand.d` that this app follows are read
+  the way the Dashboard reads them: through ERB, with YAML anchors, merged
+  file by file. A file there that sets the allowlist or a Dashboard switch
+  and cannot be read turns the app off; see Changed.
 - Job working directory, output and error paths are passed to the scheduler
   in the normalised form that was checked.
 - Multipart request bodies are refused before they are parsed. Rack wrote
@@ -80,28 +81,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **A fresh install is now read-only.** Job submission and file writes are off
-  until the site enables them. To keep the previous behaviour, add
-  `ood_api: { capabilities: all }` to a file in `/etc/ood/config/ondemand.d`,
-  or set `OOD_API_CAPABILITIES=all` on the PUN. A tool that is off is absent
+  until the site enables them. To keep the previous behaviour, put
+  `capabilities: all` in `/etc/ood/config/apps/ood-api/config.yml`, or set
+  `OOD_API_CAPABILITIES=all` on the PUN. A tool that is off is absent
   from the MCP tool list and its REST route returns 403. Individual tools can
   be removed with `disable`, and `rest: false` or `mcp: false` switches a
   whole surface off. See
   [what to enable](docs/installation.md#what-to-enable).
 - **Settings the app cannot understand turn it off.** An unknown group, tool
-  or key under `ood_api`, a switch that is neither true nor false, or a
-  settings file that is not root-owned or does not parse makes both REST and
+  or key, a switch that is neither true nor false, or a settings file that
+  is not root-owned or does not parse makes both REST and
   MCP answer 503, where a typo could previously leave on the thing it was
   meant to remove. `/health` and the PUN log give the reason.
 - The same applies to a misspelt `OOD_API_` variable, an env file that
-  cannot be read, and an `ood_api` block that is nested, misspelt, repeated,
-  in a second YAML document or set in more than one file.
-- Changes to `/etc/ood/config/ondemand.d` reach running PUNs within a couple
-  of seconds, so a site can switch the app off without restarting them.
+  cannot be read, a setting written twice, and a settings file holding more
+  than one YAML document.
+- **The app's settings live in its own directory**,
+  `/etc/ood/config/apps/ood-api/`: `config.yml` for what is enabled and the
+  token policy, `env` for environment variables. That is where Open OnDemand
+  keeps settings for its other apps, and `OOD_APP_CONFIG_ROOT` moves it in
+  the same way. The file is plain YAML and nothing in it is evaluated.
+- Changes to `config.yml` reach running PUNs within a couple of seconds, so
+  a site can switch the app off without restarting them.
 - `/health` reports the settings in force (`status`, `rest`, `mcp`, `tools`,
   `app_tokens`, `file_access`, `problems`) where it returned only
   `{"status":"ok"}`. It answers 503 when the settings are not understood.
-- The app reads its own env file, `/etc/ood/config/apps/ood-api/env`.
-  `app_tokens` can be set under `ood_api` as well as in
+- `app_tokens` can be set in `config.yml` as well as in
   `OOD_API_APP_TOKENS`, and that variable now accepts `1`, `yes` and `on` as
   well as `true`; a site that had set one of those and was not requiring
   tokens will be after the upgrade. A setting given as an empty environment
@@ -110,13 +115,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The Dashboard's own restrictions apply here. With `download_enabled: false`
   `read_file` is off, with `upload_enabled: false` `write_file` is off, with
   no Files app installed there are no file tools, and a cluster marked
-  `hidden` is not listed and cannot be used.
+  `hidden` is not listed and cannot be used, as in the Dashboard's own job
+  tools.
 - Over MCP, a tool the site switches off stops working at once and leaves
   the tool list, without a PUN restart. A call to a tool that is off is
   refused and recorded in the audit log.
 - A settings or env file must be owned by root and not writable by
-  everyone. Settings written in a file named for the app without the
-  `ood_api:` line above them are reported, not ignored. `/health` lists the
+  everyone. `/health` lists the
   settings held by environment variables under `from_environment`.
 - Cluster definitions are read again when they change, so hiding or removing
   a cluster takes effect without a PUN restart.
@@ -152,8 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plain JSON with 404 or 503, not a JSON-RPC error.
 - `max_size` given as a string of digits is accepted on a file read, and
   `content` that is not a string is a 400.
-- The Dashboard token page reads the token settings from the app's env file
-  as well as from `ondemand.d`.
+- The Dashboard token page reads the token settings from the app's own
+  `config.yml` and `env`.
 - An empty `workdir` on job submission means the default directory.
 - Filesystem errors that used to surface as a 500 are reported: a read-only
   filesystem and "operation not permitted" as 403, a busy file as 400, and

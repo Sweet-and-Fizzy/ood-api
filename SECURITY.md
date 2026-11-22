@@ -44,9 +44,10 @@ available over REST and as MCP tools: 12 on a fresh install, 19 with everything
 enabled.
 
 The app itself makes no outbound network calls, spawns no background processes,
-and runs no shell. The one thing it evaluates is the ERB in the site's own
-`/etc/ood/config/ondemand.d` files, as the Dashboard does; in production only
-root-owned files there are read. Scheduler interaction goes through
+and runs no shell. Its own settings file is plain YAML and nothing in it is
+evaluated. To follow the Dashboard's file allowlist it reads the site's
+`/etc/ood/config/ondemand.d` files as the Dashboard does, which means running
+the ERB in them; in production only root-owned files there are read. Scheduler interaction goes through
 `ood_core`'s adapters, which use argv-form process spawning rather than a shell.
 The jobs it submits are shell scripts and are not constrained by any of this.
 

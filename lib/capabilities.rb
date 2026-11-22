@@ -14,13 +14,12 @@ module OodApi
   # refuses `DELETE /api/v1/files` together.
   #
   # Settings come from the environment (`OOD_API_CAPABILITIES`,
-  # `OOD_API_DISABLE`, `OOD_API_REST`, `OOD_API_MCP`) or from an `ood_api`
-  # block in /etc/ood/config/ondemand.d:
+  # `OOD_API_DISABLE`, `OOD_API_REST`, `OOD_API_MCP`) or from the app's
+  # config.yml in /etc/ood/config/apps/<app>:
   #
-  #   ood_api:
-  #     capabilities: [read, jobs, files_write]
-  #     disable: [cancel_job]
-  #     mcp: false
+  #   capabilities: [read, jobs, files_write]
+  #   disable: [cancel_job]
+  #   mcp: false
   module Capabilities
     GROUPS = {
       'read'        => ['list_clusters', 'get_cluster', 'list_accounts', 'list_queues', 'get_cluster_info',
@@ -69,7 +68,7 @@ module OodApi
     end
 
     # Writes the settings in force to the PUN log: at startup, and again
-    # whenever the files in ondemand.d change.
+    # whenever the site's files change.
     def announce
       found = problems
       found.each { |problem| OodApi::Log.line "op=capabilities status=error error=\"#{problem.tr('"', "'")}\"" }
@@ -97,7 +96,7 @@ module OodApi
     end
 
     # The settings held by an environment variable. One of these cannot be
-    # changed from ondemand.d, which matters when a site reaches for the off
+    # changed from config.yml, which matters when a site reaches for the off
     # switch there.
     def from_environment
       SiteConfig::KNOWN_VARIABLES.reject { |name| ENV.fetch(name, '').strip.empty? }.sort
@@ -113,7 +112,7 @@ module OodApi
     FILE_TOOLS = ['list_files', 'read_file', 'write_file', 'create_directory', 'delete_file'].freeze
 
     # What the site has already switched off in the Dashboard's file browser
-    # stays off here, whatever `ood_api` asks for: no Files app means no file
+    # stays off here, whatever this app's settings ask for: no Files app means no file
     # tools, `download_enabled: false` means file contents cannot be read,
     # and `upload_enabled: false` means they cannot be written.
     def off_in_dashboard
@@ -130,15 +129,11 @@ module OodApi
     end
 
     def unknown_settings
-      settings = SiteConfig.config[:ood_api]
-      return [] if settings.nil?
-      return ['ood_api must be a block of settings'] unless settings.is_a?(Hash)
-
-      (settings.keys - SETTINGS).map { |key| "unknown setting ood_api.#{key}" }
+      (SiteConfig.settings.keys - SETTINGS).map { |key| "unknown setting #{key}" }
     end
 
     # A comma-separated environment variable, or a list (or comma-separated
-    # string) under `ood_api` in ondemand.d. nil when the site set neither.
+    # string) in the app's config.yml. nil when the site set neither.
     def list_setting(env_name, key)
       raw = SiteConfig.setting(env_name, key)
       return nil if raw.nil?
@@ -152,10 +147,9 @@ module OodApi
       list_from(from_file) if from_file
     end
 
-    # @return [Hash] the `ood_api` block from ondemand.d, empty when absent
+    # @return [Hash] what the site set in the app's config.yml
     def site_settings
-      settings = SiteConfig.config[:ood_api]
-      settings.is_a?(Hash) ? settings : {}
+      SiteConfig.settings
     end
 
     # Names are matched whatever their case: `ALL` and `Read_File` are

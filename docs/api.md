@@ -1406,7 +1406,7 @@ done
 
 ## Application tokens
 
-For sites using Google OIDC or other IdPs that don't publish a JWKS endpoint with verifiable access tokens, ood-api can manage its own tokens. Enable this mode with `app_tokens: true` under `ood_api`, or with the environment variable below; [the install guide](installation.md#where-environment-variables-go) says where variables go:
+For sites using Google OIDC or other IdPs that don't publish a JWKS endpoint with verifiable access tokens, ood-api can manage its own tokens. Enable this mode with `app_tokens: true` in the app's `config.yml`, or with the environment variable below; [the install guide](installation.md#where-environment-variables-go) says where variables go:
 
 ```
 OOD_API_APP_TOKENS=true

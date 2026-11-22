@@ -6,12 +6,11 @@ require_relative 'site_config'
 module OodApi
   # How long application tokens live. Every token has an expiry unless the
   # site allows tokens that never expire. Settings come from the environment
-  # (`OOD_API_TOKEN_MAX_DAYS`, `OOD_API_TOKEN_ALLOW_NEVER`) or from the
-  # `ood_api` block in /etc/ood/config/ondemand.d:
+  # (`OOD_API_TOKEN_MAX_DAYS`, `OOD_API_TOKEN_ALLOW_NEVER`) or from the app's
+  # config.yml in /etc/ood/config/apps/<app>:
   #
-  #   ood_api:
-  #     token_max_days: 180
-  #     token_allow_never: true
+  #   token_max_days: 180
+  #   token_allow_never: true
   #
   # The Dashboard plugin reads the same settings to decide what to offer.
   module TokenPolicy

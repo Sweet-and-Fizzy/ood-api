@@ -9,23 +9,32 @@ class CapabilitiesTest < Minitest::Test
   SETTINGS = ['OOD_API_CAPABILITIES', 'OOD_API_DISABLE', 'OOD_API_REST', 'OOD_API_MCP'].freeze
 
   def setup
-    @saved = ENV.to_h.slice(*SETTINGS, 'OOD_CONFIG_D_DIRECTORY')
+    @saved = ENV.to_h.slice(*SETTINGS, 'OOD_CONFIG_D_DIRECTORY', 'OOD_APP_CONFIG_ROOT')
     SETTINGS.each { |k| ENV.delete(k) }
     @dir = Dir.mktmpdir('ood-api-capabilities')
     ENV['OOD_CONFIG_D_DIRECTORY'] = @dir
+    @app = Dir.mktmpdir('ood-api-app-config')
+    ENV['OOD_APP_CONFIG_ROOT'] = @app
     OodApi::SiteConfig.reset!
     OodApi::App.stubs(:clusters).returns([mock_cluster(id: 'cluster1')])
   end
 
   def teardown
-    (SETTINGS + ['OOD_CONFIG_D_DIRECTORY']).each { |k| ENV.delete(k) }
+    (SETTINGS + ['OOD_CONFIG_D_DIRECTORY', 'OOD_APP_CONFIG_ROOT']).each { |k| ENV.delete(k) }
     @saved.each { |k, v| ENV[k] = v }
     FileUtils.rm_rf(@dir)
+    FileUtils.rm_rf(@app)
     OodApi::SiteConfig.reset!
   end
 
   def caps
     OodApi::Capabilities
+  end
+
+  # The app's own settings file, as a site would write it.
+  def write_settings(text)
+    File.binwrite(File.join(@app, 'config.yml'), text)
+    OodApi::SiteConfig.reset!
   end
 
   def listed_tools
@@ -114,14 +123,13 @@ class CapabilitiesTest < Minitest::Test
   end
 
   def test_a_misspelt_switch_or_key_turns_everything_off
-    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  mcp: flase\n")
+    write_settings("mcp: flase\n")
     refute caps.mcp?
     refute caps.rest?
     assert_equal ['mcp must be true or false, not "flase"'], caps.problems
 
-    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  disabled: [read_file]\n  rest: none\n")
-    OodApi::SiteConfig.reset!
-    assert_equal ['unknown setting ood_api.disabled', 'rest must be true or false, not "none"'], caps.problems
+    write_settings("disabled: [read_file]\nrest: none\n")
+    assert_equal ['unknown setting disabled', 'rest must be true or false, not "none"'], caps.problems
     refute caps.enabled?('read_file')
   end
 
@@ -159,7 +167,7 @@ class CapabilitiesTest < Minitest::Test
 
   # An empty variable is what a templated env file leaves behind.
   def test_an_empty_variable_does_not_hide_the_file
-    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  disable: [read_file]\n  mcp: false\n")
+    write_settings("disable: [read_file]\nmcp: false\n")
     ENV['OOD_API_DISABLE'] = ''
     ENV['OOD_API_MCP'] = ' '
 
@@ -169,10 +177,10 @@ class CapabilitiesTest < Minitest::Test
 
   # The file that could not be read may be the one that turned something off.
   def test_an_unreadable_settings_file_turns_everything_off
-    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  rest: <%= Configuration.nope %>\n")
+    write_settings("rest: [false\n")
 
     refute caps.rest?
-    assert_equal ['ood_api.yml could not be read (NameError)'], caps.problems
+    assert_equal ['config.yml could not be read (Psych::SyntaxError)'], caps.problems
   end
 
   def test_a_broken_file_about_something_else_is_only_skipped
@@ -184,11 +192,11 @@ class CapabilitiesTest < Minitest::Test
 
   def test_settings_not_owned_by_root_are_a_problem_in_production
     skip 'runs as root' if Process.uid.zero?
-    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  rest: false\n")
+    write_settings("rest: false\n")
     saved = ENV.fetch('RACK_ENV', nil)
     ENV['RACK_ENV'] = 'production'
 
-    assert_equal ['ood_api.yml is not owned by root, or is writable by everyone'], caps.problems
+    assert_equal ['config.yml is not owned by root, or is writable by everyone'], caps.problems
     refute caps.rest?
   ensure
     ENV['RACK_ENV'] = saved
@@ -196,8 +204,7 @@ class CapabilitiesTest < Minitest::Test
 
   def test_app_tokens_can_be_required_from_the_settings_file
     refute OodApi::AppAuth.enabled?
-    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  app_tokens: true\n")
-    OodApi::SiteConfig.reset!
+    write_settings("app_tokens: true\n")
 
     assert OodApi::AppAuth.enabled?
     assert_includes caps.summary, 'app_tokens=true'
@@ -207,7 +214,7 @@ class CapabilitiesTest < Minitest::Test
 
   # Treating it as "off" would drop a requirement the site asked for.
   def test_an_app_token_setting_that_is_not_a_switch_turns_everything_off
-    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  app_tokens: required\n")
+    write_settings("app_tokens: required\n")
 
     assert_equal ['app_tokens must be true or false, not "required"'], caps.problems
     refute caps.rest?
@@ -268,33 +275,31 @@ class CapabilitiesTest < Minitest::Test
     assert_equal 404, last_response.status
   end
 
-  # Each of these used to leave the app fully on although the file said off.
-  def test_settings_that_would_silently_go_missing_turn_everything_off
-    off = "  rest: false\n  mcp: false\n"
+  # Each of these would otherwise lose what the file said without a word.
+  def test_a_settings_file_that_cannot_be_trusted_to_mean_what_it_says_turns_everything_off
+    off = "rest: false\nmcp: false\n"
     {
-      "ood_api:\n#{off}---\nother: 1\n".prepend("first: 1\n---\n") => /more than one YAML document/,
-      "OOD_API:\n#{off}"                                           => /not as a top-level setting/,
-      "ood-api:\n#{off}"                                           => /not as a top-level setting/,
-      "production:\n  ood_api:\n  #{off.gsub("\n  ", "\n    ")}"   => /not as a top-level setting/,
-      "- ood_api:\n  #{off.gsub("\n  ", "\n    ")}"                => /not as a top-level setting/,
-      "ood_api:\n#{off}ood_api:\n  capabilities: all\n"            => /sets ood_api more than once/,
-      "ood_api:\n  disable: [read_file]\n  disable: []\n"          => /sets ood_api.disable more than once/,
-      "ood_api:\n#{off}".encode('UTF-16')                          => /not valid UTF-8/
+      "first: 1\n---\n#{off}"                   => /more than one YAML document/,
+      "disable: [read_file]\ndisable: []\n"     => /sets disable more than once/,
+      off.encode('UTF-16')                      => /not valid UTF-8/,
+      "- rest: false\n"                         => /must be a list of settings/,
+      "rest: [false\n"                          => /could not be read/,
+      "ood_api:\n  rest: false\n  mcp: false\n" => /unknown setting ood_api/,
+      "REST: false\n"                           => /unknown setting REST/
     }.each do |content, problem|
-      File.binwrite(File.join(@dir, 'ood_api.yml'), content)
-      OodApi::SiteConfig.reset!
+      write_settings(content)
 
       assert_match problem, caps.problems.join("\n"), content.inspect
       refute caps.rest?, content.inspect
     end
   end
 
-  # A later file would otherwise replace the earlier one's lists and switches.
-  def test_ood_api_in_two_files_is_a_problem
-    File.write(File.join(@dir, 'a.yml'), "ood_api:\n  disable: [read_file]\n")
-    File.write(File.join(@dir, 'b.yml'), "ood_api:\n  # nothing yet\n")
+  # The settings were never read from there, so a site that put its
+  # restrictions there would have none.
+  def test_settings_left_in_ondemand_d_are_a_problem
+    File.write(File.join(@dir, 'site.yml'), "ood_api:\n  disable: [read_file]\n")
 
-    assert_equal ['ood_api is set in more than one file: a.yml, b.yml'], caps.problems
+    assert_match(/ood_api in .* is not read; put the settings in .*config\.yml/, caps.problems.join)
     refute caps.rest?
   end
 
@@ -315,7 +320,7 @@ class CapabilitiesTest < Minitest::Test
   end
 
   def test_a_variable_that_names_nothing_does_not_hide_the_file
-    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  disable: [read_file]\n")
+    write_settings("disable: [read_file]\n")
     ENV['OOD_API_DISABLE'] = ' , '
 
     refute caps.enabled?('read_file')
@@ -349,7 +354,7 @@ class CapabilitiesTest < Minitest::Test
   end
 
   def test_a_token_lifetime_that_is_not_a_number_is_a_problem
-    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  token_max_days: abc\n")
+    write_settings("token_max_days: abc\n")
 
     assert_equal ['token_max_days must be a number of days, not "abc"'], caps.problems
   end
@@ -392,8 +397,7 @@ class CapabilitiesTest < Minitest::Test
     listed = mcp_call(app, 'tools/list').dig('result', 'tools').map { |tool| tool['name'] }
     assert_includes listed, 'write_file'
 
-    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  disable: [write_file]\n")
-    OodApi::SiteConfig.reset!
+    write_settings("disable: [write_file]\n")
 
     listed = mcp_call(app, 'tools/list').dig('result', 'tools').map { |tool| tool['name'] }
     refute_includes listed, 'write_file'
@@ -411,14 +415,6 @@ class CapabilitiesTest < Minitest::Test
     assert response.error?
     assert_match(/not enabled/, response.content.first[:text])
     refute File.exist?('/tmp/nope.txt')
-  end
-
-  # The guide names this file for the app, so a slip like this is likely.
-  def test_settings_written_without_the_ood_api_line_are_a_problem
-    File.write(File.join(@dir, 'ood_api.yml'), "mcp: false\nrest: false\n")
-
-    assert_equal ['ood_api.yml sets mcp at the top level; it belongs under ood_api'], caps.problems
-    refute caps.rest?
   end
 
   def test_health_names_the_settings_held_by_the_environment
@@ -500,16 +496,15 @@ class CapabilitiesTest < Minitest::Test
   def test_a_change_on_disk_is_picked_up_by_a_running_app
     assert caps.rest?
 
-    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  rest: false\n  mcp: false\n")
+    write_settings("rest: false\nmcp: false\n")
     OodApi::SiteConfig.instance_variable_set(:@checked_at, nil)
 
     refute caps.rest?
     refute caps.mcp?
   end
 
-  def test_settings_can_come_from_ondemand_d
-    File.write(File.join(@dir, 'ood_api.yml'),
-               "ood_api:\n  capabilities: [jobs, files_write]\n  disable:\n    - delete_file\n  mcp: false\n")
+  def test_settings_can_come_from_the_settings_file
+    write_settings("capabilities: [jobs, files_write]\ndisable:\n  - delete_file\nmcp: false\n")
 
     assert caps.enabled?('submit_job')
     assert caps.enabled?('write_file')
@@ -518,8 +513,8 @@ class CapabilitiesTest < Minitest::Test
     assert caps.rest?
   end
 
-  def test_the_environment_wins_over_ondemand_d
-    File.write(File.join(@dir, 'ood_api.yml'), "ood_api:\n  capabilities: all\n")
+  def test_the_environment_wins_over_the_settings_file
+    write_settings("capabilities: all\n")
     ENV['OOD_API_CAPABILITIES'] = 'read'
 
     refute caps.enabled?('submit_job')

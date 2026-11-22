@@ -2,10 +2,9 @@
 
 require_relative 'lib/site_config'
 
-# This app's own settings, in the place Open OnDemand keeps per-app settings.
-# Loaded before the app so every setting read at load time sees them.
-app_name = File.basename(ENV['PASSENGER_BASE_URI'] || __dir__)
-OodApi::SiteConfig.load_app_env!(ENV['OOD_API_ENV_FILE'] || "/etc/ood/config/apps/#{app_name}/env")
+# The app's env file, in its directory under /etc/ood/config/apps. Loaded
+# before the app so every setting read at load time sees it.
+OodApi::SiteConfig.load_app_env!
 
 require_relative 'app/api'
 require_relative 'app/mcp_server'
