@@ -318,17 +318,17 @@ module OodApi
     end
 
     # Health check (no app token required). Also where an admin sees what
-    # their settings produced: `disabled` when the site turned both surfaces
+    # their settings produced: `disabled` when the site turned every surface
     # off, `misconfigured` (503) when the settings could not be understood.
     get '/health' do
       problems = Capabilities.problems
       state = if problems.any? then 'misconfigured'
-              elsif Capabilities.rest? || Capabilities.mcp? then 'ok'
+              elsif Capabilities.rest? || Capabilities.mcp? || Capabilities.local? then 'ok'
               else
                 'disabled'
               end
       status 503 if problems.any?
-      { status: state, rest: Capabilities.rest?, mcp: Capabilities.mcp?,
+      { status: state, rest: Capabilities.rest?, mcp: Capabilities.mcp?, local: Capabilities.local?,
         tools: Capabilities.enabled_tools.to_a.sort, app_tokens: AppAuth.enabled?,
         file_access: Handlers::Files.access_mode, from_environment: Capabilities.from_environment,
         settings: SiteConfig.settings_source, env: SiteConfig.env_source,

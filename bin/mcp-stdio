@@ -1,0 +1,46 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The MCP server on standard input and output, for a program on the same
+# host that runs as the user and starts this as a child process.
+#
+# Usage: bin/mcp-stdio
+
+# The path this file was started by, with any link in it kept: the name the
+# app is installed under is the name in that path.
+script = File.expand_path(__FILE__)
+root = File.expand_path('..', __dir__)
+
+# Start once more with this app's own gems. A Passenger app passes its
+# children RUBYOPT, which loads Bundler for the wrong directory before this
+# file is read, so the environment is put right and the script run again.
+unless ENV.delete('OOD_API_STDIO_RESTARTED')
+  ENV['OOD_API_STDIO_RESTARTED'] = '1'
+  ENV['BUNDLE_GEMFILE'] = File.join(root, 'Gemfile')
+  ENV.delete('RUBYOPT')
+  Dir.chdir(root)
+  exec(RbConfig.ruby, script, *ARGV)
+end
+
+# The settings directory is named after this app, not after the app that
+# started this process.
+ENV.delete('PASSENGER_BASE_URI')
+
+# The settings files are held to the rule a PUN applies, root's and not
+# writable by everyone, unless the caller names another environment.
+ENV.delete('RAILS_ENV')
+ENV['RACK_ENV'] = 'production' if ENV['RACK_ENV'].to_s.strip.empty?
+
+require 'bundler/setup'
+require_relative '../lib/site_config'
+
+OodApi::SiteConfig.installed_as!(File.basename(File.dirname(script, 2)))
+OodApi::SiteConfig.load_app_env!
+
+require_relative '../app/mcp_stdio'
+
+OodApi::Capabilities.announce
+
+$stdin.binmode
+$stdout.sync = true
+OodApi::Stdio.serve($stdin, $stdout)
