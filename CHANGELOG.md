@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-23
+
+A site now decides what the app serves, and a fresh install serves less. Read
+the upgrade notes before moving from 0.4; four things need attention.
+
+Job submission and file writes are off until the site enables them. To keep
+what 0.4 served, put `capabilities: all` in
+`/etc/ood/config/apps/ood-api/config.yml`. Sites that accept bearer tokens
+need `Require claim aud:` (or `azp:`) in place of `Require valid-user`, since
+with `valid-user` a token the IdP issued to any client is accepted.
+Application tokens now expire: existing ones are given the site maximum, 365
+days unless `token_max_days` says otherwise, counted from their first use
+after the upgrade. And tokens are converted to a hashed form on first use, so
+going back to 0.4 afterwards leaves them unusable.
+
+The settings live in the app's own directory as plain YAML, take effect in
+running PUNs within a couple of seconds, and turn both REST and MCP off when
+the app cannot understand them. The API follows the restrictions the site
+already set for the Dashboard: its file allowlist, its download and upload
+switches, and its hidden clusters. On Linux, file operations work relative to
+a directory held open, which closes the window in which another user could
+swap a path in a shared directory. `/health` reports the settings in force
+and the reason when the app is off. See
+[upgrading](docs/installation.md#upgrading).
+
 ### Added
 
 - MCP tools now declare annotations (`readOnlyHint`, `destructiveHint`,
@@ -981,7 +1006,8 @@ running as a Passenger app under the PUN as the authenticated user.
 - API token file is created with mode `0600` atomically, with no window where
   it is readable at the umask default.
 
-[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Sweet-and-Fizzy/ood-api/compare/v0.3.2...v0.4.0
