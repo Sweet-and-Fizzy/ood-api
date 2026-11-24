@@ -77,6 +77,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SECURITY.md` now states that job submission is code execution as the user
   and is not covered by the file controls, and corrects the description of
   application tokens and `Host` validation.
+- Sinatra and `rack-protection` are updated to 4.2.2, which fixes three
+  advisories in `rack-protection` (GHSA-pf75-2v58-7mxg, GHSA-r29j-38x9-qr26,
+  GHSA-vvhm-j6m8-64cw).
 
 ### Changed
 
