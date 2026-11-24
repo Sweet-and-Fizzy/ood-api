@@ -49,6 +49,8 @@ MCP.configure do |config|
   end
 end
 
+# The MCP endpoint: builds the server from the enabled tools and wraps the
+# transport with the same request checks the REST API applies.
 module OodApi
   MCP_TOOLS = [
     Tools::ListClustersTool, Tools::GetClusterTool, Tools::ListAccountsTool, Tools::ListQueuesTool,
@@ -248,6 +250,13 @@ module OodApi
     body
   end
 
+  # nil for a body that is not JSON; the transport reports that itself.
+  def self.parse_json(body)
+    JSON.parse(body)
+  rescue JSON::ParserError
+    nil
+  end
+
   # Caller-input shapes that crash the mcp gem one layer below its dispatch,
   # surfacing as -32603 internal errors (or, for a non-object params, an
   # unrescued TypeError → HTTP 500). Catch them here, on the parsed body, and
@@ -259,25 +268,23 @@ module OodApi
     body = read_bounded_body(request)
     return jsonrpc_error(413, 'Request body too large', JSONRPC_INVALID_REQUEST) if body.nil?
 
-    parsed = begin
-      JSON.parse(body)
-    rescue JSON::ParserError
-      nil
-    end
+    parsed = parse_json(body)
     return nil unless parsed
 
-    if unsupported_method?(parsed)
-      jsonrpc_error(400, 'Method not found', JSONRPC_METHOD_NOT_FOUND)
-    elsif non_finite_number?(parsed)
-      jsonrpc_error(400, 'Invalid params: a number is not finite', JSONRPC_INVALID_PARAMS)
-    elsif malformed_params?(parsed)
-      jsonrpc_error(400, 'Invalid params: params must be an object', JSONRPC_INVALID_PARAMS)
-    elsif malformed_tool_arguments?(parsed)
-      jsonrpc_error(400, 'Invalid params: tool arguments must be an object', JSONRPC_INVALID_PARAMS)
-    elsif malformed_tool_meta?(parsed)
-      jsonrpc_error(400, 'Invalid params: _meta must be an object', JSONRPC_INVALID_PARAMS)
-    end
+    return jsonrpc_error(400, 'Method not found', JSONRPC_METHOD_NOT_FOUND) if unsupported_method?(parsed)
+
+    problem = BODY_CHECKS.find { |check, _| send(check, parsed) }&.last
+    jsonrpc_error(400, "Invalid params: #{problem}", JSONRPC_INVALID_PARAMS) if problem
   end
+
+  # Each check that refuses a parsed body, with what to tell the client. The
+  # first that matches wins.
+  BODY_CHECKS = [
+    [:non_finite_number?,        'a number is not finite'],
+    [:malformed_params?,         'params must be an object'],
+    [:malformed_tool_arguments?, 'tool arguments must be an object'],
+    [:malformed_tool_meta?,      '_meta must be an object']
+  ].freeze
 
   def self.jsonrpc_error(status, message, code = JSONRPC_INTERNAL_ERROR)
     [status,

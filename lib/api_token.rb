@@ -8,6 +8,7 @@ require 'fileutils'
 # worked because Rack happened to load it first; requiring it directly keeps
 # the class usable on its own.
 require 'time'
+require_relative 'token_policy'
 
 module OodApi
   # Manages API tokens stored in user's home directory
@@ -29,7 +30,7 @@ module OodApi
     # so it is refreshed at most this often.
     TOUCH_INTERVAL = 300
 
-    attr_reader :id, :name, :token_digest, :created_at, :last_used_at
+    attr_reader :id, :name, :token_digest, :created_at, :last_used_at, :expires_at
 
     def initialize(attrs = {})
       @id = attrs[:id] || attrs['id']
@@ -37,6 +38,14 @@ module OodApi
       @token_digest = attrs[:token_digest] || attrs['token_digest']
       @created_at = attrs[:created_at] || attrs['created_at']
       @last_used_at = attrs[:last_used_at] || attrs['last_used_at']
+      @expires_at = attrs[:expires_at] || attrs['expires_at']
+    end
+
+    # A token with no expiry recorded has not expired: either the site allows
+    # tokens that never expire, or the entry predates expiry and is given one
+    # the next time the store is written.
+    def expired?(now = Time.now)
+      TokenPolicy.expired?(expires_at, now)
     end
 
     class << self
@@ -68,13 +77,14 @@ module OodApi
       end
 
       # Create a new token, returns [ApiToken, plain_token]
-      def create(name:)
+      def create(name:, expires_at: TokenPolicy.default_expiry)
         plain_token = SecureRandom.hex(32)
         token_attrs = {
           id:           SecureRandom.uuid,
           name:         name,
           token_digest: digest(plain_token),
-          created_at:   Time.now.iso8601
+          created_at:   Time.now.iso8601,
+          expires_at:   expires_at
         }
 
         with_lock do
@@ -102,9 +112,10 @@ module OodApi
           tokens = load_tokens
           token_data = tokens.find { |t| t[:id] == token.id }
           return unless token_data
-          # A legacy plaintext entry is always rewritten, so it is hashed on
-          # its first use rather than whenever the interval next lapses.
-          return if recently_touched?(token_data) && !token_data.key?(:token)
+          # An entry that still needs hashing or an expiry is always
+          # rewritten, so that happens on its first use rather than whenever
+          # the interval next lapses.
+          return if recently_touched?(token_data) && !needs_rewrite?(token_data)
 
           token_data[:last_used_at] = Time.now.iso8601
           save_tokens(tokens)
@@ -133,12 +144,19 @@ module OodApi
         legacy.is_a?(String) && !legacy.empty? ? digest(legacy) : nil
       end
 
+      # Brings a stored entry up to date on its way back to disk: a plaintext
+      # token becomes its digest, and an entry with no expiry gets one.
       def harden(attrs)
+        attrs = attrs.merge(expires_at: TokenPolicy.default_expiry) if TokenPolicy.needs_expiry?(attrs)
         return attrs unless attrs.key?(:token)
 
         hashed = stored_digest(attrs)
         rest = attrs.except(:token)
         hashed ? rest.merge(token_digest: hashed) : rest
+      end
+
+      def needs_rewrite?(attrs)
+        attrs.key?(:token) || TokenPolicy.needs_expiry?(attrs)
       end
 
       def recently_touched?(token_data)
@@ -229,7 +247,8 @@ module OodApi
         name:         name,
         token_digest: token_digest,
         created_at:   created_at,
-        last_used_at: last_used_at
+        last_used_at: last_used_at,
+        expires_at:   expires_at
       }
     end
   end

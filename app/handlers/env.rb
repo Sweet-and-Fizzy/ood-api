@@ -3,6 +3,8 @@
 require_relative 'errors'
 
 module Handlers
+  # Serves an allowlisted slice of the process environment, with
+  # credential-shaped names refused.
   module Env
     # `MODULE` deliberately has no trailing underscore: the real variables are
     # MODULEPATH, MODULESHOME, and MODULES_CMD. The deny pass below is what
@@ -92,27 +94,15 @@ module Handlers
 
     def self.allowlist
       custom = ENV.fetch('OOD_API_ENV_ALLOWLIST', nil)
-      if custom
-        # String#split raises on invalid UTF-8, and this value comes from the
-        # PUN's environment rather than from code — a stray byte in a site's
-        # allowlist would take out the endpoint on both surfaces rather than
-        # narrowing it. Scrub so a malformed entry simply fails to match.
-        custom = custom.scrub('?') unless custom.valid_encoding?
-        entries = custom.split(',').map(&:strip).reject(&:empty?).uniq
-        prefixes = []
-        exact = []
-        entries.each do |entry|
-          if entry.end_with?('*')
-            prefix = entry.chomp('*')
-            prefixes << prefix unless prefix.empty?
-          else
-            exact << entry
-          end
-        end
-        { prefixes: prefixes, exact: exact }
-      else
-        { prefixes: DEFAULT_PREFIXES, exact: DEFAULT_EXACT }
-      end
+      return { prefixes: DEFAULT_PREFIXES, exact: DEFAULT_EXACT } unless custom
+
+      # String#split raises on invalid UTF-8, and this value comes from the
+      # PUN's environment rather than from code — a stray byte in a site's
+      # allowlist would take out the endpoint on both surfaces rather than
+      # narrowing it. Scrub so a malformed entry simply fails to match.
+      custom = custom.scrub('?') unless custom.valid_encoding?
+      wildcards, exact = custom.split(',').map(&:strip).reject(&:empty?).uniq.partition { |e| e.end_with?('*') }
+      { prefixes: wildcards.map { |entry| entry.chomp('*') }.reject(&:empty?), exact: exact }
     end
 
     # The allowlist alone, with no deny pass. Separated so the deny pass can

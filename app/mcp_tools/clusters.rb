@@ -5,6 +5,7 @@ require_relative '../handlers/clusters'
 
 module OodApi
   module Tools
+    # MCP tool: list the clusters that accept jobs.
     class ListClustersTool < Base
       tool_name 'list_clusters'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
@@ -26,6 +27,7 @@ module OodApi
       end
     end
 
+    # MCP tool: describe one cluster.
     class GetClusterTool < Base
       tool_name 'get_cluster'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
@@ -50,6 +52,7 @@ module OodApi
       end
     end
 
+    # MCP tool: list the accounts the user can charge on a cluster.
     class ListAccountsTool < Base
       tool_name 'list_accounts'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
@@ -76,6 +79,7 @@ module OodApi
       end
     end
 
+    # MCP tool: report a cluster's current node, core and GPU usage.
     class GetClusterInfoTool < Base
       tool_name 'get_cluster_info'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
@@ -99,6 +103,7 @@ module OodApi
       end
     end
 
+    # MCP tool: list a cluster's queues or partitions.
     class ListQueuesTool < Base
       tool_name 'list_queues'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)

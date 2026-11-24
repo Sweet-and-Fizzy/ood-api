@@ -9,6 +9,8 @@ require_relative '../../lib/site_config'
 require_relative 'pinned_dir'
 
 module Handlers
+  # File operations confined to the allowed directories and kept away from the
+  # denied paths inside them.
   module Files
     MAX_FILE_READ  = ENV.fetch('OOD_API_MAX_FILE_READ', 10 * 1024 * 1024).to_i
     MAX_FILE_WRITE = ENV.fetch('OOD_API_MAX_FILE_WRITE', 50 * 1024 * 1024).to_i
@@ -66,21 +68,14 @@ module Handlers
     end
 
     def self.list(path:)
-      require_file_access!
-      p = normalize_path(path)
-      validate_path!(p)
-      raise NotFoundError, 'Path not found' unless p.exist?
+      translating_errors do
+        p = checked_path(path)
+        raise Errno::ENOENT unless p.exist?
+        next p unless p.directory?
 
-      return p unless p.directory?
-
-      children = PinnedDir.supported? ? PinnedFiles.children(p).map { |name| p + name } : p.children
-      children.select(&:readable?).sort_by { |c| [c.directory? ? 0 : 1, c.basename.to_s.downcase] }
-    rescue Errno::ENOENT
-      raise NotFoundError, 'Path not found'
-    rescue Errno::EACCES
-      raise ForbiddenError, 'Permission denied'
-    rescue *BAD_PATH_ERRORS => e
-      raise ValidationError, e.message.sub(/ @ .*/, '')
+        children = backend.children(p).map { |name| p + name }
+        children.select(&:readable?).sort_by { |c| [c.directory? ? 0 : 1, c.basename.to_s.downcase] }
+      end
     end
 
     # True only for a value that converts to a positive integer. Infinity and
@@ -93,7 +88,6 @@ module Handlers
     end
 
     def self.read(path:, max_size: nil)
-      require_file_access!
       # Guard here as well as at the route: MCP passes max_size straight
       # through, and a negative would reach File.read and raise ArgumentError.
       # `to_i` is not safe on its own — JSON's `1e400` parses to
@@ -101,71 +95,76 @@ module Handlers
       # /\A\d+\z/ blocks that spelling, so MCP was the only way in.
       raise ValidationError, 'max_size must be greater than zero' if max_size && !positive_size?(max_size)
 
-      p = normalize_path(path)
-      validate_path!(p)
-      effective_limit = max_size ? [max_size, MAX_FILE_READ].min : MAX_FILE_READ
-      return PinnedFiles.read(p, limit: effective_limit, refuse_larger: !max_size) if PinnedDir.supported?
-
-      readable_file!(p)
-      expected = checked_destination(p)
-      File.open(p.to_s, File::RDONLY | File::NONBLOCK) do |f|
-        verify_open_file!(f, p, expected)
-        if !max_size && (f.stat.size > effective_limit)
-          raise PayloadTooLargeError, "File too large (max #{effective_limit} bytes)"
-        end
-
-        f.read(effective_limit) || ''
+      limit = max_size ? [max_size, MAX_FILE_READ].min : MAX_FILE_READ
+      translating_errors('File not found') do
+        backend.read(checked_path(path), limit: limit, refuse_larger: !max_size)
       end
-    rescue Errno::ENOENT
-      raise NotFoundError, 'File not found'
-    rescue Errno::EACCES
-      raise ForbiddenError, 'Permission denied'
-    rescue *BAD_PATH_ERRORS => e
-      raise ValidationError, e.message.sub(/ @ .*/, '')
-    end
-
-    def self.readable_file!(path)
-      raise NotFoundError, 'File not found' unless path.exist?
-      raise ValidationError, 'Cannot read directory contents' if path.directory?
-      # Regular files only. Reading a FIFO blocks in read(2) until someone
-      # writes, which wedges the Passenger worker indefinitely — with
-      # passenger_min_instances 0 that takes the app down for the user. Device
-      # nodes are worse still: /dev/zero never ends. Nothing legitimate here
-      # reads a non-regular file, and an agent can be talked into trying.
-      raise ValidationError, 'Not a regular file' unless path.file?
-      raise ForbiddenError, 'Permission denied' unless path.readable?
     end
 
     def self.write(path:, content:, append: false)
-      require_file_access!
-      p = normalize_path(path)
-      validate_path!(p)
-      raise ValidationError, 'Cannot write to directory' if p.exist? && p.directory?
       raise PayloadTooLargeError, "Content too large (max #{MAX_FILE_WRITE} bytes)" if content.bytesize > MAX_FILE_WRITE
 
-      if PinnedDir.supported?
-        PinnedFiles.write(p, content, append: append)
-        return p
+      translating_errors do
+        checked_path(path).tap { |p| backend.write(p, content, append: append) }
       end
+    end
 
-      p.parent.mkpath unless p.parent.exist?
-      expected = checked_destination(p)
-      # No O_TRUNC: nothing is destroyed until the open file has been checked.
-      flags = File::WRONLY | File::CREAT | File::NONBLOCK | (append ? File::APPEND : 0)
-      File.open(p.to_s, flags) do |f|
-        verify_open_file!(f, p, expected)
-        f.truncate(0) unless append
-        f.write(content)
+    def self.mkdir(path:)
+      translating_errors do
+        checked_path(path).tap { |p| backend.mkdir(p) }
       end
-      p
+    end
+
+    def self.touch(path:)
+      translating_errors do
+        checked_path(path).tap { |p| backend.touch(p) }
+      end
+    end
+
+    def self.delete(path:, recursive: false)
+      translating_errors do
+        require_file_access!
+        p = normalize_path(path)
+        p.symlink? ? validate_link_location!(p) : validate_path!(p)
+        raise Errno::ENOENT unless p.exist? || p.symlink?
+
+        backend.delete(p, recursive: recursive)
+        { path: p.to_s, deleted: true }
+      end
+    end
+
+    # The path every operation but delete works on: normalised, and checked
+    # against the allowed roots and the deny-list.
+    def self.checked_path(path)
+      require_file_access!
+      normalized = normalize_path(path)
+      validate_path!(normalized)
+      normalized
+    end
+
+    # How the operations are carried out on this host. See access_mode.
+    def self.backend
+      PinnedDir.supported? ? PinnedFiles : PathCheckedFiles
+    end
+
+    # Turns what the filesystem said into the error a client should see. The
+    # path checks run inside it as well as the operation: they touch the
+    # filesystem too, and a path that changes underneath them raises from
+    # there.
+    def self.translating_errors(not_found = 'Path not found')
+      yield
+    rescue Errno::ENOENT
+      raise NotFoundError, not_found
     rescue Errno::EACCES
       raise ForbiddenError, 'Permission denied'
     rescue Errno::ENXIO
       # A FIFO with no reader. With one, the open succeeds and the type check
-      # in verify_open_file! refuses it.
+      # on the open file refuses it.
       raise ValidationError, 'Not a regular file'
-    rescue Errno::ENOENT
-      raise NotFoundError, 'Path not found'
+    rescue Errno::ENOTEMPTY
+      raise ValidationError, 'Directory not empty'
+    rescue Errno::EEXIST
+      raise ValidationError, 'Path already exists'
     rescue *OUT_OF_SPACE_ERRORS => e
       raise StorageError, out_of_space_message(e)
     rescue *BAD_PATH_ERRORS => e
@@ -196,118 +195,6 @@ module Handlers
       deny_sensitive!(real, real)
       deny_aliases!(real)
       deny_by_inode!(real)
-    end
-
-    # Used where PinnedDir is not supported. Resolves the path first and
-    # applies the policy to the result, so the destination the open is later
-    # compared against is one that was itself checked.
-    def self.checked_destination(path)
-      expected = expected_destination(path)
-      validate_real!(expected)
-      expected
-    end
-
-    # Where an open of `path` should land, worked out before the open.
-    def self.expected_destination(path)
-      return path.realpath if path.exist?
-
-      target = path.symlink? ? resolve_link_chain(path) : path
-      target.parent.realpath.join(target.basename)
-    end
-
-    # validate_path! judges a path string, and the open that follows resolves
-    # it again. In a shared directory such as /tmp, another user who owns a
-    # parent directory can swap a component for a symlink between the two, so
-    # the open lands on a file the check never saw. This runs on the open
-    # descriptor: it must be a regular file (a FIFO or device would block or
-    # never end), the path must still resolve to where it did when it was
-    # validated, and the descriptor must be that same file.
-    def self.verify_open_file!(file, path, expected)
-      stat = file.stat
-      raise ValidationError, 'Not a regular file' unless stat.file?
-
-      actual = Pathname.new(File.realpath(path.to_s))
-      on_disk = actual.stat
-      return if actual == expected && on_disk.dev == stat.dev && on_disk.ino == stat.ino
-
-      raise ForbiddenError, 'Access denied: path changed during the operation'
-    rescue Errno::ENOENT
-      raise ForbiddenError, 'Access denied: path changed during the operation'
-    end
-
-    def self.mkdir(path:)
-      require_file_access!
-      p = normalize_path(path)
-      validate_path!(p)
-      raise ValidationError, 'Path already exists' if p.exist?
-
-      PinnedDir.supported? ? PinnedFiles.mkdir(p) : p.mkpath
-      p
-    rescue Errno::EACCES
-      raise ForbiddenError, 'Permission denied'
-    rescue Errno::EEXIST
-      raise ValidationError, 'Path already exists'
-    rescue *OUT_OF_SPACE_ERRORS => e
-      raise StorageError, out_of_space_message(e)
-    rescue *BAD_PATH_ERRORS => e
-      raise ValidationError, e.message.sub(/ @ .*/, '')
-    end
-
-    def self.touch(path:)
-      require_file_access!
-      p = normalize_path(path)
-      validate_path!(p)
-
-      PinnedDir.supported? ? PinnedFiles.touch(p) : FileUtils.touch(p)
-      p
-    rescue Errno::ENOENT
-      raise NotFoundError, 'Path not found'
-    rescue Errno::ENXIO
-      raise ValidationError, 'Not a regular file'
-    rescue Errno::EACCES
-      raise ForbiddenError, 'Permission denied'
-    rescue *OUT_OF_SPACE_ERRORS => e
-      raise StorageError, out_of_space_message(e)
-    rescue *BAD_PATH_ERRORS => e
-      raise ValidationError, e.message.sub(/ @ .*/, '')
-    end
-
-    def self.delete(path:, recursive: false)
-      require_file_access!
-      p = normalize_path(path)
-      p.symlink? ? validate_link_location!(p) : validate_path!(p)
-      raise NotFoundError, 'Path not found' unless p.exist? || p.symlink?
-
-      if PinnedDir.supported?
-        PinnedFiles.delete(p, recursive: recursive)
-        return { path: p.to_s, deleted: true }
-      end
-
-      # A symlink is removed as a link, whatever it points at. `directory?`
-      # follows links, so a link to a directory used to reach rmdir and fail.
-      if p.symlink? || !p.directory?
-        p.delete
-      elsif recursive
-        # validate_path! only checked the target. Recursion would sweep any
-        # denied path beneath it — deleting ~/.config takes ~/.config/ondemand
-        # (the token store) with it, and deleting ~ takes ~/.ssh.
-        deny_recursive!(p)
-        FileUtils.rm_rf(p)
-      else
-        raise ValidationError, 'Directory not empty' unless p.children.empty?
-
-        p.rmdir
-      end
-
-      { path: p.to_s, deleted: true }
-    rescue Errno::ENOENT
-      raise NotFoundError, 'Path not found'
-    rescue Errno::EACCES
-      raise ForbiddenError, 'Permission denied'
-    rescue Errno::ENOTEMPTY
-      raise ValidationError, 'Directory not empty'
-    rescue *BAD_PATH_ERRORS => e
-      raise ValidationError, e.message.sub(/ @ .*/, '')
     end
 
     # --- path validation ---
@@ -585,13 +472,9 @@ module Handlers
       # requested path and the resolved one sit under different prefixes, and
       # checking only one of them lets the other slip past.
       raw_home = Pathname.new(Dir.home)
-      homes = [raw_home]
-      homes << raw_home.realpath if raw_home.exist?
+      homes = raw_home.exist? ? [raw_home, raw_home.realpath].uniq : [raw_home]
 
-      candidates = [requested, resolved].uniq
-      pairs = candidates.product(homes.uniq)
-
-      pairs.each do |candidate, home|
+      [requested, resolved].uniq.product(homes).each do |candidate, home|
         rel = relative_to_home(candidate, home)
         next unless rel
 
@@ -604,15 +487,17 @@ module Handlers
         #
         # Folding on a case-sensitive filesystem costs only that a genuinely
         # distinct ~/.SSH is refused too, which is the safe direction.
-        folded = rel.downcase
-        if DENIED_DIRS.any? { |d| folded == d.downcase || folded.start_with?("#{d.downcase}/") }
-          raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
-        end
+        next unless denied_relative?(rel.downcase)
 
-        if DENIED_EXACT.any? { |name| folded == name.downcase } || DENIED_PATTERNS.any? { |re| re.match?(folded) }
-          raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
-        end
+        raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
       end
+    end
+
+    # @param folded [String] a path relative to home, lower-cased
+    def self.denied_relative?(folded)
+      DENIED_DIRS.any? { |dir| folded == dir.downcase || folded.start_with?("#{dir.downcase}/") } ||
+        DENIED_EXACT.any? { |name| folded == name.downcase } ||
+        DENIED_PATTERNS.any? { |pattern| pattern.match?(folded) }
     end
 
     def self.relative_to_home(path, home)
@@ -697,3 +582,4 @@ module Handlers
 end
 
 require_relative 'pinned_files'
+require_relative 'path_checked_files'

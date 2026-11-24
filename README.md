@@ -238,7 +238,9 @@ app. Read it before you deploy.
   hold for an agent whose only access is this API. Set
   `OOD_API_ALLOW_NATIVE=true` if your site needs it, and note that job paths
   are then only as constrained as your scheduler makes them.
-- **App tokens do not expire.** They are valid until revoked in the Dashboard.
+- **App tokens expire.** The user picks a lifetime when creating one (90 days
+  by default, up to a site maximum of 365), and can revoke it sooner in the
+  Dashboard. A site can allow tokens that never expire.
 - **Revoking a JWT at your IdP has no effect until it expires.** Apache
   validates the signature and expiry statelessly; it never asks the IdP whether
   the token is still good. Short token lifetimes are the only mitigation

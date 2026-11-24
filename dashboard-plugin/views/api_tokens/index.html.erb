@@ -38,6 +38,7 @@
               <th><%= t('dashboard.api_tokens.name') %></th>
               <th><%= t('dashboard.api_tokens.created') %></th>
               <th><%= t('dashboard.api_tokens.last_used') %></th>
+              <th><%= t('dashboard.api_tokens.expires') %></th>
               <th></th>
             </tr>
           </thead>
@@ -47,6 +48,13 @@
                 <td><%= token.name %></td>
                 <td><%= token.created_at_display %></td>
                 <td><%= token.last_used_at_display(t('dashboard.api_tokens.never')) %></td>
+                <td>
+                  <% if token.expired? %>
+                    <span class="badge bg-secondary"><%= t('dashboard.api_tokens.expired') %></span>
+                  <% else %>
+                    <%= token.expires_at_display(t('dashboard.api_tokens.does_not_expire')) %>
+                  <% end %>
+                </td>
                 <td class="text-end">
                   <%= button_to api_token_path(token.id),
                       method: :delete,
@@ -79,6 +87,17 @@
             <%= f.text_field :name, class: 'form-control', name: 'api_token[name]',
                 placeholder: t('dashboard.api_tokens.name_placeholder'), required: true %>
             <div class="form-text"><%= t('dashboard.api_tokens.name_help') %></div>
+          </div>
+          <div class="mb-3">
+            <%= f.label :lifetime, t('dashboard.api_tokens.lifetime'), class: 'form-label' %>
+            <%= f.select :lifetime,
+                ApiToken.lifetime_options.map { |option|
+                  label = option == ApiToken::NEVER ? t('dashboard.api_tokens.does_not_expire') : t('dashboard.api_tokens.lifetime_days', count: option.to_i)
+                  [label, option]
+                },
+                { selected: ApiToken.default_lifetime },
+                { class: 'form-select', name: 'api_token[lifetime]' } %>
+            <div class="form-text"><%= t('dashboard.api_tokens.lifetime_help') %></div>
           </div>
           <%= f.submit t('dashboard.api_tokens.generate'), class: 'btn btn-primary' %>
         <% end %>

@@ -202,7 +202,9 @@ than one you know is missing.
   read by an agent and end up in a model's context.
 - **No per-user or per-group enablement.** As a `sys` app it is available to
   everyone who can log into the portal.
-- **Application tokens do not expire.** Revocation is the only control.
+- **An application token is valid until its expiry or until it is revoked.**
+  The default lifetime is 90 days and the site sets the maximum. A site can
+  allow tokens that never expire; they are off by default.
 - **Revoking a JWT at your IdP has no effect until it expires.** Apache
   validates it statelessly.
 - **Recursive delete is a documented, valid call.** The deny-list protects the
