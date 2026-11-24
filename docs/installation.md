@@ -222,7 +222,7 @@ curl -H "Authorization: Bearer <your-jwt>" \
 The response shows the settings in force:
 
 ```json
-{"status":"ok","rest":true,"mcp":true,"tools":["get_cluster","..."],
+{"status":"ok","rest":true,"mcp":true,"local":false,"tools":["get_cluster","..."],
  "app_tokens":false,"file_access":"pinned","from_environment":[],
  "settings":"/etc/ood/config/apps/ood-api/config.yml (not found)",
  "env":"/etc/ood/config/apps/ood-api/env (not found)","problems":[]}
@@ -315,8 +315,39 @@ switch. Each PUN logs the
 settings in force when it starts and again whenever they change:
 
 ```
-ood_api_audit op=capabilities status=ok rest=true mcp=true app_tokens=false tools=get_cluster,get_cluster_info,...
+ood_api_audit op=capabilities status=ok rest=true mcp=true local=false app_tokens=false tools=get_cluster,get_cluster_info,...
 ```
+
+### Serving a program on the portal host
+
+Another app in the portal, such as an assistant your site runs itself, can
+use the same tools without going through `/mcp`. It starts `bin/mcp-stdio`
+from this app's directory as the signed-in user and speaks MCP to it over
+standard input and output. This is off until you switch it on:
+
+```yaml
+local: true
+```
+
+`local` is separate from `mcp`. With `local: true` and `mcp: false`, the
+tools are available to programs on the portal host and to no client outside
+it. The tools offered are the ones you enabled under
+[What to enable](#what-to-enable), and every call is in the
+[audit log](#audit-log) with `transport=stdio`. There is no application
+token here: the program already runs as the user, who can do the same things
+from a shell. To switch the app off entirely once this is on, set
+`local: false` along with `rest` and `mcp`.
+
+Two things the calling app has to get right. The audit records are written
+to the helper's standard error, so the caller must pass that through to its
+own, which in a PUN is the user's log; a caller that discards it loses the
+records, and one that captures it without reading it will stall the helper.
+And the helper takes its settings from `config.yml` and from the environment
+it is started with, where a variable wins over the file as it does for the
+app itself. `OOD_API_LOCAL` or `OOD_API_CAPABILITIES` set for the PUN, or by
+the calling app, therefore cannot be undone from `config.yml`, and `/health`
+describes the web app's environment, not the helper's. The helper's own log
+line, `op=capabilities`, says what it is serving.
 
 ### Where environment variables go
 
@@ -391,6 +422,7 @@ the first second after a restart can get a 502 while the PUN starts.
 | `OOD_API_DISABLE` | No | unset | Comma-separated tool names to remove, for example `cancel_job,list_historic_jobs`. |
 | `OOD_API_REST` | No | `true` | Set to `false` to switch off `/api/v1`. |
 | `OOD_API_MCP` | No | `true` | Set to `false` to switch off `/mcp`. |
+| `OOD_API_LOCAL` | No | `false` | Set to `true` to serve programs on the portal host through `bin/mcp-stdio`. See [serving a program on the portal host](#serving-a-program-on-the-portal-host). |
 | `OOD_API_ALLOWED_ORIGINS` | No | unset | Comma-separated origins (for example `https://portal.example.edu`) whose browser requests are accepted in addition to the portal's own. Only needed if a front end on another origin calls this API. |
 | `OOD_API_CONFIG_ROOT` | No | `/etc/ood/config/apps/<app>` | The directory holding the app's `config.yml` and `env`. `<app>` is the name the app is installed under. Set it in `pun_custom_env` if you need it; it cannot be set in the env file it locates. |
 | `OOD_DOWNLOAD_ENABLED`, `OOD_UPLOAD_ENABLED` | No | `true` | The Dashboard's own switches, read from the PUN environment, the Dashboard's env file, or `download_enabled` and `upload_enabled` in `ondemand.d`. See [what to enable](#what-to-enable). |

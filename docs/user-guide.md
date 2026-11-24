@@ -114,7 +114,7 @@ Quick test that you can reach the API at all:
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
   https://<your-ood-host>/pun/sys/ood-api/health
-# -> {"status":"ok","rest":true,"mcp":true,"tools":[...],...}
+# -> {"status":"ok","rest":true,"mcp":true,"local":false,"tools":[...],...}
 ```
 
 `/health` skips the application-token check, but Apache still guards it like

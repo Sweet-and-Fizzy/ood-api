@@ -144,6 +144,15 @@ read. The reason is in the PUN log and at `/health`. Changes to the settings
 file reach running PUNs within seconds, so a site can switch the app off
 without restarting them. `test/capabilities_test.rb` covers each of these.
 
+A site can also let another app in the portal start the MCP server as a
+child process (`bin/mcp-stdio`, `local: true`, off by default). That path has
+no application token and no cross-site check, because nothing reaches it
+over the network: the caller is a process already running as the user. The
+tool settings, the request checks and the audit log are the same as for
+`/mcp`. `test/mcp_stdio_test.rb` covers it. The switch governs what a
+site-installed app is offered. It is not a barrier against the user, who
+starts the process, sets its environment, and has a shell.
+
 **Authentication.** Apache authenticates every request before it reaches the
 PUN; the app trusts that and identifies the user from the OS, not from anything
 in the request. Sites may additionally require a per-client application token

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `bin/mcp-stdio` serves the MCP tools over standard input and output to a
+  program on the portal host that runs as the signed-in user, such as an
+  assistant a site runs inside Open OnDemand. It is off until the site sets
+  `local: true`, and is separate from `mcp`, so a site can serve its own
+  assistant without serving clients from outside. The tool settings and the
+  audit log apply as they do to `/mcp`. `/health` reports `local`. See
+  [serving a program on the portal host](docs/installation.md#serving-a-program-on-the-portal-host).
+
 ## [0.5.0] - 2026-11-23
 
 A site now decides what the app serves, and a fresh install serves less. Read

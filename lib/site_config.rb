@@ -25,13 +25,13 @@ module OodApi
     # when the app is installed under another name.
     USUAL_NAME = 'ood-api'
     # The settings this app reads from its config.yml.
-    OWN_NAMES = [:capabilities, :disable, :rest, :mcp, :app_tokens, :token_max_days, :token_allow_never].freeze
+    OWN_NAMES = [:capabilities, :disable, :rest, :mcp, :local, :app_tokens, :token_max_days, :token_allow_never].freeze
     # A file in ondemand.d that names one of these holds a setting this app
     # follows, so it matters here if that file cannot be read.
     FOLLOWED_SETTINGS = /(?:^|[\s{,])["']?(?:allowlist[_-]?path|download_enabled|upload_enabled|ood[_-]?api)["']?\s*:/i
     # Every variable the app reads. Any other OOD_API_ name is a mistake.
     KNOWN_VARIABLES = ['ALLOW_NATIVE', 'ALLOWED_ORIGINS', 'APP_TOKENS', 'CAPABILITIES', 'CONTEXT_PATH', 'DISABLE',
-                       'ENV_ALLOWLIST', 'MAX_CONTEXT_BYTES', 'MAX_CONTEXT_TOTAL_BYTES', 'MAX_FILE_READ',
+                       'ENV_ALLOWLIST', 'LOCAL', 'MAX_CONTEXT_BYTES', 'MAX_CONTEXT_TOTAL_BYTES', 'MAX_FILE_READ',
                        'MAX_FILE_WRITE', 'MCP', 'REST', 'SYS_APPS', 'TOKEN_ALLOW_NEVER',
                        'TOKEN_MAX_DAYS', 'DEV_BIND', 'CONFIG_ROOT'].map { |name| "OOD_API_#{name}" }.freeze
 
@@ -48,7 +48,15 @@ module OodApi
     # directory in /etc/ood/config/apps. Passenger gives the app its URL; in
     # development the checkout's own name stands in.
     def app_name
-      File.basename(ENV['PASSENGER_BASE_URI'] || File.expand_path('..', __dir__))
+      @installed_as || File.basename(ENV['PASSENGER_BASE_URI'] || File.expand_path('..', __dir__))
+    end
+
+    # Gives the name when there is no Passenger to give it.
+    #
+    # @param name [String, nil] the directory the app is installed as
+    def installed_as!(name)
+      @installed_as = name
+      reset!
     end
 
     # Where the site keeps this app's configuration. Worked out once, before

@@ -14,7 +14,7 @@ module OodApi
   # refuses `DELETE /api/v1/files` together.
   #
   # Settings come from the environment (`OOD_API_CAPABILITIES`,
-  # `OOD_API_DISABLE`, `OOD_API_REST`, `OOD_API_MCP`) or from the app's
+  # `OOD_API_DISABLE`, `OOD_API_REST`, `OOD_API_MCP`, `OOD_API_LOCAL`) or from the app's
   # config.yml in /etc/ood/config/apps/<app>:
   #
   #   capabilities: [read, jobs, files_write]
@@ -35,6 +35,8 @@ module OodApi
     SETTINGS = SiteConfig::OWN_NAMES
     ON = ['true', '1', 'yes', 'on'].freeze
     OFF = ['false', '0', 'no', 'off'].freeze
+    # What is served while the settings cannot be understood.
+    NOTHING = { tools: Set.new.freeze, rest: false, mcp: false, local: false }.freeze
 
     module_function
 
@@ -57,6 +59,12 @@ module OodApi
       resolved[:mcp]
     end
 
+    # @return [Boolean] whether programs on the portal host, running as the
+    #   user, are served through bin/mcp-stdio
+    def local?
+      resolved[:local]
+    end
+
     # @return [Array<String>] what is wrong with the site's settings, if anything
     def problems
       resolved[:problems]
@@ -64,7 +72,8 @@ module OodApi
 
     # One line for the PUN log, so an admin can see what their settings produced.
     def summary
-      "rest=#{rest?} mcp=#{mcp?} app_tokens=#{AppAuth.enabled?} tools=#{enabled_tools.to_a.sort.join(',')} " \
+      "rest=#{rest?} mcp=#{mcp?} local=#{local?} app_tokens=#{AppAuth.enabled?} " \
+        "tools=#{enabled_tools.to_a.sort.join(',')} " \
         "settings=\"#{SiteConfig.settings_source}\""
     end
 
@@ -87,13 +96,17 @@ module OodApi
       disabled = list_setting('OOD_API_DISABLE', :disable) || []
       rest = switch('OOD_API_REST', :rest)
       mcp = switch('OOD_API_MCP', :mcp)
-      problems = setting_problems + [rest, mcp].grep(String) +
+      # Off until the site asks for it: nothing uses it until a program that
+      # does is installed, and a site that has switched the others off has
+      # everything off.
+      local = switch('OOD_API_LOCAL', :local, default: false)
+      problems = setting_problems + [rest, mcp, local].grep(String) +
                  unknown(groups, GROUPS.keys + ['all'], 'capability') + unknown(disabled, ALL_TOOLS, 'tool')
-      return { tools: Set.new, rest: false, mcp: false, problems: problems } unless problems.empty?
+      return NOTHING.merge(problems: problems) unless problems.empty?
 
       groups = GROUPS.keys if groups.include?('all')
       tools = (['read'] | groups).flat_map { |group| GROUPS.fetch(group) } - disabled - off_in_dashboard
-      { tools: Set.new(tools), rest: rest, mcp: mcp, problems: [] }
+      { tools: Set.new(tools), rest: rest, mcp: mcp, local: local, problems: [] }
     end
 
     # The settings held by an environment variable. One of these cannot be

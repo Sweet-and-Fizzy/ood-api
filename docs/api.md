@@ -110,6 +110,7 @@ GET /health
   "status": "ok",
   "rest": true,
   "mcp": true,
+  "local": false,
   "tools": ["get_cluster", "get_cluster_info", "..."],
   "app_tokens": false,
   "file_access": "pinned",
@@ -120,8 +121,8 @@ GET /health
 }
 ```
 
-`status` is `ok` when REST or MCP is served, `disabled` when the site has
-switched both off, and `misconfigured`, with HTTP 503, when the site's
+`status` is `ok` when REST, MCP or local programs are served, `disabled` when
+the site has switched all of them off, and `misconfigured`, with HTTP 503, when the site's
 settings could not be understood; `problems` then says why. `tools` lists what
 the site has enabled. `settings` and `env` name the two files the app reads
 its configuration from, and `from_environment` lists the settings held by
