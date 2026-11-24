@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'time'
 require_relative 'errors'
 
 module Handlers
@@ -47,7 +48,9 @@ module Handlers
     # unconditional re-raise for Interrupt/SystemExit, which must not be
     # swallowed.
     def self.emit(**fields)
-      parts = context.merge(fields).filter_map do |k, v|
+      # The time and the operation always come first and in this order, so a
+      # log shipper can anchor on them; the per-request context comes last.
+      parts = { ts: Time.now.utc.iso8601(3) }.merge(fields).merge(context).filter_map do |k, v|
         next if v.nil?
 
         "#{k}=#{quote(v)}"

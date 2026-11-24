@@ -33,3 +33,4 @@ en:
       not_found: "Token not found."
       usage: "API Usage"
       usage_description: "Include this header in your API requests:"
+      usage_login_note: "The token does not replace signing in. A request also needs what this site accepts as a login, such as a token from the site's identity provider, or it is redirected to the login page."

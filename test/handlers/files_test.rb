@@ -28,14 +28,15 @@ class HandlersFilesTest < Minitest::Test
     assert_includes names, 'b.txt'
   end
 
-  def test_list_returns_pathname_for_single_file
+  def test_list_returns_the_entry_for_a_single_file
     file_path = File.join(@test_dir, 'single.txt')
     File.write(file_path, 'hello')
 
     result = Handlers::Files.list(path: file_path)
 
-    assert_kind_of Pathname, result
+    assert_kind_of Handlers::Files::Entry, result
     assert_equal 'single.txt', result.basename.to_s
+    assert_equal 5, result.stat.size
   end
 
   def test_list_raises_not_found_for_missing_path
@@ -1042,5 +1043,262 @@ class HandlersFilesTest < Minitest::Test
     assert_raises(Handlers::NotFoundError) { Handlers::Files.delete(path: file) }
     assert_raises(Handlers::NotFoundError) { Handlers::Files.touch(path: file) }
     assert_raises(Handlers::NotFoundError) { Handlers::Files.mkdir(path: File.join(@test_dir, 'd')) }
+  end
+
+  # With ~/.config a symlink, the token store and systemd/user are somewhere
+  # the rules keyed to $HOME never look.
+  def test_a_denied_path_under_a_symlinked_directory_is_denied_where_it_really_is
+    with_fake_home do |home|
+      elsewhere = File.join(@test_dir, 'elsewhere')
+      FileUtils.mkdir_p(File.join(elsewhere, 'ondemand'))
+      File.symlink(elsewhere, File.join(home, '.config'))
+
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.write(path: File.join(elsewhere, 'ondemand', 'tokens.json'), content: '[]')
+      end
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.write(path: File.join(elsewhere, 'systemd', 'user', 'x.service'), content: 'x')
+      end
+      Handlers::Files.write(path: File.join(elsewhere, 'app', 'settings.json'), content: '{}')
+    end
+  end
+
+  # A home mounted at a second path is the same directory under another name.
+  def test_home_is_recognised_by_identity_not_only_by_spelling
+    with_fake_home do |home|
+      other_name = File.join(@test_dir, 'second-mount')
+      File.symlink(home, other_name)
+
+      rel = Handlers::Files.send(:relative_to_home_by_identity,
+                                 Pathname.new(File.join(other_name, '.ssh/authorized_keys')), Pathname.new(home))
+
+      assert_equal '.ssh/authorized_keys', rel
+    end
+  end
+
+  # git treats any directory holding HEAD, objects and refs as a repository,
+  # and runs what its config says.
+  def test_a_bare_repository_layout_cannot_be_completed_or_written_into
+    repo = File.join(@test_dir, 'bare')
+    FileUtils.mkdir_p(File.join(repo, 'objects'))
+    FileUtils.mkdir_p(File.join(repo, 'refs'))
+    assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: File.join(repo, 'HEAD'), content: 'ref: x') }
+
+    File.write(File.join(repo, 'HEAD'), 'ref: refs/heads/main')
+    assert_raises(Handlers::ForbiddenError) do
+      Handlers::Files.write(path: File.join(repo, 'config'), content: '[core] fsmonitor = evil')
+    end
+    assert_raises(Handlers::ForbiddenError) do
+      Handlers::Files.write(path: File.join(repo, 'hooks', 'pre-commit'), content: 'x')
+    end
+  end
+
+  def test_directories_that_only_resemble_part_of_a_repository_are_untouched
+    project = File.join(@test_dir, 'project')
+    FileUtils.mkdir_p(File.join(project, 'refs'))
+
+    Handlers::Files.write(path: File.join(project, 'config'), content: 'ok')
+    Handlers::Files.write(path: File.join(project, 'refs', 'paper.bib'), content: 'ok')
+    Handlers::Files.write(path: File.join(project, 'HEAD'), content: 'ok')
+  end
+
+  def test_python_path_files_are_denied
+    assert_denied('.local/lib/python3.11/site-packages/evil.pth')
+  end
+
+  # A listing describes each entry as it is. Following a link would report
+  # the size, owner and times of a file outside the allowed directories, and
+  # dropping a link to a missing file would say which paths exist.
+  def test_listing_reports_symlinks_as_links_and_says_nothing_about_their_targets
+    File.symlink('/etc/passwd', File.join(@test_dir, 'to-passwd'))
+    File.symlink('/no/such/file', File.join(@test_dir, 'dangling'))
+    File.write(File.join(@test_dir, 'plain'), 'x')
+
+    entries = Handlers::Files.list(path: @test_dir).to_h { |entry| [entry.basename.to_s, entry] }
+
+    assert_equal ['dangling', 'plain', 'to-passwd'], entries.keys.sort
+    assert entries['to-passwd'].symlink?
+    refute entries['to-passwd'].directory?
+    assert_equal File.lstat(File.join(@test_dir, 'to-passwd')).size, entries['to-passwd'].stat.size
+    refute entries['plain'].symlink?
+    assert_equal '/etc/passwd', entries['to-passwd'].link_target
+    assert_nil entries['plain'].link_target
+  end
+
+  # These used to answer "path not in allowed directories", which is false.
+  def test_an_allowed_directory_itself_is_refused_with_a_true_reason
+    ENV['OOD_ALLOWLIST_PATH'] = @test_dir
+    [
+      -> { Handlers::Files.write(path: @test_dir, content: 'x') },
+      -> { Handlers::Files.mkdir(path: @test_dir) },
+      -> { Handlers::Files.read(path: @test_dir) },
+      -> { Handlers::Files.touch(path: @test_dir) },
+      -> { Handlers::Files.delete(path: @test_dir, recursive: true) }
+    ].each do |operation|
+      err = assert_raises(Handlers::ValidationError, &operation)
+      assert_match(/allowed top-level directories/, err.message)
+    end
+    assert File.directory?(@test_dir)
+    assert_kind_of Array, Handlers::Files.list(path: @test_dir)
+  ensure
+    ENV.delete('OOD_ALLOWLIST_PATH')
+  end
+
+  def test_touch_works_through_the_users_own_symlink_and_on_a_read_only_file
+    target = File.join(@test_dir, 'target.txt')
+    File.write(target, 'keep')
+    old = Time.now - 86_400
+    File.utime(old, old, target)
+    link = File.join(@test_dir, 'link.txt')
+    File.symlink(target, link)
+
+    Handlers::Files.touch(path: link)
+    assert_in_delta Time.now, File.mtime(target), 5
+    assert_equal 'keep', File.read(target)
+
+    File.utime(old, old, target)
+    File.chmod(0o444, target)
+    Handlers::Files.touch(path: target)
+    assert_in_delta Time.now, File.mtime(target), 5
+  end
+
+  def test_error_messages_do_not_name_internal_paths
+    File.write(File.join(@test_dir, 'file.txt'), 'x')
+
+    err = assert_raises(Handlers::ValidationError) do
+      Handlers::Files.write(path: File.join(@test_dir, 'file.txt', 'below'), content: 'x')
+    end
+
+    assert_equal 'Not a directory', err.message
+  end
+
+  def test_content_and_max_size_of_the_wrong_type_are_refused_not_crashed_on
+    assert_raises(Handlers::ValidationError) { Handlers::Files.write(path: File.join(@test_dir, 'f'), content: 5) }
+    File.write(File.join(@test_dir, 'f'), 'hello')
+    assert_equal 'he', Handlers::Files.read(path: File.join(@test_dir, 'f'), max_size: '2')
+  end
+
+  def test_read_only_and_failing_filesystems_are_reported_not_raised
+    file = File.join(@test_dir, 'f.txt')
+    File.write(file, 'x')
+    backend = Handlers::Files.backend
+    backend.stubs(:write).raises(Errno::EROFS)
+    assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: file, content: 'y') }
+    backend.stubs(:read).raises(Errno::ESTALE)
+    assert_raises(Handlers::FilesystemError) { Handlers::Files.read(path: file) }
+    backend.stubs(:delete).raises(Errno::EBUSY)
+    assert_raises(Handlers::ValidationError) { Handlers::Files.delete(path: file) }
+  end
+
+  # The pattern-denied files count for a recursive delete as the named ones do.
+  def test_recursive_delete_refuses_a_tree_holding_a_pattern_denied_file
+    with_fake_home do |home|
+      packages = File.join(home, '.local', 'lib', 'python3.11', 'site-packages')
+      FileUtils.mkdir_p(packages)
+      File.write(File.join(packages, 'evil.pth'), 'import os')
+
+      err = assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.delete(path: File.join(home, '.local'), recursive: true)
+      end
+      assert_match(/evil\.pth/, err.message)
+      assert File.exist?(File.join(packages, 'evil.pth'))
+    end
+  end
+
+  # Removing a repository runs nothing, unlike writing into one.
+  def test_recursive_delete_removes_a_git_repository_inside_the_tree
+    project = File.join(@test_dir, 'project')
+    FileUtils.mkdir_p(File.join(project, '.git', 'hooks'))
+    File.write(File.join(project, '.git', 'config'), '[core]')
+
+    Handlers::Files.delete(path: project, recursive: true)
+
+    refute File.exist?(project)
+  end
+
+  # Git accepts a `commondir` file in place of objects and refs, so the
+  # repository can be spread over two directories with no one of them
+  # looking like one.
+  def test_a_repository_split_with_commondir_cannot_be_completed
+    Handlers::Files.write(path: File.join(@test_dir, 'HEAD'), content: 'ref: refs/heads/main')
+    assert_raises(Handlers::ForbiddenError) do
+      Handlers::Files.write(path: File.join(@test_dir, 'commondir'), content: '.cache/y')
+    end
+
+    other = File.join(@test_dir, 'other')
+    FileUtils.mkdir_p(other)
+    Handlers::Files.write(path: File.join(other, 'commondir'), content: '../y')
+    assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: File.join(other, 'HEAD'), content: 'x') }
+
+    File.write(File.join(other, 'HEAD'), 'ref: x')
+    assert_raises(Handlers::ForbiddenError) { Handlers::Files.write(path: File.join(other, 'config'), content: 'x') }
+  end
+
+  def test_every_form_of_a_python_startup_module_is_denied
+    assert_denied('.local/lib/python3.11/site-packages/usercustomize/__init__.py')
+    assert_denied('.local/lib/python3.11/site-packages/usercustomize.pyc')
+    assert_denied('.local/lib/python3.11/site-packages/sitecustomize.cpython-311-x86_64-linux-gnu.so')
+  end
+
+  # Three files in a shared directory used to make this app refuse every
+  # path under it, for every user. Git itself ignores a repository in a
+  # directory that belongs to someone else.
+  def test_repository_markers_in_a_directory_anyone_can_write_to_do_not_count
+    ['HEAD', 'objects', 'refs'].each { |name| FileUtils.touch(File.join(@test_dir, name)) }
+    File.chmod(0o1777, @test_dir)
+
+    Handlers::Files.write(path: File.join(@test_dir, 'notes.txt'), content: 'ok')
+    assert_equal 'ok', Handlers::Files.read(path: File.join(@test_dir, 'notes.txt'))
+  end
+
+  def test_ordinary_directories_named_like_git_parts_are_usable
+    data = File.join(@test_dir, 'data')
+    FileUtils.mkdir_p(File.join(data, 'refs'))
+    FileUtils.mkdir_p(File.join(data, 'objects'))
+
+    Handlers::Files.write(path: File.join(data, 'objects', 'a.txt'), content: 'ok')
+    Handlers::Files.write(path: File.join(data, 'refs', 'b.txt'), content: 'ok')
+  end
+
+  def test_a_symlink_to_an_allowed_top_level_directory_can_be_deleted
+    ENV['OOD_ALLOWLIST_PATH'] = "#{@test_dir}:#{Dir.tmpdir}"
+    link = File.join(Dir.tmpdir, "ood-link-#{SecureRandom.hex(4)}")
+    File.symlink(@test_dir, link)
+
+    Handlers::Files.delete(path: link)
+
+    refute File.symlink?(link)
+    assert File.directory?(@test_dir)
+  ensure
+    ENV.delete('OOD_ALLOWLIST_PATH')
+    FileUtils.rm_f(link) if link
+  end
+
+  def test_a_recursive_delete_that_fails_says_the_tree_may_be_partly_gone
+    tree = File.join(@test_dir, 'tree')
+    FileUtils.mkdir_p(tree)
+    Handlers::Files.backend.stubs(:delete).raises(Errno::EACCES)
+
+    err = assert_raises(Handlers::ForbiddenError) { Handlers::Files.delete(path: tree, recursive: true) }
+
+    assert_match(/may already have been removed/, err.message)
+  end
+
+  # R reads it before .Rprofile, and it can name another file to run.
+  def test_the_r_environment_file_is_denied
+    assert_denied('.Renviron')
+  end
+
+  # Nothing has been touched when the path rules refuse the request.
+  def test_a_recursive_delete_refused_by_the_rules_does_not_claim_partial_removal
+    with_fake_home do |home|
+      FileUtils.mkdir_p(File.join(home, '.config', 'git'))
+
+      err = assert_raises(Handlers::ForbiddenError) do
+        Handlers::Files.delete(path: File.join(home, '.config'), recursive: true)
+      end
+
+      refute_match(/may already have been removed/, err.message)
+    end
   end
 end

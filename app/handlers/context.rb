@@ -2,6 +2,7 @@
 
 require 'pathname'
 require_relative 'errors'
+require_relative '../../lib/site_config'
 
 module Handlers
   # Reads the site policy fragments an administrator publishes for assistants,
@@ -13,13 +14,13 @@ module Handlers
     # is a mistake. Without a cap a single big file balloons the worker's heap
     # several times over — the raw string, the stripped copy, the join, and the
     # JSON encoding all coexist — inside the user's own PUN.
-    MAX_FILE_BYTES = ENV.fetch('OOD_API_MAX_CONTEXT_BYTES', 256 * 1024).to_i
+    MAX_FILE_BYTES = OodApi::SiteConfig.limit('OOD_API_MAX_CONTEXT_BYTES', 256 * 1024)
 
     # Aggregate cap. The per-file limit alone bounds nothing: 500 files each
     # just under it produced a 125 MiB string, which then gets JSON-encoded on
     # top. Site policy that does not fit in a megabyte is a misconfiguration,
     # and truncating with a visible marker beats exhausting the worker.
-    MAX_TOTAL_BYTES = ENV.fetch('OOD_API_MAX_CONTEXT_TOTAL_BYTES', 1024 * 1024).to_i
+    MAX_TOTAL_BYTES = OodApi::SiteConfig.limit('OOD_API_MAX_CONTEXT_TOTAL_BYTES', 1024 * 1024)
 
     def self.read
       dir = Pathname.new(CONTEXT_PATH)

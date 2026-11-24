@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative 'log'
+
 require 'json'
 require 'digest'
 require 'securerandom'
@@ -11,9 +13,8 @@ require 'time'
 require_relative 'token_policy'
 
 module OodApi
-  # Manages API tokens stored in user's home directory
-  # Tokens are stored at ~/.config/ondemand/tokens.json
-  # Compatible with OOD Dashboard's ApiToken model
+  # The user's API tokens, stored at ~/.config/ondemand/tokens.json. The
+  # Dashboard token page uses this class too, from the Dashboard's process.
   class ApiToken
     TOKENS_DIR = File.expand_path('~/.config/ondemand')
     TOKENS_FILE = File.join(TOKENS_DIR, 'tokens.json')
@@ -38,7 +39,7 @@ module OodApi
       @token_digest = attrs[:token_digest] || attrs['token_digest']
       @created_at = attrs[:created_at] || attrs['created_at']
       @last_used_at = attrs[:last_used_at] || attrs['last_used_at']
-      @expires_at = attrs[:expires_at] || attrs['expires_at']
+      @expires_at = attrs.fetch(:expires_at) { attrs['expires_at'] }
     end
 
     # A token with no expiry recorded has not expired: either the site allows
@@ -121,7 +122,7 @@ module OodApi
           save_tokens(tokens)
         end
       rescue SystemCallError, IOError => e
-        warn "ood_api_audit op=token_touch status=error error=#{e.class}"
+        OodApi::Log.line "op=token_touch status=error error=#{e.class}"
         nil
       end
 
@@ -166,9 +167,9 @@ module OodApi
         false
       end
 
-      # Serialises read-modify-write across processes. The Dashboard plugin
-      # writes the same file, so the lock has to be visible to a separate
-      # application, not just to threads here.
+      # Serialises read-modify-write across processes. The Dashboard token
+      # page runs this same code in another process, so the lock has to be
+      # visible across processes, not just to threads here.
       #
       # Without this, a revoke racing the per-request touch is a lost update:
       # both load the full array, both write their own copy back, and the
@@ -195,13 +196,13 @@ module OodApi
         # authenticated request into a 500.
         return parsed if parsed.is_a?(Array) && parsed.all?(Hash)
 
-        warn 'ood_api_audit op=token_load status=corrupt error=unexpected_shape'
+        OodApi::Log.line 'op=token_load status=corrupt error=unexpected_shape'
         []
       rescue JSON::ParserError => e
         # Failing open to [] means "you have no tokens", which 401s the user
         # rather than erroring. Without this line there is no trace at all when
         # someone reports that their tokens vanished.
-        warn "ood_api_audit op=token_load status=corrupt error=#{e.class}"
+        OodApi::Log.line "op=token_load status=corrupt error=#{e.class}"
         []
       end
 

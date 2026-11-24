@@ -1,16 +1,19 @@
 # frozen_string_literal: true
 
+require_relative 'lib/site_config'
+
+# The app's env file, in its directory under /etc/ood/config/apps. Loaded
+# before the app so every setting read at load time sees it.
+OodApi::SiteConfig.load_app_env!
+
 require_relative 'app/api'
 require_relative 'app/mcp_server'
 
-# One line per PUN start, so an admin can see what their settings produced.
-OodApi::Capabilities.problems.each do |problem|
-  warn "ood_api_audit op=capabilities status=error error=\"#{problem}; falling back to read-only\""
-end
-warn "ood_api_audit op=capabilities status=ok #{OodApi::Capabilities.summary}"
+# Once per PUN start, so an admin can see what their settings produced.
+OodApi::Capabilities.announce
 
 file_access = Handlers::Files.access_mode
-warn "ood_api_audit op=file_access status=#{file_access == :unavailable ? 'error' : 'ok'} mode=#{file_access}"
+OodApi::Log.line "op=file_access status=#{file_access == :unavailable ? 'error' : 'ok'} mode=#{file_access}"
 
 app = Rack::Builder.new do
   map('/mcp') { run OodApi.mcp_rack_app }

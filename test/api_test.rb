@@ -21,7 +21,8 @@ class ApiTest < Minitest::Test
     get '/health'
 
     assert last_response.ok?
-    assert_equal({ 'status' => 'ok' }, json_response)
+    assert_equal 'ok', json_response['status']
+    assert_empty json_response['problems']
   end
 
   def test_health_endpoint_does_not_require_auth
@@ -344,6 +345,23 @@ class ApiTest < Minitest::Test
 
     get '/api/v1/jobs', { cluster: 'cluster1' }, auth_header(token)
     assert_equal 200, last_response.status, 'one bad job must not break the whole listing'
+  end
+
+  # The scheduler's own error text can hold such bytes too. The response
+  # must still be the app's JSON, not an exception out of the Rack app.
+  def test_invalid_utf8_in_a_scheduler_error_still_gets_a_json_error
+    token = create_test_token
+    bad = (+"sacctmgr: \xFF\xFE broke").force_encoding('UTF-8')
+    mock_adapter = mock('adapter')
+    mock_adapter.stubs(:info_where_owner).raises(OodCore::JobAdapterError, bad)
+    mock_adapter.stubs(:info).raises(OodCore::JobAdapterError, bad)
+    @mock_clusters.first.stubs(:job_adapter).returns(mock_adapter)
+
+    ['/api/v1/jobs', '/api/v1/jobs/1'].each do |path|
+      get path, { cluster: 'cluster1' }, auth_header(token)
+      assert_operator last_response.status, :>=, 400
+      assert_match(/broke/, json_response['message'])
+    end
   end
 
   def test_get_job_returns_details

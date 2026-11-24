@@ -25,6 +25,10 @@ require 'mocha/minitest'
 # Never read a real site's settings: this suite may run on an OOD host.
 ENV['OOD_CONFIG_D_DIRECTORY'] = File.join(Dir.tmpdir, 'ood-api-no-such-config')
 ENV['OOD_DASHBOARD_ENV_FILE'] = File.join(Dir.tmpdir, 'ood-api-no-such-env')
+ENV['OOD_API_CONFIG_ROOT'] = File.join(Dir.tmpdir, 'ood-api-no-such-app-config')
+# The suite exercises the app as it runs in a PUN, where Passenger sets this.
+# The development server's stricter Host checks have their own tests.
+ENV['PASSENGER_BASE_URI'] = '/pun/sys/ood-api'
 
 # The suite exercises every tool; the read-only default has its own tests.
 ENV['OOD_API_CAPABILITIES'] = 'all'
@@ -86,9 +90,11 @@ module TestHelpers
     token
   end
 
-  def mock_cluster(id: 'cluster1', adapter: 'slurm', title: 'Cluster One', login_host: 'login1.example.edu')
+  def mock_cluster(id: 'cluster1', adapter: 'slurm', title: 'Cluster One', login_host: 'login1.example.edu',
+                   hidden: nil)
     metadata = mock('metadata')
     metadata.stubs(:title).returns(title)
+    metadata.stubs(:hidden).returns(hidden)
 
     login = mock('login')
     login.stubs(:host).returns(login_host)

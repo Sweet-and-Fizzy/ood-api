@@ -12,8 +12,8 @@ module Handlers
   # File operations confined to the allowed directories and kept away from the
   # denied paths inside them.
   module Files
-    MAX_FILE_READ  = ENV.fetch('OOD_API_MAX_FILE_READ', 10 * 1024 * 1024).to_i
-    MAX_FILE_WRITE = ENV.fetch('OOD_API_MAX_FILE_WRITE', 50 * 1024 * 1024).to_i
+    MAX_FILE_READ  = OodApi::SiteConfig.limit('OOD_API_MAX_FILE_READ', 10 * 1024 * 1024)
+    MAX_FILE_WRITE = OodApi::SiteConfig.limit('OOD_API_MAX_FILE_WRITE', 50 * 1024 * 1024)
 
     # Every way the filesystem says "no room", mapped to 507 rather than a bare
     # 500. EDQUOT is the one that actually bites on HPC sites — a per-user home
@@ -36,6 +36,21 @@ module Handlers
     BAD_PATH_ERRORS = [:ENOTDIR, :ELOOP, :ENAMETOOLONG, :EISDIR, :EINVAL, :EEXIST].filter_map do |name|
       Errno.const_get(name) if Errno.const_defined?(name)
     end.freeze
+
+    # What a client is told for each thing the filesystem can say. ENXIO is a
+    # FIFO with no reader; with one, the open succeeds and the type check on
+    # the open file refuses it.
+    FILESYSTEM_ERRORS = {
+      [Errno::EACCES]                => [ForbiddenError, 'Permission denied'],
+      [Errno::EPERM]                 => [ForbiddenError, 'Operation not permitted'],
+      [Errno::EROFS]                 => [ForbiddenError, 'Read-only file system'],
+      [Errno::ENXIO]                 => [ValidationError, 'Not a regular file'],
+      [Errno::ENOTEMPTY]             => [ValidationError, 'Directory not empty'],
+      [Errno::EEXIST]                => [ValidationError, 'Path already exists'],
+      [Errno::EBUSY, Errno::ETXTBSY] => [ValidationError, 'File or directory is in use'],
+      [Errno::EIO, Errno::ESTALE]    => [FilesystemError, 'The filesystem reported an error'],
+      [Errno::EMFILE, Errno::ENFILE] => [ValidationError, 'Too many files are open; try a smaller directory tree']
+    }.freeze
 
     def self.out_of_space_message(err)
       case err
@@ -67,14 +82,30 @@ module Handlers
             'and file operations cannot be done safely without it'
     end
 
+    # One thing in a listing: where it is, and what it is. The stat is of the
+    # entry itself, so a symlink is reported as a link. It carries the path
+    # written in the link, which is the link's own content, and nothing about
+    # the thing at that path, which may be outside the allowed directories.
+    Entry = Struct.new(:path, :stat, :link_target) do
+      def basename = path.basename
+      def directory? = stat.directory?
+      def symlink? = stat.symlink?
+      def to_s = path.to_s
+    end
+
+    # @return [Array<Entry>, Entry] the directory's entries, or the file itself
     def self.list(path:)
       translating_errors do
         p = checked_path(path)
         raise Errno::ENOENT unless p.exist?
-        next p unless p.directory?
+        next Entry.new(p, backend.stat(p)) unless p.directory?
 
-        children = backend.children(p).map { |name| p + name }
-        children.select(&:readable?).sort_by { |c| [c.directory? ? 0 : 1, c.basename.to_s.downcase] }
+        # Joined as strings: a name need not be valid UTF-8, and Pathname#+
+        # raises on one that is not.
+        entries = backend.children(p).map do |name, stat, target|
+          Entry.new(Pathname.new(File.join(p.to_s, name)), stat, target)
+        end
+        entries.sort_by { |entry| [entry.directory? ? 0 : 1, entry.basename.to_s.scrub.downcase] }
       end
     end
 
@@ -95,29 +126,30 @@ module Handlers
       # /\A\d+\z/ blocks that spelling, so MCP was the only way in.
       raise ValidationError, 'max_size must be greater than zero' if max_size && !positive_size?(max_size)
 
-      limit = max_size ? [max_size, MAX_FILE_READ].min : MAX_FILE_READ
+      limit = max_size ? [Integer(max_size), MAX_FILE_READ].min : MAX_FILE_READ
       translating_errors('File not found') do
-        backend.read(checked_path(path), limit: limit, refuse_larger: !max_size)
+        backend.read(inside_root(checked_path(path)), limit: limit, refuse_larger: !max_size)
       end
     end
 
     def self.write(path:, content:, append: false)
+      raise ValidationError, 'content must be a string' unless content.is_a?(String)
       raise PayloadTooLargeError, "Content too large (max #{MAX_FILE_WRITE} bytes)" if content.bytesize > MAX_FILE_WRITE
 
       translating_errors do
-        checked_path(path).tap { |p| backend.write(p, content, append: append) }
+        inside_root(checked_path(path)).tap { |p| backend.write(p, content, append: append) }
       end
     end
 
     def self.mkdir(path:)
       translating_errors do
-        checked_path(path).tap { |p| backend.mkdir(p) }
+        inside_root(checked_path(path)).tap { |p| backend.mkdir(p) }
       end
     end
 
     def self.touch(path:)
       translating_errors do
-        checked_path(path).tap { |p| backend.touch(p) }
+        inside_root(checked_path(path)).tap { |p| backend.touch(p) }
       end
     end
 
@@ -128,8 +160,28 @@ module Handlers
         p.symlink? ? validate_link_location!(p) : validate_path!(p)
         raise Errno::ENOENT unless p.exist? || p.symlink?
 
-        backend.delete(p, recursive: recursive)
+        # A link is removed as a link, even one that points at an allowed
+        # top-level directory.
+        inside_root(p) unless p.symlink?
+        remove(p, recursive)
         { path: p.to_s, deleted: true }
+      end
+    end
+
+    # A recursive delete that fails part-way has already removed something,
+    # and the caller needs to know that the tree is no longer whole.
+    #
+    # Only a failure of the filesystem during the walk counts. A refusal by
+    # the path rules comes before anything is touched.
+    def self.remove(path, recursive)
+      backend.delete(path, recursive: recursive)
+    rescue SystemCallError => e
+      raise unless recursive
+
+      begin
+        translating_errors { raise e }
+      rescue Error => err
+        raise err.class, "#{err.message}. Part of the directory may already have been removed"
       end
     end
 
@@ -140,6 +192,16 @@ module Handlers
       normalized = normalize_path(path)
       validate_path!(normalized)
       normalized
+    end
+
+    # An allowed directory can be listed but not read, written, replaced or
+    # removed as a whole. Said plainly here: the operations work from the
+    # parent directory, which for one of these is outside what is allowed,
+    # and "not in allowed directories" would be the wrong answer.
+    def self.inside_root(path)
+      return path unless path.directory? && allowed_path_roots.include?(path.realpath)
+
+      raise ValidationError, 'This is one of the allowed top-level directories; work on something inside it'
     end
 
     # How the operations are carried out on this host. See access_mode.
@@ -155,20 +217,16 @@ module Handlers
       yield
     rescue Errno::ENOENT
       raise NotFoundError, not_found
-    rescue Errno::EACCES
-      raise ForbiddenError, 'Permission denied'
-    rescue Errno::ENXIO
-      # A FIFO with no reader. With one, the open succeeds and the type check
-      # on the open file refuses it.
-      raise ValidationError, 'Not a regular file'
-    rescue Errno::ENOTEMPTY
-      raise ValidationError, 'Directory not empty'
-    rescue Errno::EEXIST
-      raise ValidationError, 'Path already exists'
     rescue *OUT_OF_SPACE_ERRORS => e
       raise StorageError, out_of_space_message(e)
-    rescue *BAD_PATH_ERRORS => e
-      raise ValidationError, e.message.sub(/ @ .*/, '')
+    rescue SystemCallError => e
+      kind, message = FILESYSTEM_ERRORS.find { |errors, _| errors.any? { |error| e.is_a?(error) } }&.last
+      raise kind, message if kind
+      # Ruby appends the call and the path, which here is an internal
+      # descriptor path and not the one the caller gave.
+      raise ValidationError, e.message.sub(/ (@|-) .*/m, '') if BAD_PATH_ERRORS.any? { |error| e.is_a?(error) }
+
+      raise
     end
 
     # Removing a symlink unlinks the link and never touches its target, so the
@@ -311,7 +369,12 @@ module Handlers
       return if path.directory?
 
       target = safe_lstat(path)
-      return if target.nil?
+      deny_inode!(target) if target
+    end
+
+    # The same check on a stat, which for an open file cannot be of anything
+    # but the file that will be read or written.
+    def self.deny_inode!(target)
       return if target.nlink < 2 # not hardlinked; the name checks already covered it
 
       denied_inodes.each do |(dev, ino), label|
@@ -352,19 +415,29 @@ module Handlers
     # Refuse a recursive delete whose tree contains a denied path. Compares
     # prefixes rather than walking the tree: the denied set is small and fixed,
     # and walking a large home directory on every delete would be slow.
+    #
+    # A git repository inside the tree is removed with it. Its internals are
+    # denied to writes because a hook or a config line is code that runs
+    # later; removing them leaves nothing behind to run.
     def self.deny_recursive!(dir)
       home = Pathname.new(Dir.home)
       home = home.realpath if home.exist?
       root = dir.exist? ? dir.realpath : dir
 
-      (DENIED_DIRS + DENIED_EXACT).each do |rel|
-        denied = home + rel
-        next unless denied.exist?
-        next unless path_under?(denied.realpath, root) || denied.realpath == root
+      denied_in_home(home).each do |rel, denied|
+        next unless path_under?(denied, root)
 
         raise ForbiddenError,
               "Access denied: recursive delete would remove #{rel}, which is not accessible through this API"
       end
+    end
+
+    # @return [Array<Array(String, Pathname)>] each denied path that exists
+    #   in the home directory, as written on the deny-list and as resolved
+    def self.denied_in_home(home)
+      named = (DENIED_DIRS + DENIED_EXACT).map { |rel| home + rel }
+      matched = DENIED_GLOBS.flat_map { |glob| Pathname.glob(home.join(glob).to_s) }
+      (named + matched).select(&:exist?).map { |path| [path.relative_path_from(home).to_s, path.realpath] }
     end
 
     # Paths this API refuses to touch even though they sit inside the user's
@@ -399,6 +472,8 @@ module Handlers
       '.zlogout', '.logout', '.xsession', '.xinitrc', '.xprofile',
       # Run by every R session.
       '.Rprofile',
+      # Read by R before .Rprofile, and can name another file to run in its place.
+      '.Renviron',
       # Credentials in plaintext.
       '.git-credentials', '.pgpass', '.my.cnf'
     ].freeze
@@ -428,23 +503,46 @@ module Handlers
 
     # Denied wherever they appear under $HOME, not at one fixed location.
     DENIED_PATTERNS = [
-      # Imported by every Python process the user starts.
-      %r{\A\.local/lib/python[^/]+/site-packages/(user|site)customize\.py\z}
+      # Imported by every Python process the user starts: as a module, a
+      # compiled module, or a package directory of that name.
+      %r{\A\.local/lib/python[^/]+/site-packages/(user|site)customize(\.[^/]*)?(/.*)?\z},
+      # A .pth file there is executed line by line at interpreter start.
+      %r{\A\.local/lib/python[^/]+/site-packages/[^/]+\.pth\z}
+    ].freeze
+
+    # The same files as DENIED_PATTERNS, in the form a directory search takes.
+    DENIED_GLOBS = [
+      '.local/lib/python*/site-packages/{user,site}customize{,.*}',
+      '.local/lib/python*/site-packages/*.pth'
     ].freeze
 
     # A denied name can itself be a symlink: `~/.bashrc -> ~/dots/bashrc` is a
     # common way to keep dotfiles in a repository. The name is refused, but the
     # file it points at is the one the shell reads, so that is refused too.
     def self.deny_aliases!(resolved)
-      home = Pathname.new(Dir.home)
-      (DENIED_EXACT + DENIED_DIRS).each do |rel|
-        denied = home + rel
-        next unless denied.symlink?
-
-        target = link_destination(denied)
+      denied_alias_targets.each do |rel, target|
         next unless resolved == target || path_under?(resolved, target)
 
         raise ForbiddenError, "Access denied: #{rel} is not accessible through this API"
+      end
+    end
+
+    # Where each denied name really is, for the ones that are not where their
+    # name says: the name is a symlink, or a directory above it is. With
+    # `~/.config -> /scratch/me/config`, the token store and
+    # `systemd/user` live under /scratch, and the rules keyed to $HOME never
+    # see a request for them there.
+    #
+    # @return [Hash{String => Pathname}] denied relative name => real location
+    def self.denied_alias_targets
+      home = Pathname.new(Dir.home)
+      real_home = home.exist? ? home.realpath : home
+      (DENIED_EXACT + DENIED_DIRS).each_with_object({}) do |rel, found|
+        denied = home + rel
+        target = denied.symlink? ? link_destination(denied) : resolved_destination(denied)
+        found[rel] = target unless target == real_home + rel
+      rescue SystemCallError
+        next
       end
     end
 
@@ -459,9 +557,41 @@ module Handlers
     # command in the repository, and a `.git` file can point git at a
     # directory of them anywhere.
     def self.deny_git_internals!(*paths)
-      return unless paths.any? { |path| path.each_filename.any? { |part| part.casecmp?('.git') } }
+      return unless paths.any? { |path| git_internal?(path) }
 
       raise ForbiddenError, 'Access denied: git internals are not accessible through this API'
+    end
+
+    GIT_DIR_MARKERS = ['HEAD', 'objects', 'refs', 'commondir'].freeze
+
+    # A `.git` component is the usual sign, but git treats any directory
+    # holding HEAD, objects and refs as a repository, wherever it is and
+    # whatever it is called, and accepts a `commondir` file naming another
+    # directory in place of objects and refs. So a path inside such a
+    # directory counts, and so does the entry that would complete one.
+    def self.git_internal?(path)
+      return true if path.each_filename.any? { |part| part.casecmp?('.git') }
+
+      name = path.basename.to_s
+      return true if GIT_DIR_MARKERS.include?(name) && git_dir?(git_markers(path.parent) | [name])
+
+      path.parent.ascend.any? { |ancestor| git_dir?(git_markers(ancestor)) }
+    end
+
+    # @param markers [Array<String>] the marker names present in a directory
+    def self.git_dir?(markers)
+      markers.include?('HEAD') && (markers.include?('commondir') || (['objects', 'refs'] - markers).empty?)
+    end
+
+    # Not in a directory anyone may write to. Counting those would let one
+    # user put three files in /tmp and have this app refuse every path under
+    # it for everybody. A repository kept in such a directory is not one
+    # this rule can protect in any case.
+    def self.git_markers(directory)
+      stat = safe_stat(directory)
+      return [] if stat.nil? || stat.world_writable?
+
+      GIT_DIR_MARKERS.select { |marker| File.exist?(File.join(directory.to_s, marker)) }
     end
 
     def self.deny_sensitive!(requested, resolved)
@@ -474,10 +604,9 @@ module Handlers
       raw_home = Pathname.new(Dir.home)
       homes = raw_home.exist? ? [raw_home, raw_home.realpath].uniq : [raw_home]
 
-      [requested, resolved].uniq.product(homes).each do |candidate, home|
-        rel = relative_to_home(candidate, home)
-        next unless rel
-
+      relatives = [requested, resolved].uniq.product(homes).map { |candidate, home| relative_to_home(candidate, home) }
+      relatives << relative_to_home_by_identity(resolved, raw_home)
+      relatives.compact.uniq.each do |rel|
         # Case-folded, because macOS and Windows filesystems are usually
         # case-insensitive: ~/.SSH/authorized_keys IS ~/.ssh/authorized_keys
         # there, so an exact-case comparison refuses one spelling and permits
@@ -498,6 +627,29 @@ module Handlers
       DENIED_DIRS.any? { |dir| folded == dir.downcase || folded.start_with?("#{dir.downcase}/") } ||
         DENIED_EXACT.any? { |name| folded == name.downcase } ||
         DENIED_PATTERNS.any? { |pattern| pattern.match?(folded) }
+    end
+
+    # The same question answered by what the directories are rather than by
+    # how they are spelled. A home that is also mounted at a second path is
+    # the same directory under another name, and the string comparison never
+    # recognises it there.
+    def self.relative_to_home_by_identity(path, home)
+      home_stat = home.stat
+      path.ascend do |ancestor|
+        stat = safe_stat(ancestor)
+        next unless stat && stat.dev == home_stat.dev && stat.ino == home_stat.ino
+
+        return path.relative_path_from(ancestor).to_s.sub(/\A\.\z/, '')
+      end
+      nil
+    rescue SystemCallError
+      nil
+    end
+
+    def self.safe_stat(pathname)
+      pathname.stat
+    rescue SystemCallError
+      nil
     end
 
     def self.relative_to_home(path, home)

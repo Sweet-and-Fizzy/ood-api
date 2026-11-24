@@ -3,6 +3,7 @@
 require 'timeout'
 require_relative '../test_helper'
 require_relative '../../app/handlers/files'
+require_relative '../../app/mcp_tools/files'
 
 # Path-swap races. A directory another user controls is re-pointed at a
 # protected location between the policy check and the file operation. These
@@ -191,13 +192,188 @@ class PinnedFilesTest < Minitest::Test
     end
   end
 
+  # A recursive delete that walked the tree by name could be steered: whoever
+  # owns a subdirectory swaps it for a symlink mid-walk, and the contents of
+  # the link's target are deleted instead.
+  def test_recursive_delete_never_follows_a_swapped_subdirectory
+    precious = File.join(@home, 'precious')
+    FileUtils.mkdir_p(precious)
+    20.times { |i| File.write(File.join(precious, "keep#{i}"), 'x') }
+    cache = File.join(@shared, 'cache')
+    FileUtils.mkdir_p(cache)
+    flipper = fork_subdir_flipper(cache, precious)
+
+    Dir.stub(:home, @home) do
+      deadline = Time.now + 6
+      attempt do
+        files.delete(path: cache, recursive: true)
+      end while Time.now < deadline && Dir.children(precious).size == 20
+    end
+
+    assert_equal 20, Dir.children(precious).size, 'files outside the deleted tree were removed'
+  ensure
+    if flipper
+      Process.kill('KILL', flipper)
+      Process.wait(flipper)
+    end
+  end
+
+  # Keeps `base/sub` alternating between a real directory and a symlink to
+  # `target`, by rename so there is never a moment when it is missing, and
+  # puts the directory back whenever the delete under test removes it.
+  def fork_subdir_flipper(base, target)
+    fork do
+      real = File.join(base, 'sub.real')
+      link = File.join(base, 'sub.lnk')
+      sub = File.join(base, 'sub')
+      loop do
+        restore_flip_pieces(real, link, sub, target)
+        50.times do
+          [[real, sub], [sub, real], [link, sub], [sub, link]].each do |from, dest|
+            rename_quietly(from, dest)
+          end
+        end
+      end
+    end
+  end
+
+  def restore_flip_pieces(real, link, sub, target)
+    FileUtils.mkdir_p(real) unless File.directory?(sub) && !File.symlink?(sub)
+    File.write(File.join(real, 'f'), 'x') if File.directory?(real)
+    File.symlink(target, link) unless File.symlink?(link) || File.symlink?(sub)
+  rescue SystemCallError
+    nil
+  end
+
+  def rename_quietly(from, dest)
+    File.rename(from, dest)
+  rescue SystemCallError
+    nil
+  end
+
+  # Parents used to be created before the final check, so a refused write
+  # could still leave ~/.ssh behind.
+  def test_a_refused_write_creates_no_parent_directories
+    FileUtils.rm_rf(@ssh)
+
+    with_swap(@home) do
+      assert_raises(Handlers::ForbiddenError) do
+        files.write(path: File.join(@dir, '.ssh', 'authorized_keys'), content: 'k')
+      end
+    end
+
+    refute File.exist?(@ssh), '~/.ssh was created by a write that was refused'
+  end
+
+  def test_touch_on_a_directory_does_not_follow_a_swapped_symlink
+    key = File.join(@ssh, 'id_rsa')
+    old = Time.now - 86_400
+    File.utime(old, old, key)
+    sub = File.join(@dir, 'sub')
+    FileUtils.mkdir_p(sub)
+
+    Dir.stub(:home, @home) do
+      original = Handlers::PinnedDir.instance_method(:lstat)
+      Handlers::PinnedDir.define_method(:lstat) do |name|
+        result = original.bind_call(self, name)
+        if name == 'sub' && File.directory?(sub) && !File.symlink?(sub)
+          Dir.rmdir(sub)
+          File.symlink(key, sub)
+        end
+        result
+      end
+      begin
+        attempt { files.touch(path: sub) }
+      ensure
+        Handlers::PinnedDir.define_method(:lstat, original)
+      end
+    end
+
+    assert_in_delta old, File.mtime(key), 2, 'the swapped-in target had its times changed'
+  end
+
+  # The kernel will not follow another user's symlink in a sticky directory.
+  # Following it by hand would sidestep that.
+  def test_another_users_symlink_is_not_followed
+    Dir.stub(:home, @home) do
+      target = File.join(@home, 'mine.txt')
+      File.write(target, 'mine')
+      link = File.join(@shared, 'theirs')
+      File.symlink(target, link)
+      Process.stubs(:euid).returns(Process.uid + 1)
+
+      assert_raises(Handlers::ForbiddenError) { files.write(path: link, content: 'overwritten') }
+      assert_equal 'mine', File.read(target)
+    end
+  end
+
+  # Linux file names are bytes. One that is not UTF-8 must not hide the rest.
+  def test_a_name_that_is_not_utf8_does_not_break_the_listing
+    Dir.stub(:home, @home) do
+      File.write(File.join(@dir, "bad\xFFname".b), 'x')
+      File.write(File.join(@dir, 'good'), 'x')
+
+      names = files.list(path: @dir).map { |entry| entry.basename.to_s.b }
+      text = OodApi::Tools::ListFilesTool.run(path: @dir).content.first[:text]
+      assert_includes text, 'good'
+
+      assert_equal ["bad\xFFname".b, 'good'.b], names.sort
+    end
+  end
+
+  # The check is made on the open file, so it holds whatever name led to it.
+  def test_a_hardlink_to_a_denied_file_is_refused_on_the_open_file
+    Dir.stub(:home, @home) do
+      link = File.join(@home, 'innocent.txt')
+      File.link(File.join(@ssh, 'id_rsa'), link)
+      original = files.method(:deny_by_inode!)
+      files.define_singleton_method(:deny_by_inode!) { |_path| nil }
+      begin
+        assert_raises(Handlers::ForbiddenError) { files.read(path: link) }
+        assert_raises(Handlers::ForbiddenError) { files.write(path: link, content: 'overwritten') }
+        assert_raises(Handlers::ForbiddenError) { files.touch(path: link) }
+      ensure
+        files.define_singleton_method(:deny_by_inode!, original)
+      end
+      assert_equal 'PRIVATE KEY', File.read(File.join(@ssh, 'id_rsa'))
+    end
+  end
+
+  # An empty directory needs no reading to be removed.
+  def test_recursive_delete_removes_an_empty_directory_it_cannot_read
+    skip 'root reads everything' if Process.uid.zero?
+    Dir.stub(:home, @home) do
+      tree = File.join(@home, 'tree')
+      FileUtils.mkdir_p(File.join(tree, 'locked'))
+      File.chmod(0o000, File.join(tree, 'locked'))
+
+      files.delete(path: tree, recursive: true)
+
+      refute File.exist?(tree)
+    end
+  end
+
+  def test_recursive_delete_of_an_unreadable_directory_with_contents_is_a_permission_error
+    skip 'root reads everything' if Process.uid.zero?
+    Dir.stub(:home, @home) do
+      tree = File.join(@home, 'tree2')
+      FileUtils.mkdir_p(File.join(tree, 'locked'))
+      File.write(File.join(tree, 'locked', 'f'), 'x')
+      File.chmod(0o000, File.join(tree, 'locked'))
+
+      assert_raises(Handlers::ForbiddenError) { files.delete(path: tree, recursive: true) }
+    ensure
+      File.chmod(0o700, File.join(tree, 'locked'))
+    end
+  end
+
   def test_out_of_space_is_a_storage_error
     Dir.stub(:home, @home) do
       Dir.stubs(:mkdir).raises(Errno::EDQUOT)
       err = assert_raises(Handlers::StorageError) { files.mkdir(path: File.join(@home, 'd')) }
       assert_match(/quota/i, err.message)
 
-      File.stubs(:utime).raises(Errno::ENOSPC)
+      File.stubs(:open).raises(Errno::ENOSPC)
       assert_raises(Handlers::StorageError) { files.touch(path: File.join(@home, 'f.txt')) }
     end
   end

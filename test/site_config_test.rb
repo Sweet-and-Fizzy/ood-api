@@ -46,6 +46,14 @@ class SiteConfigTest < Minitest::Test
     assert_equal ['/from-env'], OodApi::SiteConfig.allowlist_paths.map(&:to_s)
   end
 
+  def test_an_empty_variable_does_not_hide_the_allowlist
+    File.write(File.join(@dir, 'files.yml'), "allowlist_path: /from-file\n")
+    ENV['OOD_ALLOWLIST_PATH'] = ''
+    ENV['WHITELIST_PATH'] = ' '
+
+    assert_equal ['/from-file'], OodApi::SiteConfig.allowlist_paths.map(&:to_s)
+  end
+
   # Where sites set it today: only the Dashboard process loads this file.
   def test_allowlist_from_the_dashboard_env_file
     File.write(File.join(@dir, 'dashboard.env'),
@@ -96,9 +104,9 @@ class SiteConfigTest < Minitest::Test
   end
 
   def test_nested_settings_merge_across_files
-    File.write(File.join(@dir, 'a.yml'), "ood_api:\n  capabilities: [jobs]\n")
-    File.write(File.join(@dir, 'b.yml'), "ood_api:\n  mcp: false\n")
+    File.write(File.join(@dir, 'a.yml'), "support_ticket:\n  email: a@example.edu\n")
+    File.write(File.join(@dir, 'b.yml'), "support_ticket:\n  subject: help\n")
 
-    assert_equal({ capabilities: ['jobs'], mcp: false }, OodApi::SiteConfig.config[:ood_api])
+    assert_equal({ email: 'a@example.edu', subject: 'help' }, OodApi::SiteConfig.config[:support_ticket])
   end
 end

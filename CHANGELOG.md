@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Application tokens expire. The token page offers 30, 90 or 365 days (90 by
   default) and shows each token's expiry. `token_max_days` sets the site
   maximum and `token_allow_never` permits tokens with no expiry; both go
-  under `ood_api` in `ondemand.d` or in `OOD_API_TOKEN_MAX_DAYS` and
+  in the app's `config.yml` or in `OOD_API_TOKEN_MAX_DAYS` and
   `OOD_API_TOKEN_ALLOW_NEVER`. An expired token gets a 401 and an audit line
   naming it. Existing tokens are given the site maximum, counted from their
   first use after the upgrade. The API applies the maximum as well as the
@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   credential stores of common cloud, cluster and registry clients. A client
   that reads or writes any of these through the API will now get a 403.
 - Application tokens are stored as SHA-256 digests. Existing tokens keep
-  working and are converted the first time each is used. A `tokens.json`
+  working and are all converted the first time any one of them is used. A `tokens.json`
   written by hand should now carry `token_digest` in place of `token`.
 - State-changing REST requests and all MCP requests are refused when the
   browser reports another site as their source (`Origin` or `Sec-Fetch-Site`).
@@ -63,9 +63,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Anything inside a `.git` directory, and any file named `.git`, is refused in
   every allowed location.
 - If a denied name such as `~/.bashrc` is a symlink, its target is refused too.
-- Site settings in `ondemand.d` are read the way the Dashboard reads them, so
-  one unreadable file no longer discards the rest, including the file
-  allowlist.
+- The Dashboard's settings in `ondemand.d` that this app follows are read
+  the way the Dashboard reads them: through ERB, with YAML anchors, merged
+  file by file. A file there that sets the allowlist or a Dashboard switch
+  and cannot be read turns the app off; see Changed.
 - Job working directory, output and error paths are passed to the scheduler
   in the normalised form that was checked.
 - Multipart request bodies are refused before they are parsed. Rack wrote
@@ -76,17 +77,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `SECURITY.md` now states that job submission is code execution as the user
   and is not covered by the file controls, and corrects the description of
   application tokens and `Host` validation.
+- Sinatra and `rack-protection` are updated to 4.2.2, which fixes three
+  advisories in `rack-protection` (GHSA-pf75-2v58-7mxg, GHSA-r29j-38x9-qr26,
+  GHSA-vvhm-j6m8-64cw).
 
 ### Changed
 
 - **A fresh install is now read-only.** Job submission and file writes are off
-  until the site enables them. To keep the previous behaviour, add
-  `ood_api: { capabilities: all }` to a file in `/etc/ood/config/ondemand.d`,
-  or set `OOD_API_CAPABILITIES=all` on the PUN. A tool that is off is absent
+  until the site enables them. To keep the previous behaviour, put
+  `capabilities: all` in `/etc/ood/config/apps/ood-api/config.yml`, or set
+  `OOD_API_CAPABILITIES=all` on the PUN. A tool that is off is absent
   from the MCP tool list and its REST route returns 403. Individual tools can
   be removed with `disable`, and `rest: false` or `mcp: false` switches a
   whole surface off. See
   [what to enable](docs/installation.md#what-to-enable).
+- **Settings the app cannot understand turn it off.** An unknown group, tool
+  or key, a switch that is neither true nor false, or a settings file that
+  is not root-owned or does not parse makes both REST and
+  MCP answer 503, where a typo could previously leave on the thing it was
+  meant to remove. `/health` and the PUN log give the reason.
+- The same applies to a misspelt `OOD_API_` variable, an env file that
+  cannot be read, a setting written twice, and a settings file holding more
+  than one YAML document.
+- **The app's settings live in its own directory**,
+  `/etc/ood/config/apps/ood-api/`: `config.yml` for what is enabled and the
+  token policy, `env` for environment variables. That is where Open OnDemand
+  keeps settings for its other apps. `OOD_API_CONFIG_ROOT` moves it.
+  `/health` names the settings file and the env file being read and whether
+  each was found. Settings in a misnamed file, a key with no value, and
+  settings or an env file left under `apps/ood-api` when the app is installed
+  under another name turn the app off. The file is plain YAML and nothing in it is evaluated.
+- Changes to `config.yml` reach running PUNs within a couple of seconds, so
+  a site can switch the app off without restarting them.
+- `/health` reports the settings in force (`status`, `rest`, `mcp`, `tools`,
+  `app_tokens`, `file_access`, `problems`) where it returned only
+  `{"status":"ok"}`. It answers 503 when the settings are not understood.
+- `app_tokens` can be set in `config.yml` as well as in
+  `OOD_API_APP_TOKENS`, and that variable now accepts `1`, `yes` and `on` as
+  well as `true`; a site that had set one of those and was not requiring
+  tokens will be after the upgrade. A setting given as an empty environment
+  variable counts as unset, and a size limit left empty or set to zero means
+  the default.
+- The Dashboard's own restrictions apply here. With `download_enabled: false`
+  `read_file` is off, with `upload_enabled: false` `write_file` is off, with
+  no Files app installed there are no file tools, and a cluster marked
+  `hidden` is not listed and cannot be used, as in the Dashboard's own job
+  tools.
+- Over MCP, a tool the site switches off stops working at once and leaves
+  the tool list, without a PUN restart. A call to a tool that is off is
+  refused and recorded in the audit log.
+- A settings or env file must be owned by root and not writable by
+  everyone. `/health` lists the
+  settings held by environment variables under `from_environment`.
+- Cluster definitions are read again when they change, so hiding or removing
+  a cluster takes effect without a PUN restart.
+- The development server (`bin/dev`) answers only to a loopback `Host`, on
+  both REST and MCP, whatever environment it is started in. It is unauthenticated, and without the check a page on
+  another site could reach it through the developer's browser by pointing
+  its own hostname at 127.0.0.1. In a PUN, behind Apache, nothing changes.
+- The cross-site check counts only the last value of `X-Forwarded-Host`,
+  which is the one the nearest proxy wrote. A site whose front proxy
+  rewrites the hostname lists its public origin in `OOD_API_ALLOWED_ORIGINS`.
+- A token whose stored expiry is not a time, such as `false` in a
+  hand-edited file, is given the site maximum.
+- A directory listing describes each entry itself. A symlink has
+  `"symlink": true` and `"directory": false` and carries the link's own size
+  and dates, where the listing used to describe the link's target, including
+  targets outside the allowed directories. Entries the user cannot read are
+  now listed.
+- A symlink in a listing carries `target`, the path written in the link.
+- An I/O error or a stale file handle is reported as 503, and a directory
+  tree too deep to remove in one request as 400. A recursive delete that
+  fails part-way says the tree may be partly gone.
+- Group and tool names in the settings are matched whatever their case.
+  `token_max_days` that is not a number is a settings problem.
+- Reading, writing, touching or deleting one of the allowed top-level
+  directories itself returns 400 with a message that says so. Listing it
+  still works.
+- `touch` through a symlink follows the user's own links, as read and write
+  do.
+- Audit lines begin `ood_api_audit ts=<time> op=<operation>` whatever else
+  they carry; the token id used to come first when application tokens were
+  on.
+- An address the app does not serve returns `not_found`, not `bad_request`.
+- The responses to a write, a touch and a directory creation describe the
+  path itself, so through a symlink they describe the link.
+- A symlink that belongs to another user is not followed when it is the
+  last part of the path.
+- Hold and release look the job up afterwards to report its real status,
+  and report a failure of that lookup.
+- A tool that is switched off is refused after the content-type, size and
+  origin checks, so a malformed request to it gets those errors first.
+- When `/mcp` is switched off or the settings are not understood it answers
+  plain JSON with 404 or 503, not a JSON-RPC error.
+- `max_size` given as a string of digits is accepted on a file read, and
+  `content` that is not a string is a 400.
+- The Dashboard token page reads the token settings from the app's own
+  `config.yml` and `env`.
+- An empty `workdir` on job submission means the default directory.
+- Filesystem errors that used to surface as a 500 are reported: a read-only
+  filesystem and "operation not permitted" as 403, a busy file as 400, and
+  I/O errors and stale handles as 503. Error messages no longer
+  include internal paths.
 - `ostruct` is now a declared dependency. `ood_core` requires it, and Ruby
   4.0 no longer ships it by default, so the app did not load there.
 - RuboCop runs with Open OnDemand's own settings, including its method

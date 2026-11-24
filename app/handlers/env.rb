@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'errors'
+require_relative '../../lib/log'
 
 module Handlers
   # Serves an allowlisted slice of the process environment, with
@@ -140,8 +141,9 @@ module Handlers
     # (CWE-183) — the deny pass is a backstop and is not meant to be the thing
     # standing between a credential and an LLM. Names only, never values.
     def self.warn_denied(names)
-      warn "[ood-api] env allowlist permits credential-shaped #{names.sort.join(', ')}; " \
-           'refused by the deny pass. Narrow OOD_API_ENV_ALLOWLIST so the allowlist excludes it.'
+      OodApi::Log.line "op=env_allowlist status=warning names=#{names.sort.join(',')} " \
+                       'error="the allowlist permits names that look like credentials; they are refused, ' \
+                       'but narrow OOD_API_ENV_ALLOWLIST so it does not include them"'
     rescue StandardError
       nil # never let diagnostics break a read
     end

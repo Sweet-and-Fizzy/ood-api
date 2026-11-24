@@ -38,15 +38,17 @@ module OodApi
       !fetch_site.empty? && !SAME_SITE_VALUES.include?(fetch_site)
     end
 
-    # Apache may sit behind another proxy that rewrites Host, so the forwarded
-    # host counts too. A cross-site page cannot set either header.
+    # The forwarded host counts as well as Host, but only its last value:
+    # each proxy appends the host it saw, so the last is the one the nearest
+    # proxy wrote, and anything before it may have come from the client. A
+    # site whose front proxy rewrites the hostname lists its public origin in
+    # OOD_API_ALLOWED_ORIGINS.
     def same_host?(origin, env)
       authority = authority_of(origin)
       return false unless authority
 
-      [env['HTTP_HOST'], env['HTTP_X_FORWARDED_HOST']].any? do |host|
-        host.to_s.split(',').any? { |h| strip_default_port(h.strip.downcase) == authority }
-      end
+      forwarded = env['HTTP_X_FORWARDED_HOST'].to_s.split(',').last
+      [env['HTTP_HOST'], forwarded].any? { |host| strip_default_port(host.to_s.strip.downcase) == authority }
     end
 
     def authority_of(origin)

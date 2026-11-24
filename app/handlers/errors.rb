@@ -23,6 +23,9 @@ module Handlers
   class NotSupportedError < Error; end
   class PayloadTooLargeError < Error; end
   class StorageError < Error; end
+  # The filesystem itself failed: an I/O error or a stale network handle.
+  # Nothing about the request is wrong, and retrying later may work.
+  class FilesystemError < Error; end
 
   # Wraps every call into an ood_core job adapter.
   #
@@ -41,7 +44,7 @@ module Handlers
   # must pass through untouched rather than being flattened into AdapterError.
   PASSTHROUGH_ERRORS = [
     NotFoundError, ValidationError, ForbiddenError,
-    NotSupportedError, PayloadTooLargeError, StorageError
+    NotSupportedError, PayloadTooLargeError, StorageError, FilesystemError
   ].freeze
 
   # Recognising "the scheduler is down" from an adapter error message.

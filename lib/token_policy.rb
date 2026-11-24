@@ -6,14 +6,13 @@ require_relative 'site_config'
 module OodApi
   # How long application tokens live. Every token has an expiry unless the
   # site allows tokens that never expire. Settings come from the environment
-  # (`OOD_API_TOKEN_MAX_DAYS`, `OOD_API_TOKEN_ALLOW_NEVER`) or from the
-  # `ood_api` block in /etc/ood/config/ondemand.d:
+  # (`OOD_API_TOKEN_MAX_DAYS`, `OOD_API_TOKEN_ALLOW_NEVER`) or from the app's
+  # config.yml in /etc/ood/config/apps/<app>:
   #
-  #   ood_api:
-  #     token_max_days: 180
-  #     token_allow_never: true
+  #   token_max_days: 180
+  #   token_allow_never: true
   #
-  # The Dashboard plugin reads the same settings to decide what to offer.
+  # The Dashboard token page calls this module to decide what to offer.
   module TokenPolicy
     DEFAULT_MAX_DAYS = 365
     DAY = 86_400
@@ -22,10 +21,20 @@ module OodApi
 
     # @return [Integer] the longest lifetime a token may be given, in days
     def max_days
-      days = Integer(setting('OOD_API_TOKEN_MAX_DAYS', :token_max_days) || DEFAULT_MAX_DAYS)
+      days = Integer((setting('OOD_API_TOKEN_MAX_DAYS', :token_max_days) || DEFAULT_MAX_DAYS).to_s.strip, 10)
       days.positive? ? days : DEFAULT_MAX_DAYS
     rescue ArgumentError, TypeError
       DEFAULT_MAX_DAYS
+    end
+
+    # @return [Array<String>] what is wrong with the lifetime the site set
+    def problems
+      raw = setting('OOD_API_TOKEN_MAX_DAYS', :token_max_days)
+      return [] if raw.nil? || Integer(raw.to_s.strip, 10).positive?
+
+      ["token_max_days must be a number of days, not #{raw.inspect}"]
+    rescue ArgumentError
+      ["token_max_days must be a number of days, not #{raw.inspect}"]
     end
 
     # @return [Boolean] whether a token may have no expiry at all
@@ -53,6 +62,9 @@ module OodApi
     def needs_expiry?(attrs, now = Time.now)
       return true unless attrs.key?(:expires_at)
       return !allow_never? if attrs[:expires_at].nil?
+      # Anything else must be a time. `false` or a number in a hand-edited
+      # file would otherwise read as "never" and never be corrected.
+      return true unless attrs[:expires_at].is_a?(String)
 
       beyond_maximum?(attrs[:expires_at], now)
     end
@@ -75,10 +87,7 @@ module OodApi
     end
 
     def setting(env_name, key)
-      ENV.fetch(env_name) do
-        settings = SiteConfig.config[:ood_api]
-        settings.is_a?(Hash) ? settings[key] : nil
-      end
+      SiteConfig.setting(env_name, key)
     end
   end
 end

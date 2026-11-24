@@ -1,69 +1,65 @@
 # frozen_string_literal: true
 
-# Time.parse and Time#iso8601 live in the stdlib `time` library, not in core.
-# Rails loads it, so this file works without the require — but ood-api's twin
-# (lib/api_token.rb) broke exactly this way when it was loaded outside Rack.
-# Requiring it directly keeps the two copies honest about their dependencies.
-require 'time'
-require 'digest'
+# The token store and policy come from the API this plugin belongs to: the
+# checkout the plugin is linked from, or the usual install location when the
+# plugin was copied.
+api_root = File.expand_path('../..', File.realpath(__dir__))
+api_root = '/var/www/ood/apps/sys/ood-api' unless File.file?(File.join(api_root, 'lib', 'api_token.rb'))
+require File.join(api_root, 'lib', 'api_token')
 
-# Represents an API token for authenticating programmatic access to OOD.
-# Tokens are stored in a user-local JSON file.
-#
-# Token storage is user-specific: ~/.config/ondemand/tokens.json
-# In OOD's per-user PUN architecture, this is the authenticated user's home directory.
+# An API token as the Dashboard's token page shows it. Storage, hashing and
+# expiry belong to OodApi::ApiToken and OodApi::TokenPolicy; this class adds
+# what the page needs: the lifetimes to offer and how to display a token.
 class ApiToken
   include ActiveModel::Model
 
-  # Every token has an expiry unless the site allows tokens that never
-  # expire. ood-api enforces it (OodApi::AppAuth); this model records it and
-  # offers the choices. The settings and their defaults mirror
-  # OodApi::TokenPolicy in lib/token_policy.rb, so keep the two in step.
   LIFETIMES = [30, 90, 365].freeze
   DEFAULT_LIFETIME = 90
-  DEFAULT_MAX_DAYS = 365
   NEVER = 'never'
+  DAY = 86_400
+
   attr_reader :id, :name, :token_digest, :created_at, :last_used_at, :expires_at
 
-  TOKEN_DIR = Pathname.new('~/.config/ondemand').expand_path
-  TOKEN_FILE = TOKEN_DIR.join('tokens.json')
-
-  # Locking uses a sidecar file rather than tokens.json itself. flock(2) is
-  # held against an inode, and save_tokens replaces the data file by rename,
-  # so a lock taken on tokens.json guards an inode that the next writer
-  # unlinks. The lock file is never renamed over, so it stays stable.
-  #
-  # This file is also written by ood-api's OodApi::ApiToken (lib/api_token.rb)
-  # from a different process. Both must agree on this path or the lock is
-  # useless — keep the two in sync.
-  LOCK_FILE = TOKEN_DIR.join('.tokens.json.lock')
-
   class << self
+    # The API's directory under /etc/ood/config/apps.
+    def app_config_root
+      return ENV.fetch('OOD_API_CONFIG_ROOT', nil) unless ENV['OOD_API_CONFIG_ROOT'].to_s.strip.empty?
+
+      # __FILE__ is the path this file was loaded by, with the plugin's link
+      # still in it; __dir__ has already followed the link.
+      config_root_for(File.expand_path('..', File.dirname(__FILE__)))
+    end
+
+    # The directory is named after the directory the API is installed in,
+    # which is the name the API is served under. That name is read from the
+    # plugin's link, one step and no further. A plugin that is not a link
+    # gives no name, so the usual one is assumed.
+    #
+    # @param plugin [String] the plugin directory as the Dashboard sees it
+    def config_root_for(plugin)
+      app = 'ood-api'
+      if File.symlink?(plugin)
+        target = File.expand_path(File.readlink(plugin), File.dirname(plugin))
+        app = File.basename(File.dirname(target))
+      end
+      File.join('/etc/ood/config/apps', app)
+    end
+
     def all
-      load_tokens.map { |attrs| new(attrs) }
+      OodApi::ApiToken.all.map { |token| new(token.to_h) }
     end
 
     def find(id)
-      attrs = load_tokens.find { |t| t[:id] == id }
-      attrs ? new(attrs) : nil
-    end
-
-    # Only a SHA-256 digest is stored, matching lib/api_token.rb. Tokens are
-    # 256 bits of SecureRandom, so an unsalted digest cannot be brute-forced.
-    def digest(plain_token)
-      Digest::SHA256.hexdigest(plain_token.to_s)
+      all.find { |token| token.id == id }
     end
 
     # @return [Integer] the longest lifetime a token may be given, in days
     def max_days
-      days = Integer(setting('OOD_API_TOKEN_MAX_DAYS', :token_max_days) || DEFAULT_MAX_DAYS)
-      days.positive? ? days : DEFAULT_MAX_DAYS
-    rescue ArgumentError, TypeError
-      DEFAULT_MAX_DAYS
+      OodApi::TokenPolicy.max_days
     end
 
     def allow_never?
-      ['true', '1', 'yes', 'on'].include?(setting('OOD_API_TOKEN_ALLOW_NEVER', :token_allow_never).to_s.strip.downcase)
+      OodApi::TokenPolicy.allow_never?
     end
 
     # The lifetimes the form offers: the standard ones the site maximum
@@ -85,135 +81,18 @@ class ApiToken
       return nil if lifetime == NEVER && allow_never?
 
       days = lifetime_options.include?(lifetime) && lifetime != NEVER ? lifetime.to_i : max_days
-      (Time.current + days.days).iso8601
+      (Time.now + (days * DAY)).iso8601
     end
 
     # Returns [ApiToken, plain_token]. The plaintext exists only in this return
     # value, for the one page render that shows it to the user.
     def generate(name:, lifetime: default_lifetime)
-      plain_token = SecureRandom.hex(32)
-      token_attrs = {
-        id:           SecureRandom.uuid,
-        name:         name,
-        token_digest: digest(plain_token),
-        created_at:   Time.current.iso8601,
-        expires_at:   expiry_for(lifetime)
-      }
-
-      with_lock do
-        tokens = load_tokens
-        tokens << token_attrs
-        save_tokens(tokens)
-      end
-
-      [new(token_attrs), plain_token]
-    end
-
-    # Serialises read-modify-write across processes. ood-api writes this same
-    # file from its own PUN process on every authenticated request, so the
-    # lock has to be visible to a separate application, not just to Rails.
-    def with_lock
-      TOKEN_DIR.mkpath unless TOKEN_DIR.exist?
-      LOCK_FILE.open(File::RDWR | File::CREAT, 0o600) do |lock|
-        lock.flock(File::LOCK_EX)
-        yield
-      end
-    end
-
-    def load_tokens
-      return [] unless TOKEN_FILE.exist?
-
-      # Explicit encoding, matching lib/api_token.rb: without one Ruby uses the
-      # locale's, and a token name is free text a user typed.
-      parsed = JSON.parse(TOKEN_FILE.read(encoding: 'UTF-8'), symbolize_names: true)
-
-      # Shape guard, matching lib/api_token.rb. Valid JSON that is not an array
-      # of hashes parses and then raises from every caller that indexes an
-      # entry.
-      return parsed if parsed.is_a?(Array) && parsed.all?(Hash)
-
-      Rails.logger.error('API tokens file is not an array of objects; ignoring')
-      []
-    rescue JSON::ParserError => e
-      Rails.logger.error("Failed to parse API tokens file: #{e.message}")
-      []
-    end
-
-    # Write via a temp file and rename, so a concurrent reader never sees a
-    # truncated file. ood-api calls its own save on every authenticated
-    # request, and both readers rescue JSON::ParserError to [] — so a torn
-    # read does not fail loudly, it reports "no tokens", 401s the user, and
-    # then writes that empty array back, destroying every token. rename(2) is
-    # atomic within a filesystem, which the temp file guarantees by living in
-    # TOKEN_DIR.
-    def save_tokens(tokens)
-      TOKEN_DIR.mkpath unless TOKEN_DIR.exist?
-      tmp = TOKEN_DIR.join(".tokens.json.#{Process.pid}.#{SecureRandom.hex(4)}")
-      begin
-        # Create with 0600 from the start so the token file is never briefly
-        # world-readable between creation and chmod.
-        tmp.open(File::WRONLY | File::CREAT | File::EXCL, 0o600) do |f|
-          f.write(JSON.pretty_generate(tokens.map { |t| harden(t) }))
-          f.flush
-          f.fsync
-        end
-        tmp.rename(TOKEN_FILE.to_s)
-      ensure
-        tmp.unlink if tmp.exist?
-      end
-      # Narrows any pre-existing file that predates this change.
-      TOKEN_FILE.chmod(0o600)
-    end
-
-    private
-
-    # The digest for a stored entry, or nil when it holds no credential.
-    # Entries written before hashing carry a plaintext `token`; save_tokens
-    # replaces it with its digest the next time the file is written. Only a
-    # String is a credential: `to_s` would turn an unquoted `"token": 123456`
-    # into a working token.
-    def stored_digest(attrs)
-      hashed = attrs[:token_digest]
-      return hashed if hashed.is_a?(String) && hashed.match?(/\A\h{64}\z/)
-
-      legacy = attrs[:token]
-      legacy.is_a?(String) && legacy.present? ? digest(legacy) : nil
-    end
-
-    # No expiry recorded, a "never" the site does not allow, or a date beyond
-    # the site maximum. Matches OodApi::TokenPolicy.needs_expiry?.
-    def needs_expiry?(attrs)
-      return true unless attrs.key?(:expires_at)
-      return !allow_never? if attrs[:expires_at].nil?
-
-      Time.iso8601(attrs[:expires_at].to_s) > Time.current + max_days.days
-    rescue ArgumentError
-      false
-    end
-
-    # The environment first, then the `ood_api` block the Dashboard has
-    # already read from ondemand.d.
-    def setting(env_name, key)
-      ENV.fetch(env_name) do
-        settings = ::Configuration.send(:config)[:ood_api]
-        settings.is_a?(Hash) ? settings[key] : nil
-      end
-    rescue StandardError
-      nil
-    end
-
-    # Brings a stored entry up to date on its way back to disk: a plaintext
-    # token becomes its digest, and an entry with no expiry gets the site
-    # maximum, matching lib/api_token.rb.
-    def harden(attrs)
-      attrs = attrs.merge(expires_at: (Time.current + max_days.days).iso8601) if needs_expiry?(attrs)
-      return attrs unless attrs.key?(:token)
-
-      hashed = stored_digest(attrs)
-      rest = attrs.except(:token)
-      hashed ? rest.merge(token_digest: hashed) : rest
+      token, plain_token = OodApi::ApiToken.create(name: name, expires_at: expiry_for(lifetime))
+      [new(token.to_h), plain_token]
     end
   end
+
+  OodApi::SiteConfig.hosted_by_dashboard!(app_config_root)
 
   def initialize(attrs = {})
     @id           = attrs[:id]
@@ -224,11 +103,10 @@ class ApiToken
     @expires_at   = attrs[:expires_at]
   end
 
-  # Timestamps for display. The store is a plain JSON file the installation
-  # guide tells operators they may write by hand, and `date -Iseconds` is not
-  # portable — BSD date on macOS rejects it outright. A malformed value must
-  # not take down the whole token page, and the raw string is more useful to
-  # whoever has to fix it than a blank cell would be.
+  # Timestamps for display. The store is a plain JSON file a user may have
+  # written by hand. A malformed value must not take down the whole token
+  # page, and the raw string is more useful to whoever has to fix it than a
+  # blank cell would be.
   def created_at_display(fallback = '-')
     format_timestamp(created_at, fallback)
   end
@@ -244,25 +122,17 @@ class ApiToken
 
   # True once the expiry has passed, and for a value that is not a time.
   def expired?
-    return false if expires_at.nil?
-
-    Time.iso8601(expires_at.to_s) <= Time.current
-  rescue ArgumentError
-    true
+    OodApi::TokenPolicy.expired?(expires_at)
   end
 
   def destroy
-    self.class.with_lock do
-      tokens = self.class.load_tokens
-      tokens.reject! { |t| t[:id] == id }
-      self.class.save_tokens(tokens)
-    end
+    OodApi::ApiToken.destroy(id)
   end
 
   private
 
   def format_timestamp(value, fallback)
-    return fallback if value.blank?
+    return fallback if value.nil? || value.to_s.strip.empty?
 
     Time.parse(value.to_s).strftime('%Y-%m-%d %H:%M')
   rescue ArgumentError, TypeError

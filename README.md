@@ -20,7 +20,9 @@ process model.
 | **A site operator** | Drops a markdown file in `agents.d/` stating local policy — which partitions to use, which accounts to charge — and every AI client reads it before acting. |
 
 It is a headless API with no end-user UI, though an optional Dashboard plugin
-adds a token management page at `/settings/api_tokens`.
+adds a token management page at `/pun/sys/dashboard/settings/api_tokens`.
+
+![The API Tokens page in the Dashboard, listing two tokens with their creation and expiry dates and a form to create another](docs/images/api-tokens-page.png)
 
 This README is for administrators evaluating the app. The guides:
 
@@ -37,7 +39,7 @@ This README is for administrators evaluating the app. The guides:
 
 Three things worth knowing before you read further.
 
-**Maturity.** v0.4.2. Verified against OOD 4.2.3 with Slurm, and running at a
+**Maturity.** v0.5.0. Verified against OOD 4.2.3 with Slurm, and running at a
 small number of sites — see [Testing](#testing) for the current list. Treat it
 as early software.
 
@@ -67,8 +69,8 @@ API:
 - **Writing a file**, replacing its contents.
 - **Deleting a file or directory**, recursively if asked.
 
-Submitting jobs is not destructive but does consume allocation, so a client in
-a loop costs real money.
+Submitting a job runs a script as the user, so it can do anything the user
+can, and it consumes allocation, so a client in a loop costs real money.
 
 All of this, reads plus the destructive operations above, is reachable by an
 LLM through the MCP endpoint, not just a person clicking through the dashboard.
@@ -271,12 +273,31 @@ To verify a deployment, see
 the code, see [Contributing](CONTRIBUTING.md) and
 [docs/development.md](docs/development.md).
 
+## Troubleshooting
+
+Start with `/health`. It reports whether REST and MCP are being served, which
+tools are on, which settings file was read and whether it was found, and, when
+something is wrong with the settings, what.
+
+| What you see | Usual cause | What to do |
+|---|---|---|
+| An HTML page titled "App has not been initialized", with a 404 | The app was never staged with NGINX | Run the `nginx_stage app` command from [installation step 3](docs/installation.md#3-register-the-app-with-nginx) |
+| 401 with a bearer token | Apache refused it: the token is expired, or was issued to a client the audience rule does not list | Check `exp` and the `aud` or `azp` claim against [step 2](docs/installation.md#2-configure-authentication) |
+| 401 although Apache accepted the request | Application tokens are required and the `X-OOD-API-Token` header is missing, wrong or expired | Send the header; an expired token leaves `status=expired` in the PUN log |
+| 403 "`write_file` is not enabled at this site" (or another tool) | A fresh install is read-only | Turn the group on in `config.yml`; see [what to enable](docs/installation.md#what-to-enable) |
+| 503 `misconfigured` | The settings could not be understood, so the app switched itself off | `/health` lists the reasons under `problems`; fix them and it comes back within seconds |
+| 404 "not enabled at this site" | `rest` or `mcp` is switched off in the settings | Switch it back on in `config.yml` |
+| Settings seem to have no effect | They are in a file the app does not read | `/health` names the file under `settings`; the directory takes the name the app is installed under |
+
+The [installation guide](docs/installation.md#troubleshooting) covers these in
+more detail, along with PUN and proxy problems.
+
 ## Known Limitations
 
 - Application tokens never stand alone — a request must also satisfy Apache, with either a JWT or a session cookie. They are revocable per client, not an independent second factor
 - PUN cleanup cron runs every 2 hours by default — long-running API workflows may need this adjusted
 - Dashboard plugin requires OOD 4.0+
-- MCP transport runs in stateless mode — server-initiated notifications are not supported (tool list is static, so this has no practical impact)
+- MCP transport runs in stateless mode — server-initiated notifications are not supported (a client sees a change to the site's enabled tools the next time it lists them)
 - Job history, hold/release, and dependencies are scheduler-dependent — not all schedulers support all features
 - Account discovery, queue listing, cluster info, and historic jobs are only fully supported on Slurm — other schedulers return `501 not_implemented`. See the scheduler table under [Before you evaluate](#before-you-evaluate). Contributions to expand adapter coverage in `ood_core` would benefit all ood-api sites
 - No rate limiting — see [Security posture](#security-posture)
