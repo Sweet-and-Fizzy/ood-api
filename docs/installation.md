@@ -486,7 +486,7 @@ sudo chown -R root:root .
 ```
 
 Then [restart the PUNs](#restarting-puns); a running PUN keeps the old code
-until it does. Read the [changelog](../CHANGELOG.md) first. Two things to know
+until it does. Read the [changelog](../CHANGELOG.md) first. Four things to know
 when coming from 0.4:
 
 - Job submission and file writes are now off until you enable them under
