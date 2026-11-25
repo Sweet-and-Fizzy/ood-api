@@ -92,3 +92,46 @@ class HandlersSessionsTest < Minitest::Test
     assert_equal 'JupyterLab on a compute node', apps.last.description
   end
 end
+
+class HandlersSessionsFieldsTest < Minitest::Test
+  def setup
+    @apps = Dir.mktmpdir('ood-sessions-fields')
+    @saved = ENV.fetch('OOD_API_SYS_APPS', nil)
+    ENV['OOD_API_SYS_APPS'] = @apps
+  end
+
+  def teardown
+    @saved ? ENV['OOD_API_SYS_APPS'] = @saved : ENV.delete('OOD_API_SYS_APPS')
+    FileUtils.rm_rf(@apps)
+  end
+
+  def test_an_apps_fields_are_listed_in_order_with_their_labels
+    dir = File.join(@apps, 'rstudio')
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, 'manifest.yml'), "name: RStudio\n")
+    File.write(File.join(dir, 'form.yml'), <<~YAML)
+      cluster: hpc
+      form:
+        - version
+        - bc_num_hours
+        - bc_account
+        - fixed_thing
+      attributes:
+        version:
+          label: R version
+          widget: select
+        fixed_thing: some-value
+    YAML
+
+    assert_equal ['R version', 'Number of hours', 'Account'], Handlers::Sessions.apps.first.fields
+  end
+
+  def test_a_templated_form_lists_no_fields
+    dir = File.join(@apps, 'desktop')
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, 'manifest.yml'), "name: Desktop\n")
+    File.write(File.join(dir, 'form.yml.erb'), "form:\n  - <%= 'x' %>\n")
+
+    assert_empty Handlers::Sessions.apps.first.fields
+  end
+end

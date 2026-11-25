@@ -36,8 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Dashboard records them, newest first, with each one's app, status from the
   scheduler, job and start time, and the Dashboard page where the user
   connects to them. `list_interactive_apps` lists the interactive apps
-  installed as system apps, each with the page that starts one. Both are read
-  tools; neither reads a session's connection details.
+  installed as system apps, each with what its form asks for and the page
+  that starts one. Both are read tools; neither reads a session's connection
+  details.
 
 ### Changed
 
