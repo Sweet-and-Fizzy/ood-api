@@ -24,7 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `get_job` reports what the scheduler knows beyond the portable status: its
   own state, which tells a failed, timed-out or out-of-memory job from one
   that succeeded where the status says only `completed`; the reason it ended
-  or is waiting, and for a waiting Slurm job when it is expected to start; how
+  or is waiting, and for a waiting Slurm job when it is expected to start; the
+  nodes, cores and GPUs it asked for or holds, and the memory it asked for; how
   long it has run, its time limit and the time left, with the time of the
   answer, every time with its UTC offset in the local time zone (`TZ`, when the
   caller sets it); its working directory and script; and on Slurm, the files
