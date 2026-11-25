@@ -320,11 +320,19 @@ module Handlers
     # as SLURM_SUBMIT_DIR), and the common `cd $SLURM_SUBMIT_DIR` at the top
     # of a script would otherwise take the job to this app's own directory.
     # The current directory belongs to the whole process, so submissions take
-    # turns.
+    # turns. The working directory is a path on the cluster, which this host
+    # may not mount, or which a remote submit host would not see as its own
+    # current directory; then the job is submitted from where this app runs,
+    # and the scheduler still runs it in its working directory.
+    # The block runs once either way; an error inside it is the scheduler's
+    # and is never taken for a missing directory.
     def self.from_workdir(workdir, &)
-      SUBMIT_DIRECTORY.synchronize { Dir.chdir(workdir.to_s, &) }
-    rescue Errno::ENOENT, Errno::ENOTDIR
-      raise ValidationError, "workdir #{workdir} is not an existing directory"
+      dir = workdir.to_s
+      SUBMIT_DIRECTORY.synchronize do
+        next yield unless File.directory?(dir) && File.executable?(dir)
+
+        Dir.chdir(dir, &)
+      end
     end
 
     # The caller's options with the output and error paths checked,

@@ -552,14 +552,30 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
-  def test_a_workdir_that_does_not_exist_is_refused
-    @adapter.expects(:submit).never
+  # The working directory is a path on the cluster, which this host may
+  # not have; the scheduler is still given it.
+  def test_a_workdir_this_host_does_not_have_is_submitted_from_where_the_app_runs
+    before = Dir.pwd
+    missing = File.join(Dir.tmpdir, "ood-no-such-dir-#{SecureRandom.hex(4)}")
+    seen = nil
+    @adapter.expects(:submit).with { |script| seen = [Dir.pwd, script.workdir.to_s] }.returns('302')
+    @adapter.stubs(:info).returns(mock_job_info(id: '302'))
 
-    err = assert_raises(Handlers::ValidationError) do
-      Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: '#!/bin/bash',
-                            workdir: File.join(Dir.tmpdir, "ood-no-such-dir-#{SecureRandom.hex(4)}"))
+    Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: '#!/bin/bash', workdir: missing)
+
+    assert_equal [before, missing], seen
+  end
+
+  # An error from the scheduler is the scheduler's, not a missing directory.
+  def test_a_scheduler_error_inside_the_working_directory_is_reported_as_one
+    Dir.mktmpdir('ood-submit-dir') do |dir|
+      @adapter.expects(:submit).raises(Errno::ENOENT, 'sbatch')
+
+      err = assert_raises(StandardError) do
+        Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: '#!/bin/bash', workdir: dir)
+      end
+      refute_match(/existing directory/, err.message)
     end
-    assert_match(/not an existing directory/, err.message)
   end
 
   def test_submit_treats_an_empty_workdir_as_not_given
