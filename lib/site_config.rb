@@ -204,17 +204,6 @@ module OodApi
       value.nil? || ['true', '1', 'yes', 'on'].include?(value.to_s.strip.downcase)
     end
 
-    # The Dashboard serves no file browser when the Files app is not
-    # installed next to it, which is how a site removes file access.
-    def files_app_installed?
-      apps = sys_apps
-      return true unless apps.directory?
-
-      apps.join('files', 'manifest.yml').readable?
-    end
-
-    # The directory the Dashboard is installed in: the one this app is in,
-    # when the Dashboard is beside it, as the Dashboard itself works it out.
     # Where the Dashboard's Module Browser reads each cluster's list of
     # software modules, looked up where the Dashboard looks: its variable,
     # then the Dashboard's env file, then `module_file_dir` in ondemand.d.
@@ -226,6 +215,17 @@ module OodApi
       found && Pathname.new(found)
     end
 
+    # The Dashboard serves no file browser when the Files app is not
+    # installed next to it, which is how a site removes file access.
+    def files_app_installed?
+      apps = sys_apps
+      return true unless apps.directory?
+
+      apps.join('files', 'manifest.yml').readable?
+    end
+
+    # The directory the Dashboard is installed in: the one this app is in,
+    # when the Dashboard is beside it, as the Dashboard itself works it out.
     def sys_apps
       return Pathname.new(ENV['OOD_API_SYS_APPS']) if ENV['OOD_API_SYS_APPS']
 

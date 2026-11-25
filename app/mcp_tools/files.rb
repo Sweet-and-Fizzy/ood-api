@@ -20,6 +20,13 @@ module OodApi
         text = text.dup.force_encoding(Encoding::UTF_8) unless text.encoding == Encoding::UTF_8
         text.valid_encoding? ? text : text.scrub('?')
       end
+
+      # One line of text from a file or record, for a tool's own output
+      # lines: runs of whitespace and control characters become one space,
+      # so a value cannot start a line of its own.
+      def self.line(value)
+        safe_text(value).gsub(/[[:space:][:cntrl:]]+/, ' ').strip
+      end
     end
 
     # MCP tool: list a directory or describe a file.
