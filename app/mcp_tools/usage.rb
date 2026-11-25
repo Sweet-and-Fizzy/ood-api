@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
+require 'etc'
 require_relative 'base'
+require_relative 'files'
 require_relative '../handlers/usage'
 
 module OodApi
@@ -15,22 +17,36 @@ module OodApi
       input_schema({ type: 'object', properties: {} })
 
       def self.run(**_params)
-        usage = audited('get_quota_and_balance') { Handlers::Usage.for(current_user) }
+        usage = audited('get_quota_and_balance') { Handlers::Usage.for(account) }
         unless usage[:configured]
           return text_response('This site does not publish storage quotas or allocation balances.')
         end
 
-        text_response([*quota_lines(usage[:quotas]), *balance_lines(usage[:balances])].join("\n"))
+        lines = [*quota_lines(usage[:quotas], usage[:unreadable][:quota]), *balance_lines(usage[:balances])]
+        lines << unreadable('balance', usage[:unreadable][:balance]) if usage[:unreadable][:balance].positive?
+        text_response(lines.join("\n"))
       end
 
-      def self.quota_lines(quotas)
-        return ['No storage quotas are listed for you.'] if quotas.empty?
+      # The account name the Dashboard matches quota entries against.
+      def self.account
+        Etc.getpwuid(Process.uid).name
+      rescue ArgumentError
+        current_user
+      end
 
-        ['Storage quotas:', *quotas.map { |q| "- #{quota_line(q)}" }]
+      def self.unreadable(what, count)
+        "#{count} of the site's #{what} sources could not be read, so this may not be everything."
+      end
+
+      def self.quota_lines(quotas, unread)
+        missing = unread.positive? ? [unreadable('quota', unread)] : []
+        return ['No storage quotas are listed for you.', *missing] if quotas.empty?
+
+        ['Storage quotas:', *quotas.map { |q| "- #{quota_line(q)}" }, *missing]
       end
 
       def self.quota_line(quota)
-        parts = ["#{McpText.safe_text(quota.path)} (#{owner(quota)})", space(quota)]
+        parts = ["#{McpText.line(quota.path)} (#{owner(quota)})", space(quota)]
         parts << "#{size(quota.user_bytes)} of it yours" if quota.type != 'user' && quota.user_bytes
         parts << files(quota) if quota.used_files
         parts << "as of #{quota.updated_at}" if quota.updated_at
@@ -38,7 +54,7 @@ module OodApi
       end
 
       def self.owner(quota)
-        quota.type == 'user' ? 'your quota' : "shared #{McpText.safe_text(quota.type)}"
+        quota.type == 'user' ? 'your quota' : "shared #{McpText.line(quota.type)}"
       end
 
       def self.space(quota)
@@ -57,8 +73,8 @@ module OodApi
         return [] if balances.empty?
 
         ['Allocation balances:', *balances.map do |b|
-          what = [b.project_type, McpText.safe_text(b.project)].reject(&:empty?).join(' ')
-          "- #{what.empty? ? 'balance' : what}: #{b.value} #{McpText.safe_text(b.unit)} left" \
+          what = [McpText.line(b.project_type), McpText.line(b.project)].reject(&:empty?).join(' ')
+          "- #{what.empty? ? 'balance' : what}: #{b.value} #{McpText.line(b.unit)} left" \
           "#{", as of #{b.updated_at}" if b.updated_at}".squeeze(' ')
         end]
       end

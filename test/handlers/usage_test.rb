@@ -60,6 +60,11 @@ class HandlersUsageTest < Minitest::Test
     assert_equal([['PAS1234', 1500, 'RU']], usage[:balances].map { |b| [b.project, b.value, b.unit] })
   end
 
+  def test_a_url_keeps_its_port
+    ENV['OOD_QUOTA_PATH'] = '/a.json:http://127.0.0.1:8080/q.json:https://x.edu/b.json'
+    assert_equal ['/a.json', 'http://127.0.0.1:8080/q.json', 'https://x.edu/b.json'], Handlers::Usage.paths('OOD_QUOTA_PATH')
+  end
+
   def test_a_url_keeps_its_colon
     assert_equal ['https://usage.example.edu/quota.json', '/tmp/b.json'],
                  (ENV['OOD_QUOTA_PATH'] = 'https://usage.example.edu/quota.json:/tmp/b.json'
@@ -74,7 +79,7 @@ class HandlersUsageTest < Minitest::Test
     ENV['OOD_QUOTA_PATH'] = quota_file
     balances = [{ 'user' => 'jesse', 'project' => 'PAS1234', 'value' => 1500 }]
     ENV['OOD_BALANCE_PATH'] = write('b.json', 'config' => { 'unit' => 'RU' }, 'balances' => balances)
-    ENV['USER'] = 'jesse'
+    OodApi::Tools::GetQuotaAndBalanceTool.stubs(:account).returns('jesse')
 
     text = OodApi::Tools::GetQuotaAndBalanceTool.call(server_context: nil).content.first[:text]
 
@@ -82,6 +87,46 @@ class HandlersUsageTest < Minitest::Test
     assert_includes text, '/fs/project (shared fileset), 1.0 TB of 2.0 TB used (50%), ' \
                           '100.0 GB of it yours, 10 files, no limit'
     assert_includes text, '- PAS1234: 1500 RU left'
+  end
+
+  def test_an_unreadable_source_is_reported_not_taken_as_no_quotas
+    ENV['OOD_QUOTA_PATH'] = "#{File.join(@dir, 'missing.json')}:#{write('bad.json', [1, 2])}"
+    OodApi::Tools::GetQuotaAndBalanceTool.stubs(:account).returns('jesse')
+
+    text = OodApi::Tools::GetQuotaAndBalanceTool.call(server_context: nil).content.first[:text]
+
+    assert_includes text, 'No storage quotas are listed for you.'
+    assert_includes text, "2 of the site's quota sources could not be read"
+  end
+
+  def test_odd_values_do_not_break_a_quota
+    path = File.join(@dir, 'q.json')
+    File.write(path, '{"quotas": [{"user": "jesse", "path": "/home\\nForged line", "type": null, ' \
+                     '"total_block_usage": 1, "block_limit": 1e400}]}')
+    ENV['OOD_QUOTA_PATH'] = path
+    OodApi::Tools::GetQuotaAndBalanceTool.stubs(:account).returns('jesse')
+    quota = Handlers::Usage.for('jesse')[:quotas].first
+    assert_equal ['user', nil], [quota.type, quota.limit_bytes]
+
+    text = OodApi::Tools::GetQuotaAndBalanceTool.call(server_context: nil).content.first[:text]
+    assert_includes text, '- /home Forged line (your quota), 1.0 KB used, no limit'
+  end
+
+  def test_a_url_is_read_in_pieces_and_cut_off_past_the_limit
+    response = Net::HTTPOK.new('1.1', '200', 'OK')
+    response.stubs(:read_body).multiple_yields(['{"quotas":'], ['[]}'])
+    assert_equal '{"quotas":[]}', Handlers::Usage.body(response, Float::INFINITY)
+
+    assert_raises(Handlers::Usage::Unreadable) { Handlers::Usage.body(response, Float::INFINITY, 4) }
+    assert_raises(Handlers::Usage::Unreadable) { Handlers::Usage.body(response, 0) }
+  end
+
+  def test_a_failed_response_is_unreadable
+    http = mock('http')
+    http.stubs(:request).yields(Net::HTTPInternalServerError.new('1.1', '500', 'Error'))
+    Net::HTTP.stubs(:start).yields(http)
+
+    assert_nil Handlers::Usage.read('https://usage.example.edu/quota.json')
   end
 
   def test_the_tool_says_when_the_site_publishes_nothing

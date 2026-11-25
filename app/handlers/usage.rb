@@ -15,8 +15,12 @@ module Handlers
   module Usage
     # The Dashboard counts quota blocks in kibibytes.
     BLOCK_SIZE = 1024
-    READ_LIMIT = 4 * 1024 * 1024
-    FETCH_SECONDS = 5
+    # A site-wide file lists every user on every file system.
+    READ_LIMIT = 64 * 1024 * 1024
+    CONNECT_SECONDS = 5
+    FETCH_SECONDS = 10
+
+    class Unreadable < StandardError; end
 
     Quota = Struct.new(:path, :type, :used_bytes, :limit_bytes, :user_bytes, :used_files, :limit_files,
                        :updated_at, keyword_init: true)
@@ -24,39 +28,60 @@ module Handlers
 
     module_function
 
-    # @return [Hash] :quotas, :balances, :configured (whether either path is set)
+    # @return [Hash] :quotas, :balances, :configured (whether either path is
+    #   set), :unreadable (how many quota and balance sources could not be read)
     def for(user)
-      quota_paths = paths('OOD_QUOTA_PATH')
-      balance_paths = paths('OOD_BALANCE_PATH')
+      quota_files = paths('OOD_QUOTA_PATH').map { |path| read(path) }
+      balance_files = paths('OOD_BALANCE_PATH').map { |path| read(path) }
       {
-        quotas:     quota_paths.flat_map { |path| quotas(read(path), user) },
-        balances:   balance_paths.flat_map { |path| balances(read(path), user) },
-        configured: !(quota_paths.empty? && balance_paths.empty?)
+        quotas:     quota_files.compact.flat_map { |json| quotas(json, user) },
+        balances:   balance_files.compact.flat_map { |json| balances(json, user) },
+        configured: !(quota_files.empty? && balance_files.empty?),
+        unreadable: { quota: quota_files.count(&:nil?), balance: balance_files.count(&:nil?) }
       }
     end
 
-    # Colon-separated, where a colon in `scheme://` does not separate.
+    # Colon-separated, where only a colon before an absolute path or a URL
+    # separates, so the colons in `https://` and in a port do not.
     def paths(name)
       given = [ENV.fetch(name, nil), OodApi::SiteConfig.dashboard_env[name]].map { |v| v.to_s.strip }
-      given.find { |value| !value.empty? }.to_s.split(%r{:(?!//)}).reject(&:empty?)
+      given.find { |value| !value.empty? }.to_s.split(%r{:(?=/(?!/)|[a-z][a-z0-9+.-]*://)}i).reject(&:empty?)
     end
 
+    # One source's JSON object; nil when it cannot be read or is not one.
     def read(path)
       uri = URI.parse(path)
       text = ['http', 'https'].include?(uri.scheme) ? fetch(uri) : File.read(path, READ_LIMIT + 1)
-      raise Error, 'too large' if text.nil? || text.bytesize > READ_LIMIT
+      raise Unreadable, 'too large' if text.nil? || text.bytesize > READ_LIMIT
 
       json = JSON.parse(text)
-      json.is_a?(Hash) ? json : {}
+      json.is_a?(Hash) ? json : nil
     rescue StandardError
-      {}
+      nil
     end
 
+    # The body of a successful response, read in pieces so that neither a
+    # large body nor a slow server holds this app past its limits.
     def fetch(uri)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + FETCH_SECONDS
       Net::HTTP.start(uri.host, uri.port, use_ssl: uri.scheme == 'https',
-                                          open_timeout: FETCH_SECONDS, read_timeout: FETCH_SECONDS) do |http|
-        http.request(Net::HTTP::Get.new(uri)).body
+                                          open_timeout: CONNECT_SECONDS, read_timeout: CONNECT_SECONDS) do |http|
+        http.request(Net::HTTP::Get.new(uri)) do |response|
+          raise Unreadable, response.code unless response.is_a?(Net::HTTPSuccess)
+
+          return body(response, deadline)
+        end
       end
+    end
+
+    def body(response, deadline, limit = READ_LIMIT)
+      text = +''
+      response.read_body do |piece|
+        text << piece
+        raise Unreadable, 'too large' if text.bytesize > limit
+        raise Unreadable, 'too slow' if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      end
+      text
     end
 
     def quotas(json, user)
@@ -67,7 +92,7 @@ module Handlers
     def quota(entry, file_timestamp)
       Quota.new(
         path:        entry['path'].to_s,
-        type:        entry.fetch('type', 'user').to_s,
+        type:        entry['type'].to_s.strip.empty? ? 'user' : entry['type'].to_s,
         used_bytes:  blocks(entry['total_block_usage']),
         limit_bytes: blocks(entry['block_limit']),
         user_bytes:  blocks(entry['block_usage']),
@@ -92,10 +117,9 @@ module Handlers
     end
 
     def number(value)
-      return value.to_i if value.is_a?(Numeric)
-
-      Float(value.to_s).to_i
-    rescue ArgumentError
+      number = value.is_a?(Numeric) ? value : Float(value.to_s)
+      number.finite? ? number.to_i : nil
+    rescue ArgumentError, TypeError
       nil
     end
 
