@@ -17,6 +17,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   audit log apply as they do to `/mcp`. `/health` reports `local`. See
   [serving a program on the portal host](docs/installation.md#serving-a-program-on-the-portal-host).
 
+### Changed
+
+- `mcp` is updated to 1.11, which refuses a `resources/read` without a `uri`
+  as invalid params (-32602). `ood_core` is updated to 0.31.2 and `json` to
+  3.1. `excon` is held below 1.7, which requires Ruby 3.3, so the app still
+  installs on Ruby 3.1. `multi_json` is no longer pinned, since `fog-json` 1.5
+  does not use it.
+
 ## [0.5.0] - 2026-11-23
 
 A site now decides what the app serves, and a fresh install serves less. Read

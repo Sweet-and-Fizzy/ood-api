@@ -7,10 +7,10 @@ source 'https://rubygems.org'
 # lockfile installable on 3.1. Revisit them when that floor moves.
 
 gem 'json'
-gem 'mcp', '~> 1.10'
-# Transitive dependency of fog-json. 1.20.0+ requires Ruby 3.2.
-gem 'multi_json', '1.19.1'
-gem 'ood_core', '~> 0.24'
+gem 'mcp', '~> 1.11'
+gem 'ood_core', '~> 0.31'
+# Transitive dependency of fog-core. 1.7.0+ requires Ruby 3.3.
+gem 'excon', '< 1.7'
 # ood_core requires ostruct, which stopped being a default gem in Ruby 4.0.
 gem 'ostruct'
 gem 'puma'

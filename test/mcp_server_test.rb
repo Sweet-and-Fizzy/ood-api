@@ -465,15 +465,20 @@ class McpServerTest < Minitest::Test
   end
 
   # resources/read and ping/tools/list differ on absent params: the first needs
-  # a uri, the others take none. An empty-object params for resources/read is
-  # valid (the handler returns empty contents) and must reach the transport.
+  # a uri, the others take none. A params object with a uri reaches the
+  # transport.
   def test_resources_read_with_object_params_reaches_the_transport
-    ['{}', '{"uri":"ood://context"}'].each do |params|
-      raw = %({"jsonrpc":"2.0","id":1,"method":"resources/read","params":#{params}})
-      status, code = mcp_post(raw)
-      assert_equal 200, status, "params=#{params} must reach the transport"
-      assert_nil code, "params=#{params} must not be refused by a pre-check"
-    end
+    raw = '{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"ood://context"}}'
+    status, code = mcp_post(raw)
+    assert_equal 200, status, 'a resources/read with a uri must reach the transport'
+    assert_nil code, 'a resources/read with a uri must not be refused'
+  end
+
+  # The mcp gem refuses a resources/read params object without a uri as
+  # invalid params, not as an internal error.
+  def test_resources_read_without_a_uri_is_invalid_params
+    _status, code = mcp_post('{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{}}')
+    assert_equal(-32_602, code)
   end
 
   # `call_tool` also digs `params._meta.progressToken` unconditionally, so a
