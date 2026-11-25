@@ -96,8 +96,16 @@ module Handlers
         nil
       ensure
         reader.close
-        Process.wait(pid)
+        reap(pid)
       end
+    end
+
+    # Waits for the child; where the process ignores SIGCHLD it was reaped
+    # already, and its result is still good.
+    def reap(pid)
+      Process.wait(pid)
+    rescue Errno::ECHILD
+      nil
     end
 
     def clusters_for(clusters, cluster_id)
@@ -131,7 +139,7 @@ module Handlers
         next [] unless files.is_a?(Hash)
 
         files.values.select { |m| m.is_a?(Hash) && !m['hidden'] }.map do |m|
-          [name.to_s, m['Version'].to_s, prerequisites(m['parentAA'])]
+          [name.to_s.scrub, m['Version'].to_s.scrub, prerequisites(m['parentAA'])]
         end
       end
     rescue SystemCallError, JSON::ParserError, EncodingError
@@ -143,7 +151,7 @@ module Handlers
     def prerequisites(parents)
       return [] unless parents.is_a?(Array)
 
-      parents.grep(Array).map { |set| set.map(&:to_s) }
+      parents.grep(Array).map { |set| set.map { |item| item.to_s.scrub } }
     end
 
     # The cut-down list as the modules kept, with one object for each
