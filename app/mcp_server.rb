@@ -15,6 +15,7 @@ require_relative 'mcp_tools/files'
 require_relative 'mcp_tools/env'
 require_relative 'mcp_tools/sessions'
 require_relative 'mcp_tools/software'
+require_relative 'mcp_tools/usage'
 require_relative 'mcp_tools/context'
 require_relative 'handlers/audit'
 require_relative 'handlers/context'
@@ -63,7 +64,7 @@ module OodApi
     Tools::DeleteFileTool,
     Tools::ListEnvTool, Tools::GetEnvTool,
     Tools::ListInteractiveSessionsTool, Tools::ListInteractiveAppsTool,
-    Tools::ListSoftwareTool
+    Tools::ListSoftwareTool, Tools::GetQuotaAndBalanceTool
   ].freeze
 
   # A tool the site has not turned on is left out of `tools/list` entirely,

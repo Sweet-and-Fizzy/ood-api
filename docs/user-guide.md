@@ -262,7 +262,7 @@ and Cursor — including auto-refreshing tokens — is in
 
 ### 3.2 Available tools
 
-Up to 23 tools, grouped by area, required parameters in **bold**. A site
+Up to 24 tools, grouped by area, required parameters in **bold**. A site
 chooses which to enable: by default only the ones that list and read, with job
 submission and file writes turned on separately. Your client shows the ones
 your site offers. Chatting
@@ -360,6 +360,12 @@ from establishing access that outlasts the conversation.
 | Tool | Parameters | Does |
 |---|---|---|
 | `list_software` | optional `name`, optional `cluster_id` | Software installed as environment modules, as the Module Browser shows it: versions per cluster and any module to load first. Needs the site's module list (`module_file_dir`) |
+
+**Quotas and allocations**
+
+| Tool | Parameters | Does |
+|---|---|---|
+| `get_quota_and_balance` | — | Your storage quotas and allocation balances, from the files the Dashboard reads for its warnings (`OOD_QUOTA_PATH`, `OOD_BALANCE_PATH`) |
 
 There is also an `ood://context` resource carrying your site's policies and
 guidance; a well-behaved client reads it before acting.

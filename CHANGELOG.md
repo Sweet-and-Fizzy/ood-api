@@ -54,6 +54,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps only the module list (about 10 MB for 20,000 module versions) and not
   what parsing the file took. A site that publishes no module list gets an error
   saying so, and a cluster whose list cannot be read is named.
+- `get_quota_and_balance` gives the user's storage quotas (space and files
+  used against each limit, and their own share of a shared quota) and
+  allocation balances, from the JSON files or URLs the Dashboard reads for its
+  quota and balance warnings, named in `OOD_QUOTA_PATH` and `OOD_BALANCE_PATH`
+  in the environment or the Dashboard's env file. A URL gets 5 seconds to
+  connect and 10 in all, and a file or response is read up to 64 MiB. A
+  source that cannot be read is reported as such, not as having no quotas.
 
 ### Changed
 
