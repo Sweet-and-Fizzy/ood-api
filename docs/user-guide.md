@@ -283,7 +283,7 @@ check yours before trusting it with write access.
 | Tool | Parameters | Does |
 |---|---|---|
 | `list_jobs` | **cluster_id** | List your active jobs |
-| `get_job` | **cluster_id**, **job_id** | Get job details, including the scheduler's own state and reason, the working directory and script, and on Slurm the output and error files |
+| `get_job` | **cluster_id**, **job_id** | Get job details, including the scheduler's own state and reason, when a waiting job is expected to start, run time against the time limit, the working directory and script, and on Slurm the output and error files |
 | `list_historic_jobs` | **cluster_id** | List completed jobs (accounting) |
 | `submit_job` | **cluster_id**, **script_content**, plus optional parameters (see below) | Submit a batch job |
 | `cancel_job` | **cluster_id**, **job_id** | Cancel a job |

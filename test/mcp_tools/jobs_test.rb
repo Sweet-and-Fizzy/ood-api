@@ -101,6 +101,22 @@ class GetJobToolTest < Minitest::Test
     assert_includes content[:content].first[:text], 'Job not found'
   end
 
+  def test_a_running_job_shows_how_long_it_has_run_against_its_limit
+    job = mock_job_info(id: '17', status: :running, wallclock_time: 4034, wallclock_limit: 28_800,
+                        native: { state: 'RUNNING' })
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '17').content.first[:text]
+
+    assert_match(/^Run time so far: 1h 07m 14s$/, text)
+    assert_match(/^Time limit: 8h 00m 00s$/, text)
+    assert_match(/^Time left: 6h 52m 46s$/, text)
+    assert_match(/^Checked at: \d{4}-\d{2}-\d{2}T/, text)
+    refute_match(/Wall time/, text)
+  end
+
   def test_a_failed_slurm_job_shows_the_schedulers_state_reason_and_output_file
     job = mock_job_info(id: '13', job_name: 'growth', status: :completed,
                         native: { state: 'FAILED', reason: 'NonZeroExitCode', work_dir: '/home/u/project' })

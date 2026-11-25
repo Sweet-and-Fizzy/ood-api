@@ -28,13 +28,25 @@ module Handlers
     def of(info, adapter)
       native = info.native.is_a?(Hash) ? info.native : {}
       details = {
-        native_state: value(native[:state])&.downcase,
-        reason:       value(native[:reason]),
-        work_dir:     value(native[:work_dir]),
-        script:       value(native[:command])
+        native_state:   value(native[:state])&.downcase,
+        reason:         value(native[:reason]),
+        expected_start: expected_start(info, native),
+        work_dir:       value(native[:work_dir]),
+        script:         value(native[:command])
       }
       details.merge!(slurm_files(info, native, details)) if adapter.to_s == 'slurm' && details[:work_dir]
       details.compact
+    end
+
+    # Slurm's estimate of when a waiting job will start, from its start-time
+    # field; nothing for a job that is not waiting or has no estimate.
+    def expected_start(info, native)
+      return nil unless info.status.queued? || info.status.queued_held?
+
+      text = value(native[:start_time])
+      return nil unless text&.match?(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?\z/)
+
+      text
     end
 
     def value(raw)

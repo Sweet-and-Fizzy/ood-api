@@ -78,6 +78,19 @@ class HandlersJobDetailsTest < Minitest::Test
     assert_equal({ native_state: 'failed', work_dir: @dir }, details)
   end
 
+  def test_a_waiting_job_reports_the_schedulers_expected_start
+    waiting = mock_job_info(id: '22', status: :queued, native: { state: 'PENDING', reason: 'Resources',
+                                                               start_time: '2026-11-25T19:00:00' })
+
+    assert_equal '2026-11-25T19:00:00', Handlers::JobDetails.of(waiting, 'slurm')[:expected_start]
+
+    unknown = mock_job_info(id: '23', status: :queued, native: { state: 'PENDING', start_time: 'N/A' })
+    running = mock_job_info(id: '24', status: :running, native: { state: 'RUNNING', start_time: '2026-11-25T19:00:00' })
+
+    assert_nil Handlers::JobDetails.of(unknown, 'slurm')[:expected_start]
+    assert_nil Handlers::JobDetails.of(running, 'slurm')[:expected_start]
+  end
+
   def test_a_job_with_no_native_data_has_no_details
     assert_empty Handlers::JobDetails.of(mock_job_info(id: '1'), 'slurm')
   end

@@ -84,19 +84,43 @@ module OodApi
           ['Job', job.id], ['Cluster', cluster.id], ['Name', job.job_name || '(unnamed)'],
           ['Owner', job.job_owner], ['Status', job.status],
           ['Scheduler state', details[:native_state]], ['Reason', details[:reason]],
-          ['Queue', job.queue_name], *times(job),
+          ['Queue', job.queue_name], *times(job, details),
           ['Working directory', details[:work_dir]], ['Script', details[:script]],
           ['Output file', file_line(details, :output)], ['Error file', file_line(details, :error)]
         ]
         rows.to_h.compact.map { |label, value| "#{label}: #{value}" }.join("\n")
       end
 
-      def self.times(job)
+      # When it was submitted and started, how long it has run against its
+      # limit, and, for a pending job, when the scheduler expects it to start.
+      # The time of the answer comes with them, so the reader can work out
+      # what has changed since.
+      def self.times(job, details)
         [
-          ['Submitted', job.submission_time&.iso8601],
-          ['Started', job.dispatch_time&.iso8601],
-          ['Wall time', job.wallclock_time]
-        ].map { |label, value| [label, value || 'N/A'] }
+          ['Submitted', job.submission_time&.iso8601 || 'N/A'],
+          ['Started', job.dispatch_time&.iso8601 || 'N/A'],
+          ['Expected start', details[:expected_start]],
+          ['Run time so far', job.wallclock_time ? duration(job.wallclock_time) : 'N/A'],
+          *limit_rows(job),
+          ['Checked at', Time.now.utc.iso8601]
+        ]
+      end
+
+      # The time limit and, while the job runs, the time left before it.
+      def self.limit_rows(job)
+        limit = job.wallclock_limit
+        return [] unless limit&.positive?
+
+        used = job.wallclock_time
+        left = job.status.running? && used ? duration([limit - used, 0].max) : nil
+        [['Time limit', duration(limit)], ['Time left', left]]
+      end
+
+      # Seconds as 1h 07m 14s.
+      def self.duration(seconds)
+        seconds = seconds.to_i
+        hours, rest = seconds.divmod(3600)
+        format('%<h>dh %<m>02dm %<s>02ds', h: hours, m: rest / 60, s: rest % 60)
       end
 
       def self.file_line(details, kind)

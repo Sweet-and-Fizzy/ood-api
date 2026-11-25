@@ -24,7 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `get_job` reports what the scheduler knows beyond the portable status: its
   own state, which tells a failed, timed-out or out-of-memory job from one
   that succeeded where the status says only `completed`; the reason it ended
-  or is waiting; its working directory and script; and on Slurm, the files
+  or is waiting, and for a waiting Slurm job when it is expected to start; how
+  long it has run, its time limit and the time left, with the time of the
+  answer; its working directory and script; and on Slurm, the files
   its output and errors were written to, worked out from the script's
   `#SBATCH --output` and `--error` lines or Slurm's default, with where each
   came from. `list_jobs` adds the scheduler's state after `completed`. The
