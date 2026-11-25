@@ -59,6 +59,47 @@ module OodApi
       end
     end
 
+    # MCP tool: find files by name under a directory.
+    class FindFilesTool < Base
+      tool_name 'find_files'
+      annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
+      description 'Find files and directories by name under a directory, searching its subdirectories, ' \
+                  'for example every *.out file under a project. Directories the site does not allow are ' \
+                  'skipped, links to directories are not followed, and the search stops at ' \
+                  "#{Handlers::Files::FIND_MAX_RESULTS} matches, " \
+                  "#{Handlers::Files::FIND_MAX_DIRECTORIES} directories " \
+                  "or #{Handlers::Files::FIND_MAX_DEPTH} levels"
+      input_schema({
+        type:       'object',
+        properties: {
+          path: { type: 'string', description: 'Absolute path of the directory to search' },
+          name: { type: 'string', description: 'Shell pattern for the name, such as *.out or results_*.csv' }
+        },
+        required:   ['path', 'name']
+      })
+
+      def self.run(path:, name:, **_params)
+        result = audited('find_files', path: path) do
+          Handlers::Files.find(path: path, name: name)
+        end
+        lines = result[:matches].map do |entry|
+          kind = if entry.directory? then 'dir '
+                 elsif entry.symlink? then 'link'
+                 else 'file'
+                 end
+          "  #{kind}  #{McpText.safe_text(entry.path.to_s)}"
+        end
+        notes = []
+        notes << 'The search stopped at its limit; search a narrower directory to see more.' if result[:truncated]
+        notes << "#{result[:skipped]} directories could not be searched." if result[:skipped].positive?
+        header = "Found #{result[:matches].size} match(es) for #{McpText.safe_text(name)} " \
+                 "under #{McpText.safe_text(path)}"
+        text_response([header, *lines, *notes].join("\n"))
+      rescue ArgumentError => e
+        error_response("Invalid path: #{e.message}")
+      end
+    end
+
     # MCP tool: read a file's contents.
     class ReadFileTool < Base
       tool_name 'read_file'

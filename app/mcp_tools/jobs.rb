@@ -3,6 +3,7 @@
 require_relative 'base'
 require_relative '../../lib/site_clusters'
 require_relative '../handlers/jobs'
+require_relative '../handlers/job_details'
 
 module OodApi
   module Tools
@@ -31,11 +32,21 @@ module OodApi
           text = "No jobs found on cluster #{cluster_id} for user #{current_user}."
         else
           lines = jobs.map do |j|
-            "- #{j.id}: #{j.job_name || '(unnamed)'} [#{j.status}] queue=#{j.queue_name}"
+            "- #{j.id}: #{j.job_name || '(unnamed)'} [#{status_text(j)}] queue=#{j.queue_name}"
           end
           text = "Found #{jobs.size} job(s) on #{cluster_id}:\n#{lines.join("\n")}"
         end
         text_response(text)
+      end
+
+      # A finished job's portable status is "completed" whether it succeeded,
+      # failed, timed out or ran out of memory, so the scheduler's own word
+      # follows it.
+      def self.status_text(job)
+        native = Handlers::JobDetails.value(job.native.is_a?(Hash) ? job.native[:state] : nil)&.downcase
+        return job.status.to_s unless job.status.completed? && native && native != 'completed'
+
+        "#{job.status} (#{native})"
       end
     end
 
@@ -43,7 +54,9 @@ module OodApi
     class GetJobTool < Base
       tool_name 'get_job'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
-      description 'Get details for a specific job on a cluster'
+      description 'Get details for a specific job on a cluster: its status and the scheduler\'s own state, ' \
+                  'why it ended or is waiting, its working directory and script, and, on Slurm, the files ' \
+                  'its output and errors were written to'
       input_schema({
         type:       'object',
         properties: {
@@ -62,18 +75,91 @@ module OodApi
             job_id:     job_id
           )
         end
-        text = <<~TEXT.strip
-          Job: #{job.id}
-          Cluster: #{cluster.id}
-          Name: #{job.job_name || '(unnamed)'}
-          Owner: #{job.job_owner}
-          Status: #{job.status}
-          Queue: #{job.queue_name}
-          Submitted: #{job.submission_time&.iso8601 || 'N/A'}
-          Started: #{job.dispatch_time&.iso8601 || 'N/A'}
-          Wall time: #{job.wallclock_time || 'N/A'}
-        TEXT
-        text_response(text)
+        text_response(describe(job, cluster, Handlers::JobDetails.of(job, cluster.job_config[:adapter])))
+      end
+
+      # One line for each thing known about the job; unknown details are left out.
+      def self.describe(job, cluster, details)
+        rows = [
+          ['Job', job.id], ['Cluster', cluster.id], ['Name', job.job_name || '(unnamed)'],
+          ['Owner', job.job_owner], ['Status', job.status],
+          ['Scheduler state', details[:native_state]], ['Reason', details[:reason]],
+          ['Queue', job.queue_name], ['Resources', resources(job)], ['Memory requested', memory(details)],
+          *times(job, details),
+          ['Working directory', details[:work_dir]], ['Script', details[:script]],
+          ['Output file', file_line(details, :output)], ['Error file', file_line(details, :error)]
+        ]
+        rows.to_h.compact.map { |label, value| "#{label}: #{value}" }.join("\n")
+      end
+
+      # What the job asked for, or holds once running: nodes, cores and GPUs,
+      # leaving out any the scheduler gives no count for.
+      # Slurm counts CPUs, which are hardware threads where a core has more
+      # than one, and reports a GPU request per node.
+      def self.resources(job)
+        nodes = job.allocated_nodes&.size.to_i
+        counts = [[nodes, 'node', ''], [job.procs, 'CPU', ''], [job.gpus, 'GPU', nodes > 1 ? ' per node' : '']]
+        parts = counts.filter_map do |count, unit, per|
+          "#{count.to_i} #{unit}#{'s' unless count.to_i == 1}#{per}" if count.to_i.positive?
+        end
+        parts.empty? ? nil : parts.join(', ')
+      end
+
+      # squeue gives the memory request per node, or per CPU for a job that
+      # asked with --mem-per-cpu, without saying which.
+      def self.memory(details)
+        details[:memory] && "#{details[:memory]} (per node, or per CPU if the job asked for memory per CPU)"
+      end
+
+      # When it was submitted and started, how long it has run against its
+      # limit, and, for a pending job, when the scheduler expects it to start.
+      # The time of the answer comes with them, so the reader can work out
+      # what has changed since. Every time is in this process's local time
+      # zone, which a caller can set with TZ, and carries its UTC offset.
+      def self.times(job, details)
+        [
+          ['Submitted', local(job.submission_time) || 'N/A'],
+          ['Started', started(job) || 'N/A'],
+          ['Expected start', details[:expected_start]],
+          ['Run time so far', job.wallclock_time ? duration(job.wallclock_time) : 'N/A'],
+          *limit_rows(job),
+          ['Checked at', local(Time.now)]
+        ]
+      end
+
+      def self.local(time)
+        time&.getlocal&.iso8601
+      end
+
+      # A waiting job has not started. ood_core fills a waiting Slurm job's
+      # dispatch time with the scheduler's estimate, which is given as the
+      # expected start instead.
+      def self.started(job)
+        return nil if job.status.queued? || job.status.queued_held?
+
+        local(job.dispatch_time)
+      end
+
+      # The time limit and, while the job runs, the time left before it.
+      def self.limit_rows(job)
+        limit = job.wallclock_limit
+        return [] unless limit&.positive?
+
+        used = job.wallclock_time
+        left = job.status.running? && used ? duration([limit - used, 0].max) : nil
+        [['Time limit', duration(limit)], ['Time left', left]]
+      end
+
+      # Seconds as 1h 07m 14s.
+      def self.duration(seconds)
+        seconds = seconds.to_i
+        hours, rest = seconds.divmod(3600)
+        format('%<h>dh %<m>02dm %<s>02ds', h: hours, m: rest / 60, s: rest % 60)
+      end
+
+      def self.file_line(details, kind)
+        path = details[:"#{kind}_path"]
+        path && "#{path} (#{details[:"#{kind}_source"]})"
       end
     end
 

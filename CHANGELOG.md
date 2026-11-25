@@ -16,6 +16,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assistant without serving clients from outside. The tool settings and the
   audit log apply as they do to `/mcp`. `/health` reports `local`. See
   [serving a program on the portal host](docs/installation.md#serving-a-program-on-the-portal-host).
+- `find_files` finds files and directories by name under a directory,
+  searching its subdirectories, such as every `*.out` file in a project. It
+  lists one directory at a time with the same checks as `list_files`, skips
+  directories the site does not allow, does not follow links to directories,
+  and stops at 100 matches, 500 directories or 8 levels. It is a read tool.
+- `get_job` reports what the scheduler knows beyond the portable status: its
+  own state, which tells a failed, timed-out or out-of-memory job from one
+  that succeeded where the status says only `completed`; the reason it ended
+  or is waiting, and for a waiting Slurm job when it is expected to start; the
+  nodes, CPUs and GPUs (per node on several nodes) it asked for or holds, and
+  the memory it asked for, per node or per CPU as squeue gives it; how
+  long it has run, its time limit and the time left, with the time of the
+  answer, every time with its UTC offset in the local time zone (`TZ`, when the
+  caller sets it); its working directory and script; and on Slurm, the files
+  its output and errors were written to, worked out from the script's
+  `#SBATCH --output` and `--error` lines or Slurm's default, with where each
+  came from. `list_jobs` adds the scheduler's state after `completed`. The
+  REST `GET /api/v1/jobs/:id` returns the same under `details`.
 
 ### Changed
 
@@ -1018,8 +1036,8 @@ running as a Passenger app under the PUN as the authenticated user.
   job listing, history, submit, cancel, hold, and release; file list, read,
   write, append, mkdir, touch, and delete; environment variables; and
   site-provided context.
-- MCP server at `/mcp` exposing the same surface as 19 tools for LLM and agent
-  clients, plus an `ood://context` resource for site policies.
+- MCP server at `/mcp` exposing the same surface as MCP tools (19 in this
+  release) for LLM and agent clients, plus an `ood://context` resource for site policies.
 - Authentication that trusts OOD's Apache/`mod_ood_proxy` layer by default,
   with opt-in application-level bearer tokens (`OOD_API_APP_TOKENS`) stored
   per-user at `~/.config/ondemand/tokens.json`.

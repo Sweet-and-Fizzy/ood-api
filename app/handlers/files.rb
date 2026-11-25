@@ -109,6 +109,85 @@ module Handlers
       end
     end
 
+    FIND_MAX_RESULTS = 100
+    FIND_MAX_DIRECTORIES = 500
+    FIND_MAX_DEPTH = 8
+
+    # Files and directories under `path` whose names match `name`, a shell
+    # pattern such as `*.out`. The search lists one directory at a time
+    # through #list, so every check a listing makes applies at every level:
+    # a directory the site refuses is skipped and counted, and a link to a
+    # directory is reported but not followed. It stops at FIND_MAX_RESULTS
+    # matches, FIND_MAX_DIRECTORIES directories or FIND_MAX_DEPTH levels and
+    # says so.
+    #
+    # @return [Hash] :matches (Array<Entry>), :truncated, :skipped
+    def self.find(path:, name:)
+      pattern = name.to_s
+      if pattern.strip.empty? || pattern.include?('/') || pattern.include?("\0")
+        raise ValidationError, 'name must be a file name pattern without a slash, such as *.out'
+      end
+
+      Search.new(pattern).run(path.to_s)
+    end
+
+    # One run of #find, breadth first.
+    class Search
+      def initialize(pattern)
+        @pattern = pattern
+        @matches = []
+        @skipped = 0
+        @searched = 0
+        @truncated = false
+      end
+
+      def run(start)
+        queue = [[start, 0]]
+        until queue.empty? || full?
+          dir, depth = queue.shift
+          entries = entries_of(dir, depth)
+          entries&.each { |entry| visit(entry, depth, queue) }
+        end
+        @truncated ||= !queue.empty?
+        { matches: @matches.first(FIND_MAX_RESULTS), truncated: @truncated, skipped: @skipped }
+      end
+
+      private
+
+      def full?
+        @matches.size >= FIND_MAX_RESULTS || @searched >= FIND_MAX_DIRECTORIES
+      end
+
+      # A refused starting directory is the caller's error; a refused one
+      # below it is skipped and counted.
+      def entries_of(dir, depth)
+        entries = Files.list(path: dir)
+        return nil unless entries.is_a?(Array)
+
+        @searched += 1
+        entries
+      rescue Error
+        raise if depth.zero?
+
+        @skipped += 1
+        nil
+      end
+
+      def visit(entry, depth, queue)
+        return if @matches.size >= FIND_MAX_RESULTS
+
+        base = entry.basename.to_s
+        @matches << entry if base.valid_encoding? && File.fnmatch?(@pattern, base, File::FNM_EXTGLOB)
+        return unless entry.directory?
+
+        if depth < FIND_MAX_DEPTH
+          queue << [entry.path.to_s, depth + 1]
+        else
+          @truncated = true
+        end
+      end
+    end
+
     # True only for a value that converts to a positive integer. Infinity and
     # NaN raise from to_i rather than returning something comparable, so the
     # conversion has to be guarded rather than trusted.

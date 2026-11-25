@@ -93,6 +93,7 @@ class McpServerTest < Minitest::Test
     'get_job'            => [true,  false, true],
     'list_historic_jobs' => [true,  false, true],
     'list_files'         => [true,  false, true],
+    'find_files'         => [true,  false, true],
     'read_file'          => [true,  false, true],
     'list_env'           => [true,  false, true],
     'get_env'            => [true,  false, true],

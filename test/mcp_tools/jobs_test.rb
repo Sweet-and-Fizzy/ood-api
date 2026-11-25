@@ -47,6 +47,21 @@ class ListJobsToolTest < Minitest::Test
     assert content[:isError]
     assert_includes content[:content].first[:text], 'Cluster not found'
   end
+
+  def test_a_finished_job_shows_the_schedulers_word_after_completed
+    jobs = [
+      mock_job_info(id: '13', job_name: 'growth', status: :completed, native: { state: 'FAILED' }),
+      mock_job_info(id: '15', job_name: 'fit', status: :running, native: { state: 'RUNNING' })
+    ]
+    adapter = mock('adapter')
+    adapter.stubs(:info_where_owner).returns(jobs)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = ListJobsTool.call(server_context: nil, cluster_id: 'cluster1').content.first[:text]
+
+    assert_includes text, '- 13: growth [completed (failed)]'
+    assert_includes text, '- 15: fit [running]'
+  end
 end
 
 class GetJobToolTest < Minitest::Test
@@ -84,6 +99,110 @@ class GetJobToolTest < Minitest::Test
     content = result.to_h
     assert content[:isError]
     assert_includes content[:content].first[:text], 'Job not found'
+  end
+
+  def test_a_running_job_shows_how_long_it_has_run_against_its_limit
+    job = mock_job_info(id: '17', status: :running, wallclock_time: 4034, wallclock_limit: 28_800,
+                        native: { state: 'RUNNING' })
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '17').content.first[:text]
+
+    assert_match(/^Run time so far: 1h 07m 14s$/, text)
+    assert_match(/^Time limit: 8h 00m 00s$/, text)
+    assert_match(/^Time left: 6h 52m 46s$/, text)
+    assert_match(/^Checked at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([+-]\d{2}:\d{2}|Z)$/, text)
+    refute_match(/Wall time/, text)
+  end
+
+  # Times are given in the local zone (TZ when the caller sets it) with
+  # their offset, so a reader never has to convert them.
+  def test_times_are_in_the_local_zone_with_their_offset
+    saved = ENV.fetch('TZ', nil)
+    ENV['TZ'] = 'America/New_York'
+    utc = Time.utc(2026, 11, 25, 19, 0, 0)
+    job = mock_job_info(id: '17', status: :running, submission_time: utc, dispatch_time: utc + 60)
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '17').content.first[:text]
+
+    assert_match(/^Submitted: 2026-11-25T14:00:00-05:00$/, text)
+    assert_match(/^Started: 2026-11-25T14:01:00-05:00$/, text)
+    assert_match(/^Checked at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}-0[45]:00$/, text)
+  ensure
+    saved ? ENV['TZ'] = saved : ENV.delete('TZ')
+  end
+
+  def test_a_waiting_job_has_not_started_whatever_its_dispatch_time_says
+    estimate = Time.utc(2026, 11, 26, 0, 41)
+    job = mock_job_info(id: '22', status: :queued, dispatch_time: estimate,
+                        native: { state: 'PENDING', start_time: estimate.getlocal.strftime('%Y-%m-%dT%H:%M:%S') })
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '22').content.first[:text]
+
+    assert_match(%r{^Started: N/A$}, text)
+    assert_match(/^Expected start: #{Regexp.escape(estimate.getlocal.iso8601)}$/, text)
+  end
+
+  def test_a_job_shows_the_nodes_cores_gpus_and_memory_it_asked_for
+    job = mock_job_info(id: '22', status: :queued, procs: 8, gpus: 1,
+                        allocated_nodes: [OodCore::Job::NodeInfo.new(name: nil)],
+                        native: { state: 'PENDING', min_memory: '16G' })
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '22').content.first[:text]
+
+    assert_match(/^Resources: 1 node, 8 CPUs, 1 GPU$/, text)
+    assert_match(/^Memory requested: 16G \(per node, or per CPU if the job asked for memory per CPU\)$/, text)
+  end
+
+  def test_gpus_on_several_nodes_are_per_node
+    nodes = Array.new(2) { OodCore::Job::NodeInfo.new(name: nil) }
+    job = mock_job_info(id: '24', status: :queued, procs: 16, gpus: 2, allocated_nodes: nodes)
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '24').content.first[:text]
+
+    assert_match(/^Resources: 2 nodes, 16 CPUs, 2 GPUs per node$/, text)
+  end
+
+  def test_no_gpus_and_no_memory_are_left_out
+    job = mock_job_info(id: '23', status: :running, procs: 2, gpus: 0, native: { min_memory: '0' })
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '23').content.first[:text]
+
+    assert_match(/^Resources: 2 CPUs$/, text)
+    refute_match(/GPU|^Memory/, text)
+  end
+
+  def test_a_failed_slurm_job_shows_the_schedulers_state_reason_and_output_file
+    job = mock_job_info(id: '13', job_name: 'growth', status: :completed,
+                        native: { state: 'FAILED', reason: 'NonZeroExitCode', work_dir: '/home/u/project' })
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '13').content.first[:text]
+
+    assert_match(/^Status: completed$/, text)
+    assert_match(/^Scheduler state: failed$/, text)
+    assert_match(/^Reason: NonZeroExitCode$/, text)
+    assert_match(%r{^Working directory: /home/u/project$}, text)
+    assert_match(%r{^Output file: /home/u/project/slurm-13\.out \(Slurm default\)$}, text)
   end
 end
 

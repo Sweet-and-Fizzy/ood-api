@@ -262,7 +262,7 @@ and Cursor — including auto-refreshing tokens — is in
 
 ### 3.2 Available tools
 
-Up to 19 tools, grouped by area, required parameters in **bold**. A site
+Up to 20 tools, grouped by area, required parameters in **bold**. A site
 chooses which to enable: by default only the ones that list and read, with job
 submission and file writes turned on separately. Your client shows the ones
 your site offers. Chatting
@@ -296,7 +296,7 @@ check yours before trusting it with write access.
 | Tool | Parameters | Does |
 |---|---|---|
 | `list_jobs` | **cluster_id** | List your active jobs |
-| `get_job` | **cluster_id**, **job_id** | Get job details |
+| `get_job` | **cluster_id**, **job_id** | Get job details, including the scheduler's own state and reason, when a waiting job is expected to start, run time against the time limit, the working directory and script, and on Slurm the output and error files |
 | `list_historic_jobs` | **cluster_id** | List completed jobs (accounting) |
 | `submit_job` | **cluster_id**, **script_content**, plus optional parameters (see below) | Submit a batch job |
 | `cancel_job` | **cluster_id**, **job_id** | Cancel a job |
@@ -335,6 +335,7 @@ from establishing access that outlasts the conversation.
 | Tool | Parameters | Does |
 |---|---|---|
 | `list_files` | **path** | List a directory |
+| `find_files` | **path**, **name** | Find files by name under a directory, such as every `*.out` file in a project |
 | `read_file` | **path**, optional `max_size` | Read a file |
 | `write_file` | **path**, **content**, optional `append` | Write or append |
 | `create_directory` | **path** | Make a directory |

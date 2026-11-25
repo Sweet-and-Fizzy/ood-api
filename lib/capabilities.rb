@@ -23,7 +23,7 @@ module OodApi
   module Capabilities
     GROUPS = {
       'read'        => ['list_clusters', 'get_cluster', 'list_accounts', 'list_queues', 'get_cluster_info',
-                        'list_jobs', 'get_job', 'list_historic_jobs', 'list_files', 'read_file',
+                        'list_jobs', 'get_job', 'list_historic_jobs', 'list_files', 'find_files', 'read_file',
                         'list_env', 'get_env'],
       'jobs'        => ['submit_job', 'cancel_job', 'hold_job', 'release_job'],
       'files_write' => ['write_file', 'create_directory', 'delete_file']

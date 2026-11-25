@@ -108,13 +108,9 @@ module TestHelpers
     cluster
   end
 
-  def mock_job_info(id:, status: :running, job_name: 'test-job', job_owner: 'testuser', queue_name: 'batch')
-    OodCore::Job::Info.new(
-      id:         id,
-      status:     OodCore::Job::Status.new(state: status),
-      job_name:   job_name,
-      job_owner:  job_owner,
-      queue_name: queue_name
-    )
+  JOB_INFO_DEFAULTS = { job_name: 'test-job', job_owner: 'testuser', queue_name: 'batch' }.freeze
+
+  def mock_job_info(id:, status: :running, **attrs)
+    OodCore::Job::Info.new(id: id, status: OodCore::Job::Status.new(state: status), **JOB_INFO_DEFAULTS.merge(attrs))
   end
 end
