@@ -43,6 +43,15 @@ class ListClustersToolErrorTest < Minitest::Test
     assert content[:isError]
     assert_includes content[:content].first[:text], 'Adapter connection failed'
   end
+
+  def test_returns_error_when_the_sites_clusters_cannot_be_found
+    OodApi::SiteClusters.stubs(:all).raises(Handlers::ConfigurationError, 'No cluster configuration at /x')
+
+    content = ListClustersTool.call(server_context: nil).to_h
+
+    assert content[:isError]
+    assert_includes content[:content].first[:text], 'No cluster configuration at /x'
+  end
 end
 
 class ListAccountsToolTest < Minitest::Test

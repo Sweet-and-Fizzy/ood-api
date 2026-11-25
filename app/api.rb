@@ -260,6 +260,7 @@ module OodApi
       Handlers::PayloadTooLargeError      => [413, 'payload_too_large'],
       Handlers::StorageError              => [507, 'insufficient_storage'],
       Handlers::FilesystemError           => [503, 'service_unavailable'],
+      Handlers::ConfigurationError        => [503, 'service_unavailable'],
       Handlers::AdapterError              => [503, 'service_unavailable'],
       # Same status as its parent, listed so the mapping survives any future
       # change to AdapterError's default.

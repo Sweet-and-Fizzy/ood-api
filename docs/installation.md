@@ -331,7 +331,10 @@ local: true
 
 `local` is separate from `mcp`. With `local: true` and `mcp: false`, the
 tools are available to programs on the portal host and to no client outside
-it. The tools offered are the ones you enabled under
+it except through those programs. A program can pass them on, and an
+assistant such as [ood-agent](https://github.com/Sweet-and-Fizzy/ood-agent)
+offers them to the user's browser through its chat page, so turn `local` on
+knowingly, for programs you have decided to trust with that. The tools offered are the ones you enabled under
 [What to enable](#what-to-enable), and every call is in the
 [audit log](#audit-log) with `transport=stdio`. There is no application
 token here: the program already runs as the user, who can do the same things
