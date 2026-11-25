@@ -46,8 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Dashboard's Module Browser shows it: each module's versions per cluster,
   newest first, and any module to load first. It reads the same Lmod spider
   files as the Module Browser, from `OOD_MODULE_FILE_DIR`, the Dashboard's env
-  file or `module_file_dir` in ondemand.d, and leaves hidden modules out. A
-  site that publishes no module list gets an error saying so.
+  file or `module_file_dir` in ondemand.d, and leaves hidden modules out. An
+  exact name comes first, then names that start with it. Each file is parsed
+  once until it changes. A site that publishes no module list gets an error
+  saying so, and a cluster whose list cannot be read is named.
 
 ### Changed
 

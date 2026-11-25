@@ -53,11 +53,41 @@ class HandlersSoftwareTest < Minitest::Test
     assert_raises(Handlers::NotFoundError) { Handlers::Software.find(clusters: @clusters, cluster_id: 'nope') }
   end
 
-  def test_a_cluster_with_no_or_broken_file_lists_nothing
+  def test_clusters_with_no_or_a_broken_file_are_named
     File.write(File.join(@dir, 'gpu.json'), '{not json')
     @clusters << mock_cluster(id: 'other')
 
-    assert_equal ['gcc', 'py-torch', 'python'], Handlers::Software.find(clusters: @clusters)[:modules].map(&:name)
+    result = Handlers::Software.find(clusters: @clusters)
+    assert_equal ['gcc', 'py-torch', 'python'], result[:modules].map(&:name)
+    assert_equal ['gpu', 'other'], result[:unlisted]
+  end
+
+  def test_an_exact_name_comes_first_then_names_that_start_with_it
+    many = (1..60).to_h { |i| ["libr#{i}", { '/m' => { 'Version' => '1' } }] }
+    many['r'] = { '/r' => { 'Version' => '4.4.1' } }
+    many['rstudio'] = { '/rs' => { 'Version' => '2024.1' } }
+    File.write(File.join(@dir, 'hpc.json'), JSON.generate(many))
+
+    names = Handlers::Software.find(clusters: @clusters, name: 'R')[:modules].map(&:name)
+    assert_equal ['r', 'rstudio'], names.first(2)
+  end
+
+  def test_versions_sort_piece_by_piece
+    versions = ['3.9.1', '3.10.2', '11.8.0', '11.8.0-gcc', 'R2023b', 'R2024a']
+    spider = { 'x' => versions.to_h { |v| ["/x/#{v}", { 'Version' => v }] } }
+    File.write(File.join(@dir, 'hpc.json'), JSON.generate(spider))
+
+    found = Handlers::Software.find(clusters: @clusters, name: 'x')[:modules].first.versions.map(&:version)
+    assert_equal ['R2024a', 'R2023b', '11.8.0-gcc', '11.8.0', '3.10.2', '3.9.1'], found
+  end
+
+  def test_a_file_is_parsed_once_until_it_changes
+    path = File.join(@dir, 'hpc.json')
+    JSON.expects(:parse).twice.returns(SPIDER)
+    2.times { Handlers::Software.find(clusters: [@clusters.first]) }
+
+    File.write(path, JSON.generate(SPIDER.merge('extra' => {})))
+    Handlers::Software.find(clusters: [@clusters.first])
   end
 
   def test_names_past_the_limit_are_counted
