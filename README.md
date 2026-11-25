@@ -260,7 +260,7 @@ We're actively looking for sites to test ood-api on different schedulers and OOD
 
 The 4.2.3 run covered the whole job lifecycle (submit, get, list, hold,
 release, cancel), queues, cluster info, file and environment operations, and
-all 19 MCP tools, on Ruby 3.3.10 with `mod_auth_openidc` validating Keycloak
+every MCP tool the app had then (19), on Ruby 3.3.10 with `mod_auth_openidc` validating Keycloak
 JWTs. `accounts` returns 503 on a cluster without `slurmdbd`, which is
 expected — `sacctmgr` needs an accounting store.
 

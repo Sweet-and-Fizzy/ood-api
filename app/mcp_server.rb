@@ -57,7 +57,7 @@ module OodApi
     Tools::GetClusterInfoTool,
     Tools::ListJobsTool, Tools::GetJobTool, Tools::ListHistoricJobsTool, Tools::SubmitJobTool,
     Tools::CancelJobTool, Tools::HoldJobTool, Tools::ReleaseJobTool,
-    Tools::ListFilesTool, Tools::ReadFileTool, Tools::WriteFileTool, Tools::CreateDirectoryTool,
+    Tools::ListFilesTool, Tools::FindFilesTool, Tools::ReadFileTool, Tools::WriteFileTool, Tools::CreateDirectoryTool,
     Tools::DeleteFileTool,
     Tools::ListEnvTool, Tools::GetEnvTool
   ].freeze

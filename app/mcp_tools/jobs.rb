@@ -3,6 +3,7 @@
 require_relative 'base'
 require_relative '../../lib/site_clusters'
 require_relative '../handlers/jobs'
+require_relative '../handlers/job_details'
 
 module OodApi
   module Tools
@@ -31,11 +32,21 @@ module OodApi
           text = "No jobs found on cluster #{cluster_id} for user #{current_user}."
         else
           lines = jobs.map do |j|
-            "- #{j.id}: #{j.job_name || '(unnamed)'} [#{j.status}] queue=#{j.queue_name}"
+            "- #{j.id}: #{j.job_name || '(unnamed)'} [#{status_text(j)}] queue=#{j.queue_name}"
           end
           text = "Found #{jobs.size} job(s) on #{cluster_id}:\n#{lines.join("\n")}"
         end
         text_response(text)
+      end
+
+      # A finished job's portable status is "completed" whether it succeeded,
+      # failed, timed out or ran out of memory, so the scheduler's own word
+      # follows it.
+      def self.status_text(job)
+        native = Handlers::JobDetails.value(job.native.is_a?(Hash) ? job.native[:state] : nil)&.downcase
+        return job.status.to_s unless job.status.completed? && native && native != 'completed'
+
+        "#{job.status} (#{native})"
       end
     end
 
@@ -43,7 +54,9 @@ module OodApi
     class GetJobTool < Base
       tool_name 'get_job'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
-      description 'Get details for a specific job on a cluster'
+      description 'Get details for a specific job on a cluster: its status and the scheduler\'s own state, ' \
+                  'why it ended or is waiting, its working directory and script, and, on Slurm, the files ' \
+                  'its output and errors were written to'
       input_schema({
         type:       'object',
         properties: {
@@ -62,18 +75,33 @@ module OodApi
             job_id:     job_id
           )
         end
-        text = <<~TEXT.strip
-          Job: #{job.id}
-          Cluster: #{cluster.id}
-          Name: #{job.job_name || '(unnamed)'}
-          Owner: #{job.job_owner}
-          Status: #{job.status}
-          Queue: #{job.queue_name}
-          Submitted: #{job.submission_time&.iso8601 || 'N/A'}
-          Started: #{job.dispatch_time&.iso8601 || 'N/A'}
-          Wall time: #{job.wallclock_time || 'N/A'}
-        TEXT
-        text_response(text)
+        text_response(describe(job, cluster, Handlers::JobDetails.of(job, cluster.job_config[:adapter])))
+      end
+
+      # One line for each thing known about the job; unknown details are left out.
+      def self.describe(job, cluster, details)
+        rows = [
+          ['Job', job.id], ['Cluster', cluster.id], ['Name', job.job_name || '(unnamed)'],
+          ['Owner', job.job_owner], ['Status', job.status],
+          ['Scheduler state', details[:native_state]], ['Reason', details[:reason]],
+          ['Queue', job.queue_name], *times(job),
+          ['Working directory', details[:work_dir]], ['Script', details[:script]],
+          ['Output file', file_line(details, :output)], ['Error file', file_line(details, :error)]
+        ]
+        rows.to_h.compact.map { |label, value| "#{label}: #{value}" }.join("\n")
+      end
+
+      def self.times(job)
+        [
+          ['Submitted', job.submission_time&.iso8601],
+          ['Started', job.dispatch_time&.iso8601],
+          ['Wall time', job.wallclock_time]
+        ].map { |label, value| [label, value || 'N/A'] }
+      end
+
+      def self.file_line(details, kind)
+        path = details[:"#{kind}_path"]
+        path && "#{path} (#{details[:"#{kind}_source"]})"
       end
     end
 

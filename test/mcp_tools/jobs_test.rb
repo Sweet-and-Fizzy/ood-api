@@ -47,6 +47,21 @@ class ListJobsToolTest < Minitest::Test
     assert content[:isError]
     assert_includes content[:content].first[:text], 'Cluster not found'
   end
+
+  def test_a_finished_job_shows_the_schedulers_word_after_completed
+    jobs = [
+      mock_job_info(id: '13', job_name: 'growth', status: :completed, native: { state: 'FAILED' }),
+      mock_job_info(id: '15', job_name: 'fit', status: :running, native: { state: 'RUNNING' })
+    ]
+    adapter = mock('adapter')
+    adapter.stubs(:info_where_owner).returns(jobs)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = ListJobsTool.call(server_context: nil, cluster_id: 'cluster1').content.first[:text]
+
+    assert_includes text, '- 13: growth [completed (failed)]'
+    assert_includes text, '- 15: fit [running]'
+  end
 end
 
 class GetJobToolTest < Minitest::Test
@@ -84,6 +99,22 @@ class GetJobToolTest < Minitest::Test
     content = result.to_h
     assert content[:isError]
     assert_includes content[:content].first[:text], 'Job not found'
+  end
+
+  def test_a_failed_slurm_job_shows_the_schedulers_state_reason_and_output_file
+    job = mock_job_info(id: '13', job_name: 'growth', status: :completed,
+                        native: { state: 'FAILED', reason: 'NonZeroExitCode', work_dir: '/home/u/project' })
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '13').content.first[:text]
+
+    assert_match(/^Status: completed$/, text)
+    assert_match(/^Scheduler state: failed$/, text)
+    assert_match(/^Reason: NonZeroExitCode$/, text)
+    assert_match(%r{^Working directory: /home/u/project$}, text)
+    assert_match(%r{^Output file: /home/u/project/slurm-13\.out \(Slurm default\)$}, text)
   end
 end
 

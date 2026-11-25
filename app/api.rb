@@ -19,6 +19,7 @@ require_relative '../lib/site_clusters'
 require_relative 'handlers/audit'
 require_relative 'handlers/clusters'
 require_relative 'handlers/jobs'
+require_relative 'handlers/job_details'
 require_relative 'handlers/files'
 require_relative 'handlers/env'
 require_relative 'handlers/context'
@@ -406,7 +407,8 @@ module OodApi
           job_id:     params[:id]
         )
       end
-      { data: job_json(job, cluster) }.to_json
+      details = Handlers::JobDetails.of(job, cluster.job_config[:adapter])
+      { data: job_json(job, cluster).merge(details: details) }.to_json
     end
 
     post '/api/v1/jobs', tool: 'submit_job' do
