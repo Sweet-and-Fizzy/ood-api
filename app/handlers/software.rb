@@ -55,18 +55,49 @@ module Handlers
     CACHE_LOCK = Mutex.new
     @cache = {}
 
-    # A cluster's modules, parsed once for each version of its file: spider
-    # files run to tens of megabytes at large sites. nil when the file cannot
-    # be read.
+    # A cluster's modules, parsed once for each version of its file. nil when
+    # the file cannot be read.
+    #
+    # Spider files run to tens of megabytes at large sites, and parsing one
+    # grows a Ruby process by several times its size, which the process
+    # keeps. Each user runs their own copy of this app, so the file is
+    # parsed in a short-lived child process and only the modules come back;
+    # what the parse used goes back to the system when the child exits.
     def cached(file, cluster_id)
       stat = file.stat
       key = [file.to_s, stat.mtime.to_r, stat.size]
       CACHE_LOCK.synchronize do
         @cache.delete_if { |k, _| k.first == key.first && k != key }
-        @cache[key] ||= read(file, cluster_id)
+        @cache[key] ||= modules(in_child { spider(file) }, cluster_id)
       end
     rescue SystemCallError
       nil
+    end
+
+    # The block's result, as JSON, worked out in a forked child where forking
+    # is available. The child sends back nothing but the result, and leaves
+    # with exit! so no exit handler of this app runs in it. nil when the
+    # child gives no result.
+    def in_child
+      return yield unless Process.respond_to?(:fork)
+
+      reader, writer = IO.pipe
+      pid = fork do
+        reader.close
+        writer.write(JSON.generate(yield))
+      ensure
+        writer.close
+        exit!(0)
+      end
+      writer.close
+      begin
+        JSON.parse(reader.read)
+      rescue JSON::ParserError
+        nil
+      ensure
+        reader.close
+        Process.wait(pid)
+      end
     end
 
     def clusters_for(clusters, cluster_id)
@@ -89,9 +120,10 @@ module Handlers
       text.to_s.downcase.gsub(/[^[:alnum:]]/, '')
     end
 
-    # One cluster's spider output: { name => { modulefile => details } }.
-    # nil when the file cannot be read or is not spider output.
-    def read(file, cluster_id)
+    # One cluster's spider output, { name => { modulefile => details } },
+    # cut down to [name, version, prerequisites] for each module that is not
+    # hidden. nil when the file cannot be read or is not spider output.
+    def spider(file)
       data = JSON.parse(file.read(encoding: 'UTF-8'))
       return nil unless data.is_a?(Hash)
 
@@ -99,9 +131,7 @@ module Handlers
         next [] unless files.is_a?(Hash)
 
         files.values.select { |m| m.is_a?(Hash) && !m['hidden'] }.map do |m|
-          version = Version.new(cluster_id: cluster_id, version: m['Version'].to_s,
-                                prerequisites: prerequisites(m['parentAA']))
-          { name: name.to_s, version: version }
+          [name.to_s, m['Version'].to_s, prerequisites(m['parentAA'])]
         end
       end
     rescue SystemCallError, JSON::ParserError, EncodingError
@@ -114,6 +144,22 @@ module Handlers
       return [] unless parents.is_a?(Array)
 
       parents.grep(Array).map { |set| set.map(&:to_s) }
+    end
+
+    # The cut-down list as the modules kept, with one object for each
+    # distinct name, cluster id and set of prerequisites, since the same
+    # ones repeat across thousands of versions.
+    def modules(list, cluster_id)
+      return nil unless list.is_a?(Array)
+
+      shared = Hash.new { |table, value| table[value] = value.freeze }
+      list.filter_map do |name, version, parents|
+        next unless name.is_a?(String) && version.is_a?(String) && parents.is_a?(Array)
+
+        sets = shared[parents.map { |set| shared[set.map { |item| shared[item.to_s] }] }]
+        kept = Version.new(cluster_id: shared[cluster_id], version: version, prerequisites: sets)
+        { name: shared[name], version: kept }
+      end
     end
 
     def newest_first(list)
