@@ -15,6 +15,7 @@ require_relative '../lib/api_token'
 require_relative '../lib/app_auth'
 require_relative '../lib/origin_check'
 require_relative '../lib/capabilities'
+require_relative '../lib/site_clusters'
 require_relative 'handlers/audit'
 require_relative 'handlers/clusters'
 require_relative 'handlers/jobs'
@@ -75,30 +76,8 @@ module OodApi
     LOOPBACK_HOSTS = ['localhost', IPAddr.new('127.0.0.1'), IPAddr.new('::1')].freeze
     set :host_authorization, { permitted_hosts: SiteConfig.behind_portal? ? [] : LOOPBACK_HOSTS }
 
-    # Configuration via environment variables
-    CLUSTERS_PATH = ENV.fetch('OOD_CLUSTERS', '/etc/ood/config/clusters.d')
-
-    # Read again when the files change, so a cluster the site hides or
-    # removes stops being offered without a PUN restart.
     def self.clusters
-      stamp = clusters_stamp
-      @clusters = nil unless stamp == @clusters_stamp
-      @clusters_stamp = stamp
-      @clusters ||= OodCore::Clusters.load_file(CLUSTERS_PATH)
-    end
-
-    # Looked at no more than once a second.
-    def self.clusters_stamp
-      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      return @clusters_stamp if @clusters_checked && now - @clusters_checked < 1
-
-      @clusters_checked = now
-      Dir.glob(File.join(CLUSTERS_PATH, '*')).map do |file|
-        stat = File.stat(file)
-        [file, stat.mtime.to_f, stat.ctime.to_f, stat.size]
-      rescue SystemCallError
-        [file]
-      end
+      SiteClusters.all
     end
 
     # JSON content type for all responses
