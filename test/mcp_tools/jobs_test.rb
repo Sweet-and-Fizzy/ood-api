@@ -113,21 +113,42 @@ class GetJobToolTest < Minitest::Test
     assert_match(/^Run time so far: 1h 07m 14s$/, text)
     assert_match(/^Time limit: 8h 00m 00s$/, text)
     assert_match(/^Time left: 6h 52m 46s$/, text)
-    assert_match(/^Checked at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/, text)
+    assert_match(/^Checked at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([+-]\d{2}:\d{2}|Z)$/, text)
     refute_match(/Wall time/, text)
   end
 
-  def test_every_time_is_given_in_utc
-    eastern = Time.new(2026, 11, 25, 14, 0, 0, '-05:00')
-    job = mock_job_info(id: '17', status: :running, submission_time: eastern, dispatch_time: eastern + 60)
+  # Times are given in the local zone (TZ when the caller sets it) with
+  # their offset, so a reader never has to convert them.
+  def test_times_are_in_the_local_zone_with_their_offset
+    saved = ENV.fetch('TZ', nil)
+    ENV['TZ'] = 'America/New_York'
+    utc = Time.utc(2026, 11, 25, 19, 0, 0)
+    job = mock_job_info(id: '17', status: :running, submission_time: utc, dispatch_time: utc + 60)
     adapter = mock('adapter')
     adapter.stubs(:info).returns(job)
     @cluster.stubs(:job_adapter).returns(adapter)
 
     text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '17').content.first[:text]
 
-    assert_match(/^Submitted: 2026-11-25T19:00:00Z$/, text)
-    assert_match(/^Started: 2026-11-25T19:01:00Z$/, text)
+    assert_match(/^Submitted: 2026-11-25T14:00:00-05:00$/, text)
+    assert_match(/^Started: 2026-11-25T14:01:00-05:00$/, text)
+    assert_match(/^Checked at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}-0[45]:00$/, text)
+  ensure
+    saved ? ENV['TZ'] = saved : ENV.delete('TZ')
+  end
+
+  def test_a_waiting_job_has_not_started_whatever_its_dispatch_time_says
+    estimate = Time.utc(2026, 11, 26, 0, 41)
+    job = mock_job_info(id: '22', status: :queued, dispatch_time: estimate,
+                        native: { state: 'PENDING', start_time: estimate.getlocal.strftime('%Y-%m-%dT%H:%M:%S') })
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '22').content.first[:text]
+
+    assert_match(%r{^Started: N/A$}, text)
+    assert_match(/^Expected start: #{Regexp.escape(estimate.getlocal.iso8601)}$/, text)
   end
 
   def test_a_failed_slurm_job_shows_the_schedulers_state_reason_and_output_file

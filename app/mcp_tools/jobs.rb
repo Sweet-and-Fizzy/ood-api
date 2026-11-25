@@ -94,16 +94,30 @@ module OodApi
       # When it was submitted and started, how long it has run against its
       # limit, and, for a pending job, when the scheduler expects it to start.
       # The time of the answer comes with them, so the reader can work out
-      # what has changed since. Every time is in UTC and marked Z.
+      # what has changed since. Every time is in this process's local time
+      # zone, which a caller can set with TZ, and carries its UTC offset.
       def self.times(job, details)
         [
-          ['Submitted', job.submission_time&.getutc&.iso8601 || 'N/A'],
-          ['Started', job.dispatch_time&.getutc&.iso8601 || 'N/A'],
+          ['Submitted', local(job.submission_time) || 'N/A'],
+          ['Started', started(job) || 'N/A'],
           ['Expected start', details[:expected_start]],
           ['Run time so far', job.wallclock_time ? duration(job.wallclock_time) : 'N/A'],
           *limit_rows(job),
-          ['Checked at', Time.now.utc.iso8601]
+          ['Checked at', local(Time.now)]
         ]
+      end
+
+      def self.local(time)
+        time&.getlocal&.iso8601
+      end
+
+      # A waiting job has not started. ood_core fills a waiting Slurm job's
+      # dispatch time with the scheduler's estimate, which is given as the
+      # expected start instead.
+      def self.started(job)
+        return nil if job.status.queued? || job.status.queued_held?
+
+        local(job.dispatch_time)
       end
 
       # The time limit and, while the job runs, the time left before it.

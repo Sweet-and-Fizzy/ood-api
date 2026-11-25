@@ -82,7 +82,7 @@ class HandlersJobDetailsTest < Minitest::Test
     waiting = mock_job_info(id: '22', status: :queued, native: { state: 'PENDING', reason: 'Resources',
                                                                start_time: '2026-11-25T19:00:00' })
 
-    assert_equal Time.local(2026, 11, 25, 19).getutc.iso8601, Handlers::JobDetails.of(waiting, 'slurm')[:expected_start]
+    assert_equal Time.local(2026, 11, 25, 19).iso8601, Handlers::JobDetails.of(waiting, 'slurm')[:expected_start]
 
     unknown = mock_job_info(id: '23', status: :queued, native: { state: 'PENDING', start_time: 'N/A' })
     running = mock_job_info(id: '24', status: :running, native: { state: 'RUNNING', start_time: '2026-11-25T19:00:00' })
@@ -91,13 +91,14 @@ class HandlersJobDetailsTest < Minitest::Test
     assert_nil Handlers::JobDetails.of(running, 'slurm')[:expected_start]
   end
 
-  # squeue prints the estimate in local time with no zone; the answer is UTC.
-  def test_the_expected_start_is_converted_from_local_time_to_utc
+  # squeue prints the estimate in local time with no zone; the answer says
+  # which zone, by its offset.
+  def test_the_expected_start_is_read_in_the_local_zone_and_carries_its_offset
     saved = ENV.fetch('TZ', nil)
     ENV['TZ'] = 'America/New_York'
     waiting = mock_job_info(id: '22', status: :queued, native: { state: 'PENDING', start_time: '2026-11-25T19:00:00' })
 
-    assert_equal '2026-11-26T00:00:00Z', Handlers::JobDetails.of(waiting, 'slurm')[:expected_start]
+    assert_equal '2026-11-25T19:00:00-05:00', Handlers::JobDetails.of(waiting, 'slurm')[:expected_start]
   ensure
     saved ? ENV['TZ'] = saved : ENV.delete('TZ')
   end
