@@ -84,26 +84,28 @@ class McpServerTest < Minitest::Test
   # every tool must state its hints explicitly. Values are
   # [readOnlyHint, destructiveHint, idempotentHint].
   EXPECTED_ANNOTATIONS = {
-    'list_clusters'      => [true,  false, true],
-    'get_cluster'        => [true,  false, true],
-    'list_accounts'      => [true,  false, true],
-    'list_queues'        => [true,  false, true],
-    'get_cluster_info'   => [true,  false, true],
-    'list_jobs'          => [true,  false, true],
-    'get_job'            => [true,  false, true],
-    'list_historic_jobs' => [true,  false, true],
-    'list_files'         => [true,  false, true],
-    'find_files'         => [true,  false, true],
-    'read_file'          => [true,  false, true],
-    'list_env'           => [true,  false, true],
-    'get_env'            => [true,  false, true],
-    'submit_job'         => [false, true, false],
-    'hold_job'           => [false, false, true],
-    'release_job'        => [false, false, true],
-    'create_directory'   => [false, false, true],
-    'write_file'         => [false, true, false],
-    'cancel_job'         => [false, true,  true],
-    'delete_file'        => [false, true,  true]
+    'list_clusters'             => [true,  false, true],
+    'get_cluster'               => [true,  false, true],
+    'list_accounts'             => [true,  false, true],
+    'list_queues'               => [true,  false, true],
+    'get_cluster_info'          => [true,  false, true],
+    'list_jobs'                 => [true,  false, true],
+    'get_job'                   => [true,  false, true],
+    'list_historic_jobs'        => [true,  false, true],
+    'list_files'                => [true,  false, true],
+    'find_files'                => [true,  false, true],
+    'list_interactive_sessions' => [true, false, true],
+    'list_interactive_apps'     => [true, false, true],
+    'read_file'                 => [true,  false, true],
+    'list_env'                  => [true,  false, true],
+    'get_env'                   => [true,  false, true],
+    'submit_job'                => [false, true, false],
+    'hold_job'                  => [false, false, true],
+    'release_job'               => [false, false, true],
+    'create_directory'          => [false, false, true],
+    'write_file'                => [false, true, false],
+    'cancel_job'                => [false, true,  true],
+    'delete_file'               => [false, true,  true]
   }.freeze
 
   def test_every_tool_declares_annotations

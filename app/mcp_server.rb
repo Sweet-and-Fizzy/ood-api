@@ -13,6 +13,7 @@ require_relative 'mcp_tools/clusters'
 require_relative 'mcp_tools/jobs'
 require_relative 'mcp_tools/files'
 require_relative 'mcp_tools/env'
+require_relative 'mcp_tools/sessions'
 require_relative 'mcp_tools/context'
 require_relative 'handlers/audit'
 require_relative 'handlers/context'
@@ -59,7 +60,8 @@ module OodApi
     Tools::CancelJobTool, Tools::HoldJobTool, Tools::ReleaseJobTool,
     Tools::ListFilesTool, Tools::FindFilesTool, Tools::ReadFileTool, Tools::WriteFileTool, Tools::CreateDirectoryTool,
     Tools::DeleteFileTool,
-    Tools::ListEnvTool, Tools::GetEnvTool
+    Tools::ListEnvTool, Tools::GetEnvTool,
+    Tools::ListInteractiveSessionsTool, Tools::ListInteractiveAppsTool
   ].freeze
 
   # A tool the site has not turned on is left out of `tools/list` entirely,

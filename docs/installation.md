@@ -260,7 +260,7 @@ root, and must be readable by every portal user.
 
 | Group | Tools |
 |-------|-------|
-| `read` (always on) | `list_clusters`, `get_cluster`, `list_accounts`, `list_queues`, `get_cluster_info`, `list_jobs`, `get_job`, `list_historic_jobs`, `list_files`, `find_files`, `read_file`, `list_env`, `get_env` |
+| `read` (always on) | `list_clusters`, `get_cluster`, `list_accounts`, `list_queues`, `get_cluster_info`, `list_jobs`, `get_job`, `list_historic_jobs`, `list_files`, `find_files`, `read_file`, `list_env`, `get_env`, `list_interactive_sessions`, `list_interactive_apps` |
 | `jobs` | `submit_job`, `cancel_job`, `hold_job`, `release_job` |
 | `files_write` | `write_file`, `create_directory`, `delete_file` |
 
