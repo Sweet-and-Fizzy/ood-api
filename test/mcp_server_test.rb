@@ -97,6 +97,7 @@ class McpServerTest < Minitest::Test
     'list_interactive_sessions' => [true, false, true],
     'list_interactive_apps'     => [true, false, true],
     'list_software'             => [true, false, true],
+    'get_quota_and_balance'     => [true, false, true],
     'read_file'                 => [true,  false, true],
     'list_env'                  => [true,  false, true],
     'get_env'                   => [true,  false, true],

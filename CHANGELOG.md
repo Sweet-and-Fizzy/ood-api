@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   files as the Module Browser, from `OOD_MODULE_FILE_DIR`, the Dashboard's env
   file or `module_file_dir` in ondemand.d, and leaves hidden modules out. A
   site that publishes no module list gets an error saying so.
+- `get_quota_and_balance` gives the user's storage quotas (space and files
+  used against each limit, and their own share of a shared quota) and
+  allocation balances, from the JSON files or URLs the Dashboard reads for its
+  quota and balance warnings, named in `OOD_QUOTA_PATH` and `OOD_BALANCE_PATH`
+  in the environment or the Dashboard's env file. URLs are fetched with a
+  5-second limit and files are read up to 4 MiB.
 
 ### Changed
 
