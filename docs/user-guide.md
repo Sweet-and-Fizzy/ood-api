@@ -340,7 +340,7 @@ from establishing access that outlasts the conversation.
 | Tool | Parameters | Does |
 |---|---|---|
 | `list_interactive_sessions` | — | Your interactive sessions (Jupyter, a desktop and so on), newest first, with their status and the Dashboard page to connect to them |
-| `list_interactive_apps` | — | The interactive apps the site offers, each with the Dashboard page that starts one |
+| `list_interactive_apps` | — | The interactive apps the site offers, each sub-app on its own, with what its form asks for and the Dashboard page that starts one |
 
 There is also an `ood://context` resource carrying your site's policies and
 guidance; a well-behaved client reads it before acting.

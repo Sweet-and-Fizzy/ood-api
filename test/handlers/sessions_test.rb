@@ -10,6 +10,7 @@ class HandlersSessionsTest < Minitest::Test
     @home = Dir.mktmpdir('ood-sessions-home')
     @apps = Dir.mktmpdir('ood-sessions-apps')
     @saved = ENV.to_h.slice('HOME', 'OOD_API_SYS_APPS')
+    OodApi::SiteConfig.stubs(:dashboard_env).returns({})
     ENV['HOME'] = @home
     ENV['OOD_API_SYS_APPS'] = @apps
     @db = File.join(@home, 'ondemand/data/sys/dashboard/batch_connect/db')
@@ -38,25 +39,44 @@ class HandlersSessionsTest < Minitest::Test
   def test_sessions_come_newest_first_with_status_from_the_scheduler
     record('a', 'job_id' => '11', 'created_at' => 1_000, 'title' => 'JupyterLab')
     record('b', 'job_id' => '12', 'created_at' => 2_000, 'title' => 'JupyterLab', 'cache_completed' => true)
+    record('c', 'job_id' => '9', 'created_at' => 500)
     adapter = mock('adapter')
-    adapter.stubs(:info).with('11').returns(mock_job_info(id: '11', status: :running))
+    adapter.expects(:info_where_owner).with('jesse').once.returns([mock_job_info(id: '11', status: :running)])
     @cluster.stubs(:job_adapter).returns(adapter)
 
-    sessions = Handlers::Sessions.list(clusters: [@cluster])
+    sessions = Handlers::Sessions.list(clusters: [@cluster], user: 'jesse')
 
-    assert_equal ['b', 'a'], sessions.map(&:id)
-    assert_equal ['completed', 'running'], sessions.map(&:status)
-    assert_equal Time.at(1_000).iso8601, sessions.last.created_at
+    assert_equal ['b', 'a', 'c'], sessions.map(&:id)
+    assert_equal ['completed', 'running', 'completed'], sessions.map(&:status), 'a job no longer listed has finished'
+    assert_equal Time.at(1_000).iso8601, sessions[1].created_at
+  end
+
+  def test_the_dashboards_data_root_is_followed
+    root = File.join(@home, 'elsewhere')
+    FileUtils.mkdir_p(File.join(root, 'batch_connect/db'))
+    File.write(File.join(root, 'batch_connect/db/x'), JSON.generate('id' => 'x', 'cache_completed' => true))
+    OodApi::SiteConfig.stubs(:dashboard_env).returns({ 'OOD_DATAROOT' => root })
+
+    assert_equal ['x'], Handlers::Sessions.list(clusters: []).map(&:id)
+  end
+
+  def test_an_odd_created_at_or_unreadable_db_does_not_fail
+    record('a', 'created_at' => { 'nested' => 1 }, 'cache_completed' => true)
+    record('b', 'created_at' => 5, 'cache_completed' => true)
+
+    assert_equal ['b', 'a'], Handlers::Sessions.list(clusters: []).map(&:id)
+    Handlers::Sessions.stubs(:db).returns(Pathname.new('/nonexistent/db'))
+    assert_empty Handlers::Sessions.list(clusters: [])
   end
 
   def test_a_session_on_an_unknown_cluster_or_a_failing_scheduler_is_unknown
     record('a', 'job_id' => '11', 'created_at' => 1, 'cluster_id' => 'gone')
     record('b', 'job_id' => '12', 'created_at' => 2)
     adapter = mock('adapter')
-    adapter.stubs(:info).raises(StandardError, 'squeue failed')
+    adapter.stubs(:info_where_owner).raises(StandardError, 'squeue failed')
     @cluster.stubs(:job_adapter).returns(adapter)
 
-    assert_equal ['unknown', 'unknown'], Handlers::Sessions.list(clusters: [@cluster]).map(&:status)
+    assert_equal ['unknown', 'unknown'], Handlers::Sessions.list(clusters: [@cluster], user: 'jesse').map(&:status)
   end
 
   def test_backups_and_unreadable_records_are_skipped
@@ -96,13 +116,45 @@ end
 class HandlersSessionsFieldsTest < Minitest::Test
   def setup
     @apps = Dir.mktmpdir('ood-sessions-fields')
-    @saved = ENV.fetch('OOD_API_SYS_APPS', nil)
+    @config = Dir.mktmpdir('ood-sessions-config')
+    @saved = ENV.to_h.slice('OOD_API_SYS_APPS', 'OOD_BC_APP_CONFIG_ROOT')
     ENV['OOD_API_SYS_APPS'] = @apps
+    ENV['OOD_BC_APP_CONFIG_ROOT'] = @config
+    OodApi::SiteConfig.stubs(:dashboard_env).returns({})
   end
 
   def teardown
-    @saved ? ENV['OOD_API_SYS_APPS'] = @saved : ENV.delete('OOD_API_SYS_APPS')
-    FileUtils.rm_rf(@apps)
+    ['OOD_API_SYS_APPS', 'OOD_BC_APP_CONFIG_ROOT'].each { |k| @saved[k] ? ENV[k] = @saved[k] : ENV.delete(k) }
+    FileUtils.rm_rf([@apps, @config])
+  end
+
+  def test_each_sub_app_is_listed_with_its_own_page_and_merged_form
+    dir = File.join(@apps, 'bc_desktop')
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, 'manifest.yml'), "name: Desktop\ndescription: A desktop\n")
+    File.write(File.join(dir, 'form.yml'), "form:\n  - desktop\n  - bc_num_hours\nattributes:\n  desktop: mate\n")
+    FileUtils.mkdir_p(File.join(@config, 'bc_desktop'))
+    File.write(File.join(@config, 'bc_desktop', 'owens.yml'), "title: Owens Desktop\ncluster: owens\n")
+    File.write(File.join(@config, 'bc_desktop', 'pitzer.yml'), "cluster: pitzer\nattributes:\n  bc_num_hours: 1\n")
+
+    apps = Handlers::Sessions.apps
+
+    assert_equal ['sys/bc_desktop/owens', 'sys/bc_desktop/pitzer'], apps.map(&:token)
+    assert_equal ['Owens Desktop', 'Desktop: Pitzer'], apps.map(&:title)
+    assert_equal '/pun/sys/dashboard/batch_connect/sys/bc_desktop/owens/session_contexts/new', apps.first.launch_page
+    assert_equal ['Number of hours'], apps.first.fields
+    assert_empty apps.last.fields, 'the sub-app fixed the hours'
+  end
+
+  def test_the_forms_own_title_and_description_win_and_erb_is_read_first
+    dir = File.join(@apps, 'jupyter')
+    FileUtils.mkdir_p(dir)
+    File.write(File.join(dir, 'manifest.yml'), "name: Jupyter\ndescription: From the manifest\n")
+    File.write(File.join(dir, 'form.yml'), "title: Jupyter Lab\ndescription: From the form\nform:\n  - bc_num_hours\n")
+    assert_equal ['Jupyter Lab', 'From the form'], [Handlers::Sessions.apps.first.title, Handlers::Sessions.apps.first.description]
+
+    File.write(File.join(dir, 'form.yml.erb'), "form:\n  - <%= 'x' %>\n")
+    assert_empty Handlers::Sessions.apps.first.fields
   end
 
   def test_an_apps_fields_are_listed_in_order_with_their_labels

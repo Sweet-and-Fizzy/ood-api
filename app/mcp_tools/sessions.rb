@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'base'
+require_relative 'files'
 require_relative '../handlers/sessions'
 require_relative '../../lib/site_clusters'
 
@@ -24,8 +25,8 @@ module OodApi
         end
 
         lines = sessions.map do |s|
-          "- #{McpText.safe_text(s.title)} (#{McpText.safe_text(s.app)}): #{s.status}, " \
-            "job #{McpText.safe_text(s.job_id)} on #{McpText.safe_text(s.cluster_id)}, created #{s.created_at || 'N/A'}"
+          "- #{McpText.line(s.title)} (#{McpText.line(s.app)}): #{s.status}, " \
+            "job #{McpText.line(s.job_id)} on #{McpText.line(s.cluster_id)}, created #{s.created_at || 'N/A'}"
         end
         text_response("#{sessions.size} interactive session(s), newest first:\n#{lines.join("\n")}\n" \
                       "Connect to or delete them at #{Handlers::Sessions::SESSIONS_PAGE}")
@@ -46,9 +47,12 @@ module OodApi
         return text_response('This site offers no interactive apps.') if apps.empty?
 
         lines = apps.map do |a|
-          about = a.description.empty? ? '' : ": #{McpText.safe_text(a.description.lines.first.to_s.strip)}"
-          asks = a.fields.empty? ? '' : "\n  its form asks for: #{a.fields.map { |f| McpText.safe_text(f) }.join(', ')}"
-          "- #{McpText.safe_text(a.title)} (#{a.token})#{about}#{asks}\n  start it at #{a.launch_page}"
+          about = McpText.line(a.description.split(/\n\s*\n/).first)
+          about = ": #{about}" unless about.empty?
+          asks = a.fields.map { |f| McpText.line(f) }.join(', ')
+          asks = "\n  its form asks for: #{asks}" unless asks.empty?
+          "- #{McpText.line(a.title)} (#{McpText.line(a.token)})#{about}#{asks}\n  " \
+            "start it at #{McpText.line(a.launch_page)}"
         end
         text_response("Interactive apps:\n#{lines.join("\n")}")
       end
