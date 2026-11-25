@@ -59,7 +59,7 @@ The login page is your site's usual one. Sign in only when your own client
 opened it, and never enter a code someone else sent you: whoever started that
 sign-in would get access to your account.
 
-If not, you'll need a JWT from your identity provider first. Ask your
+If your site has no OAuth discovery, you'll need a JWT from your identity provider first. Ask your
 administrator for your site's issuer URL and client ID, then use a tool like
 `oidc-agent` to get a token (see
 [§1.1](#11-bearer-jwt-from-your-identity-provider) below for the full
@@ -146,9 +146,9 @@ rather than crafting OAuth requests yourself, use a maintained CLI token tool:
 
 - **[oidc-agent](https://indigo-dc.github.io/oidc-agent/)** — the common choice in
   research computing. It manages OIDC tokens like `ssh-agent` manages keys, works
-  with arbitrary providers, and supports the browser-based device flow
-  (`oidc-gen --flow=device`) for machines without a local browser. Packaged for
-  apt and Homebrew.
+  with arbitrary providers, and signs you in through your browser. Avoid its
+  device flow unless your site recommends it: a device code can be phished, and
+  never enter one that someone else sent you. Packaged for apt and Homebrew.
 - **[oauth2c](https://github.com/cloudentity/oauth2c)** or
   **[oidc-cli](https://github.com/jentz/oidc-cli)** — lighter alternatives that
   fetch a token via any grant type.

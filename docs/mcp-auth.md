@@ -91,6 +91,15 @@ dependency to every API call. Introspection at its default interval does
 *not* help: it caches until the token's own expiry, so it gives the same
 guarantee as JWKS validation. Neither option is implemented in ood-api today.
 
+Refresh tokens outlast access tokens. An MCP client that holds one keeps
+getting new access tokens until the refresh token expires or is revoked, and
+Claude Code always asks for one (`offline_access`). Dex sets no limit on a
+refresh token's life unless you set one, and has no endpoint to revoke one:
+set `expiry.refreshTokens` under `dex:` in `ood_portal.yml`, for example
+`absoluteLifetime: "720h"` and `validIfNotUsedFor: "168h"`. On Keycloak a
+refresh token from `offline_access` belongs to an offline session, which an
+administrator can end from the user's sessions in the admin console.
+
 ### Configuration
 
 This is the same Apache change as
@@ -273,6 +282,10 @@ depends on the IdP:
 - **Dex:** `["openid", "email", "offline_access"]`. Dex refuses a request
   without `openid` (`invalid_scope`), and a client given no list asks for no
   scopes at all. `email` carries the username the bundled Dex setup maps.
+  `offline_access` gets clients a refresh token; set Dex's refresh-token
+  lifetime as described under
+  [A revoked token keeps working until it expires](#a-revoked-token-keeps-working-until-it-expires),
+  since Dex sets none by default.
 - **Keycloak:** the audience scope described under
   [Which clients may connect](#which-clients-may-connect), such as
   `["email", "ood-mcp"]`. Leave `openid` out: Keycloak's *Allowed Client
@@ -346,7 +359,9 @@ including self-registration.
 
 This limits which *tokens* are accepted, not which software may register. Any
 client that can reach the registration endpoint can ask for the scope; the
-user's login and Keycloak's consent screen are what stand in its way.
+user's own login is what stands in its way. Keycloak's consent screen names
+the client by the name the registering software chose, so it does not show
+which program is really asking.
 
 ### Step 3: Regenerate and restart
 
@@ -423,6 +438,8 @@ until that expires or is revoked. Sign-in runs when Claude Code first uses the
 server, or with `claude mcp login ood-hpc`, which needs an interactive
 terminal. In a remote session, `claude mcp login ood-hpc --no-browser` prints
 the address to open on your own machine and asks for the final address back.
+That final address carries the authorization code, so users should paste it
+only into their own client, never send it to anyone.
 
 **Claude Desktop (via mcp-remote):**
 
@@ -440,7 +457,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`
 }
 ```
 
-If your IdP does not support Dynamic Client Registration:
+If your IdP does not support Dynamic Client Registration, give the
+pre-registered client ID and its callback port, which `mcp-remote` takes as
+the argument after the URL:
 
 ```json
 {
@@ -450,13 +469,17 @@ If your IdP does not support Dynamic Client Registration:
       "args": [
         "mcp-remote",
         "https://ondemand.example.edu/pun/sys/ood-api/mcp",
+        "33418",
         "--static-oauth-client-info",
-        "{\"client_id\": \"your-client-id\", \"client_secret\": \"your-secret\"}"
+        "{\"client_id\": \"your-client-id\"}"
       ]
     }
   }
 }
 ```
+
+Use a public client: a client secret in this file would sit in every user's
+configuration.
 
 ### Dynamic Client Registration
 
@@ -465,7 +488,8 @@ themselves at the IdP automatically. Read
 [Which clients may connect](#which-clients-may-connect) before turning it
 on: a self-registered client gets a client ID you have not allowed, so its
 tokens are refused unless your IdP can put the resource in the audience.
-Pre-registering one client is the arrangement this guide has tested.
+On Keycloak that is the audience scope described there, and both
+pre-registered and self-registered clients have been tested.
 
 | Identity Provider | DCR Support |
 |-------------------|-------------|
@@ -493,6 +517,10 @@ Claude Code 2.1.332):
 - A self-registered client gets a consent screen once per user and client.
   Its title is the name the registering software chose, so it does not show
   which program is really asking.
+- Each user's machine registers a client of its own, and they accumulate.
+  Keycloak's anonymous *Max Clients* policy caps how many can exist, so raise
+  it to suit your number of users and remove clients that are no longer
+  used.
 
 DCR is a convenience for the operator, not a prerequisite. Without it,
 clients still discover endpoints from the documents above and run the
@@ -549,8 +577,9 @@ dex:
 ```
 
 Allow it under [Which clients may connect](#which-clients-may-connect) with
-`Require claim aud:mcp-client`. Do not add `/device/callback` to its redirect
-URIs: that is what lets Dex run the device grant for the client, and Open
+`Require claim aud:mcp-client`. List its redirect URIs, and do not leave the
+list empty: a public Dex client with no redirect URIs accepts any localhost
+port and the device grant. Do not add `/device/callback` to the list: that is what lets Dex run the device grant for the client, and Open
 OnDemand's generator always sets Dex's `skipApprovalScreen`, so a user
 approving a device code would not be shown which program asked.
 
@@ -740,8 +769,9 @@ not a scope requested at authorization time. Untested against ood-api.
 running on a compute node. The node displays a short code the user
 approves from another device, avoiding a long-lived token pasted into
 the job environment. It is also the grant most easily phished, as described
-under [Method 1](#how-users-get-a-token), so weigh that before offering it to
-users. The grant itself works against CILogon — we used it
+under [Method 1](#how-users-get-a-token), so this guide does not recommend it
+for users; an agent on a compute node is the case where a site might accept
+that risk, with users warned never to approve a code they did not start. The grant itself works against CILogon — we used it
 to obtain a real token, as described under
 [CILogon](#cilogon) — but the resulting token has not been exercised against
 ood-api.
