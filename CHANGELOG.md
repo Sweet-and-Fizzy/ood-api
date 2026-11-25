@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installed as system apps, each with what its form asks for and the page
   that starts one. Both are read tools; neither reads a session's connection
   details.
+- `list_software` lists the software installed as environment modules, as the
+  Dashboard's Module Browser shows it: each module's versions per cluster,
+  newest first, and any module to load first. It reads the same Lmod spider
+  files as the Module Browser, from `OOD_MODULE_FILE_DIR`, the Dashboard's env
+  file or `module_file_dir` in ondemand.d, and leaves hidden modules out. A
+  site that publishes no module list gets an error saying so.
 
 ### Changed
 

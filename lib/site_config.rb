@@ -215,6 +215,17 @@ module OodApi
 
     # The directory the Dashboard is installed in: the one this app is in,
     # when the Dashboard is beside it, as the Dashboard itself works it out.
+    # Where the Dashboard's Module Browser reads each cluster's list of
+    # software modules, looked up where the Dashboard looks: its variable,
+    # then the Dashboard's env file, then `module_file_dir` in ondemand.d.
+    #
+    # @return [Pathname, nil]
+    def module_file_dir
+      given = [ENV.fetch('OOD_MODULE_FILE_DIR', nil), dashboard_env['OOD_MODULE_FILE_DIR'], config[:module_file_dir]]
+      found = given.map { |value| value.to_s.scrub.strip }.find { |value| !value.empty? }
+      found && Pathname.new(found)
+    end
+
     def sys_apps
       return Pathname.new(ENV['OOD_API_SYS_APPS']) if ENV['OOD_API_SYS_APPS']
 
