@@ -18,6 +18,19 @@ before you start.
 Both build on the same core setup — Method 1 is a subset of Method 2, so you can
 start simple and add OAuth discovery later.
 
+**Clients outside the portal are optional.** An assistant that runs inside the
+portal as the user, such as ood-agent, reaches the tools through
+`bin/mcp-stdio` with `local: true` and needs none of this guide. A site can
+serve it with `mcp: false` and open no route for clients outside the portal
+(see [serving a program on the portal host](installation.md#serving-a-program-on-the-portal-host)).
+Everything below is for clients on users' own machines.
+
+**A token accepted here opens the whole portal.** Open OnDemand applies `auth`
+in `ood_portal.yml` to every app, so a token that `/mcp` accepts also works on
+the Dashboard, the Shell and every other app, with the user's full rights.
+Decide which clients to allow with that in mind (see
+[Which clients may connect](#which-clients-may-connect)).
+
 | | Method 1: Static Token | Method 2: OAuth Discovery |
 |---|---|---|
 | **Server config** | Core setup only | Core setup + discovery docs |
@@ -78,6 +91,15 @@ dependency to every API call. Introspection at its default interval does
 *not* help: it caches until the token's own expiry, so it gives the same
 guarantee as JWKS validation. Neither option is implemented in ood-api today.
 
+Refresh tokens outlast access tokens. An MCP client that holds one keeps
+getting new access tokens until the refresh token expires or is revoked, and
+Claude Code always asks for one (`offline_access`). Dex sets no limit on a
+refresh token's life unless you set one, and has no endpoint to revoke one:
+set `expiry.refreshTokens` under `dex:` in `ood_portal.yml`, for example
+`absoluteLifetime: "720h"` and `validIfNotUsedFor: "168h"`. On Keycloak a
+refresh token from `offline_access` belongs to an offline session, which an
+administrator can end from the user's sessions in the admin console.
+
 ### Configuration
 
 This is the same Apache change as
@@ -114,6 +136,13 @@ Common approaches:
 - Direct token request via the IdP's token endpoint (if the IdP
   supports the `client_credentials` or `password` grant)
 - An existing institutional token service
+
+Do not hand tokens out through the device-code grant. A device code can be
+phished: an attacker starts a sign-in, sends a user the code with a pretext,
+and gets the token when the user approves it (RFC 8628, section 5.4). Here
+that token acts as the user across the whole portal. Method 2's browser
+sign-in does not have this weakness, because the authorization code goes
+only to a callback on the user's own machine.
 
 ### Client configuration
 
@@ -246,15 +275,29 @@ Set `resource` to the full URL of the MCP endpoint, exactly as users
 configure it in their client. Set `authorization_servers` to your IdP's
 issuer URL, exactly as the IdP states it in its own metadata.
 
-If access depends on a scope (the Keycloak audience scope described under
-[Which clients may connect](#which-clients-may-connect)), add
-`"scopes_supported": ["email", "ood-mcp"]`. Clients request exactly this list,
-and use it when self-registering. Include the scope that carries your
-`OIDCOAuthRemoteUserClaim` (`email` in the tested setup), or the token arrives
-without a username and Apache answers 401 after a login that appeared to
-succeed. Leave `openid` out: Keycloak rejects a registration that names it.
-Every pre-registered client needs the listed scopes assigned too, or its login
-fails with `invalid_scope`.
+Add `scopes_supported` with the scopes clients should request. Clients
+request exactly this list, and use it when self-registering. What it holds
+depends on the IdP:
+
+- **Dex:** `["openid", "email", "offline_access"]`. Dex refuses a request
+  without `openid` (`invalid_scope`), and a client given no list asks for no
+  scopes at all. `email` carries the username the bundled Dex setup maps.
+  `offline_access` gets clients a refresh token; set Dex's refresh-token
+  lifetime as described under
+  [A revoked token keeps working until it expires](#a-revoked-token-keeps-working-until-it-expires),
+  since Dex sets none by default.
+- **Keycloak:** the audience scope described under
+  [Which clients may connect](#which-clients-may-connect), such as
+  `["email", "ood-mcp"]`. Leave `openid` out: Keycloak's *Allowed Client
+  Scopes* registration policy refuses a registration that names it.
+  `preferred_username` comes from Keycloak's `profile` scope, a default scope
+  added whatever a client asks for.
+
+If the scope that carries your `OIDCOAuthRemoteUserClaim` is not one the IdP
+adds by default, list it, or the token arrives without a username and Apache
+answers 401 after a login that appeared to succeed. Every pre-registered
+client needs the listed scopes assigned too, or its login fails with
+`invalid_scope`.
 
 That is the only document to host. Clients fetch the authorization server's
 metadata from the IdP itself. For an issuer with a path, such as Keycloak's
@@ -316,7 +359,9 @@ including self-registration.
 
 This limits which *tokens* are accepted, not which software may register. Any
 client that can reach the registration endpoint can ask for the scope; the
-user's login and Keycloak's consent screen are what stand in its way.
+user's own login is what stands in its way. Keycloak's consent screen names
+the client by the name the registering software chose, so it does not show
+which program is really asking.
 
 ### Step 3: Regenerate and restart
 
@@ -354,29 +399,47 @@ official MCP client SDK (1.32.2) followed the 401 to the metadata and on to
 Dex, and a token from an authorization-code flow with PKCE through a
 pre-registered public client was accepted by `/mcp`. It was also run against
 Keycloak 26.0.8, with a pre-registered client and with a self-registered one.
-It has not been run against CILogon, or driven from an interactive MCP
-client.
+Claude Code 2.1.332 signed in and connected through the bundled Dex with a
+pre-registered client, and through Keycloak 26.8.2 with a pre-registered
+client and by registering itself. It has not been run against CILogon.
 
 ### Client configuration
 
 **Claude Code CLI:**
 
+With an IdP that lets clients register themselves (Keycloak, set up as under
+[Dynamic Client Registration](#dynamic-client-registration)):
+
 ```bash
 claude mcp add ood-hpc --transport http \
   https://ondemand.example.edu/pun/sys/ood-api/mcp
 ```
 
-That's it. Claude Code discovers auth automatically and opens a
-browser for login.
+Claude Code discovers the IdP, registers itself, and opens a browser for
+login.
 
-If your IdP does not support Dynamic Client Registration, provide a
-pre-registered client ID:
+With a pre-registered client, which Dex always needs, give its client ID and
+the callback port you registered for it:
 
 ```bash
 claude mcp add ood-hpc --transport http \
-  --client-id "your-client-id" \
+  --client-id "your-client-id" --callback-port 33418 \
   https://ondemand.example.edu/pun/sys/ood-api/mcp
 ```
+
+Without `--callback-port`, Claude Code picks a random port, and the login
+fails unless the client's redirect URI is exactly
+`http://localhost:<that port>/callback`. Dex does not accept other localhost
+ports for a public client once its redirect URIs are listed.
+
+Claude Code requests `offline_access` along with the scopes in the discovery
+document, so the IdP issues a refresh token and the connection stays signed in
+until that expires or is revoked. Sign-in runs when Claude Code first uses the
+server, or with `claude mcp login ood-hpc`, which needs an interactive
+terminal. In a remote session, `claude mcp login ood-hpc --no-browser` prints
+the address to open on your own machine and asks for the final address back.
+That final address carries the authorization code, so users should paste it
+only into their own client, never send it to anyone.
 
 **Claude Desktop (via mcp-remote):**
 
@@ -394,7 +457,9 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`
 }
 ```
 
-If your IdP does not support Dynamic Client Registration:
+If your IdP does not support Dynamic Client Registration, give the
+pre-registered client ID and its callback port, which `mcp-remote` takes as
+the argument after the URL:
 
 ```json
 {
@@ -404,13 +469,17 @@ If your IdP does not support Dynamic Client Registration:
       "args": [
         "mcp-remote",
         "https://ondemand.example.edu/pun/sys/ood-api/mcp",
+        "33418",
         "--static-oauth-client-info",
-        "{\"client_id\": \"your-client-id\", \"client_secret\": \"your-secret\"}"
+        "{\"client_id\": \"your-client-id\"}"
       ]
     }
   }
 }
 ```
+
+Use a public client: a client secret in this file would sit in every user's
+configuration.
 
 ### Dynamic Client Registration
 
@@ -419,13 +488,39 @@ themselves at the IdP automatically. Read
 [Which clients may connect](#which-clients-may-connect) before turning it
 on: a self-registered client gets a client ID you have not allowed, so its
 tokens are refused unless your IdP can put the resource in the audience.
-Pre-registering one client is the arrangement this guide has tested.
+On Keycloak that is the audience scope described there, and both
+pre-registered and self-registered clients have been tested.
 
 | Identity Provider | DCR Support |
 |-------------------|-------------|
 | CILogon | **No** — pre-register the client, see below |
-| Keycloak | Yes, but anonymous registration is refused until you add the registering hosts to the realm's "Trusted Hosts" client registration policy (or hand out initial access tokens) |
+| Keycloak | Yes, with the realm settings below |
 | Dex | Not supported — pre-register a client |
+
+**Keycloak settings for anonymous registration** (checked on 26.8.2 with
+Claude Code 2.1.332):
+
+- In the realm's client registration policies, set *Trusted Hosts* to
+  `localhost` and `127.0.0.1`, keep *Client URIs Must Match* on, and turn
+  *Host Sending Registration Request Must Match* off. Registrations come from
+  users' own machines, which cannot be listed; the URI check is what holds
+  self-registered clients to localhost redirects. A redirect to any other host
+  is refused, and any port is allowed.
+- Keycloak lets a self-registered client turn on the device grant, whose codes
+  can be phished (see [Method 1](#how-users-get-a-token)). Add a client policy
+  whose condition is the grant type
+  `urn:ietf:params:oauth:grant-type:device_code` and whose profile uses the
+  `reject-request` executor. Keycloak still hands out a user code, but the
+  token request is refused. Starting Keycloak with
+  `--features-disabled=device-flow` should turn the grant off entirely; that
+  was not tested.
+- A self-registered client gets a consent screen once per user and client.
+  Its title is the name the registering software chose, so it does not show
+  which program is really asking.
+- Each user's machine registers a client of its own, and they accumulate.
+  Keycloak's anonymous *Max Clients* policy caps how many can exist, so raise
+  it to suit your number of users and remove clients that are no longer
+  used.
 
 DCR is a convenience for the operator, not a prerequisite. Without it,
 clients still discover endpoints from the documents above and run the
@@ -458,11 +553,35 @@ provisioned in advance.
 > editing or re-creating the client.
 
 If DCR is not available, pre-register an OAuth client in your IdP with:
-- Redirect URI: `http://localhost:PORT/callback` (for desktop clients)
-- Grant type: `authorization_code`
+- Redirect URI: `http://localhost:PORT/callback`, with the port you publish
+  to users (for desktop clients)
+- Grant types: `authorization_code`, and `refresh_token` if clients should
+  stay signed in
 - PKCE: required (`S256`)
+- No device grant
 
-Give users the client ID to configure in their MCP client settings.
+Give users the client ID and the port to configure in their MCP client
+settings.
+
+On the bundled Dex, add the client under `dex:` in `ood_portal.yml`, then run
+`update_ood_portal` and restart `ondemand-dex`:
+
+```yaml
+dex:
+  static_clients:
+    - id: mcp-client
+      name: MCP clients
+      public: true
+      redirectURIs:
+        - http://localhost:33418/callback
+```
+
+Allow it under [Which clients may connect](#which-clients-may-connect) with
+`Require claim aud:mcp-client`. List its redirect URIs, and do not leave the
+list empty: a public Dex client with no redirect URIs accepts any localhost
+port and the device grant. Do not add `/device/callback` to the list: that is what lets Dex run the device grant for the client, and Open
+OnDemand's generator always sets Dex's `skipApprovalScreen`, so a user
+approving a device code would not be shown which program asked.
 
 ## If your IdP issues opaque access tokens
 
@@ -649,7 +768,10 @@ not a scope requested at authorization time. Untested against ood-api.
 **Device code flow** suits a client with no browser, such as an agent
 running on a compute node. The node displays a short code the user
 approves from another device, avoiding a long-lived token pasted into
-the job environment. The grant itself works against CILogon — we used it
+the job environment. It is also the grant most easily phished, as described
+under [Method 1](#how-users-get-a-token), so this guide does not recommend it
+for users; an agent on a compute node is the case where a site might accept
+that risk, with users warned never to approve a code they did not start. The grant itself works against CILogon — we used it
 to obtain a real token, as described under
 [CILogon](#cilogon) — but the resulting token has not been exercised against
 ood-api.
