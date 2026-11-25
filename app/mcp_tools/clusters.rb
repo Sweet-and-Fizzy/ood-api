@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'base'
+require_relative '../../lib/site_clusters'
 require_relative '../handlers/clusters'
 
 module OodApi
@@ -14,7 +15,7 @@ module OodApi
 
       def self.run(**_params)
         clusters = audited('list_clusters') do
-          Handlers::Clusters.list(clusters: OodApi::App.clusters)
+          Handlers::Clusters.list(clusters: SiteClusters.all)
         end
         lines = clusters.map do |c|
           title = c.metadata.title || c.id.to_s
@@ -42,7 +43,7 @@ module OodApi
 
       def self.run(cluster_id:, **_params)
         cluster = audited('get_cluster', cluster: cluster_id) do
-          Handlers::Clusters.get(clusters: OodApi::App.clusters, id: cluster_id)
+          Handlers::Clusters.get(clusters: SiteClusters.all, id: cluster_id)
         end
         title = cluster.metadata.title || cluster.id.to_s
         adapter = cluster.job_config[:adapter]
@@ -67,7 +68,7 @@ module OodApi
 
       def self.run(cluster_id:, **_params)
         accounts = audited('list_accounts', cluster: cluster_id) do
-          Handlers::Clusters.accounts(clusters: OodApi::App.clusters, id: cluster_id)
+          Handlers::Clusters.accounts(clusters: SiteClusters.all, id: cluster_id)
         end
         if accounts.empty?
           text = "No accounts found on cluster #{cluster_id}."
@@ -94,7 +95,7 @@ module OodApi
 
       def self.run(cluster_id:, **_params)
         info = audited('cluster_info', cluster: cluster_id) do
-          Handlers::Clusters.info(clusters: OodApi::App.clusters, id: cluster_id)
+          Handlers::Clusters.info(clusters: SiteClusters.all, id: cluster_id)
         end
         text = "Nodes: #{info.active_nodes}/#{info.total_nodes} active\n" \
                "CPUs: #{info.active_processors}/#{info.total_processors} active\n" \
@@ -118,7 +119,7 @@ module OodApi
 
       def self.run(cluster_id:, **_params)
         queues = audited('list_queues', cluster: cluster_id) do
-          Handlers::Clusters.queues(clusters: OodApi::App.clusters, id: cluster_id)
+          Handlers::Clusters.queues(clusters: SiteClusters.all, id: cluster_id)
         end
         if queues.empty?
           text = "No queues found on cluster #{cluster_id}."

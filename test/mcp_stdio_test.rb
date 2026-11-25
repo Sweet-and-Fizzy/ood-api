@@ -214,10 +214,10 @@ class McpStdioTest < Minitest::Test
   # Runs bin/mcp-stdio as a separate process.
   #
   # @return [Array(Hash, String)] its last reply and what it logged
-  def run_script(env, script: File.join(ROOT, 'bin', 'mcp-stdio'), chdir: Dir.tmpdir)
+  def run_script(env, script: File.join(ROOT, 'bin', 'mcp-stdio'), chdir: Dir.tmpdir, input: LIST)
     clean = { 'RUBYOPT' => nil, 'BUNDLE_GEMFILE' => nil, 'RACK_ENV' => nil, 'RAILS_ENV' => nil,
               'PASSENGER_BASE_URI' => nil, 'OOD_API_CONFIG_ROOT' => nil, 'OOD_API_LOCAL' => nil }
-    out, err, status = Open3.capture3(clean.merge(env), script, stdin_data: LIST, chdir: chdir)
+    out, err, status = Open3.capture3(clean.merge(env), script, stdin_data: input, chdir: chdir)
     assert status.success?, err
     [JSON.parse(out.lines.last), err]
   end
@@ -233,6 +233,38 @@ class McpStdioTest < Minitest::Test
 
       assert_includes reply.dig('result', 'tools').map { |tool| tool['name'] }, 'read_file'
       assert_match(%r{settings="/etc/ood/config/apps/#{File.basename(ROOT)}/config.yml}, err)
+    end
+  end
+
+  # The script loads the tools without the web app, so this runs it as its
+  # own process: in this test process the web app is already loaded.
+  def test_the_script_reads_the_sites_clusters_for_the_cluster_and_job_tools
+    Dir.mktmpdir('clusters') do |clusters|
+      File.write(File.join(clusters, 'hpc.yml'), <<~YAML)
+        v2:
+          metadata:
+            title: Test HPC
+          login:
+            host: login.example.edu
+          job:
+            adapter: slurm
+      YAML
+      env = { 'RACK_ENV' => 'development', 'OOD_API_LOCAL' => 'true', 'OOD_CLUSTERS' => clusters }
+      call = lambda do |name, arguments|
+        "#{JSON.generate(jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: name, arguments: arguments })}\n"
+      end
+
+      reply, err = run_script(env, input: call.call('list_clusters', {}))
+
+      assert reply.key?('result'), "#{reply['error']}\n#{err}"
+      assert_equal false, reply.dig('result', 'isError')
+      assert_match(/hpc \(Test HPC\)/, reply.dig('result', 'content', 0, 'text'))
+
+      # A job tool reaches the cluster's scheduler. Whether the scheduler
+      # answers depends on the host, but the reply is the tool's own.
+      reply, err = run_script(env, input: call.call('list_jobs', { cluster_id: 'hpc' }))
+
+      assert reply.key?('result'), "#{reply['error']}\n#{err}"
     end
   end
 

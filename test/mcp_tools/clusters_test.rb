@@ -9,7 +9,7 @@ class ListClustersToolTest < Minitest::Test
 
   def setup
     @clusters = [mock_cluster(id: 'cluster1'), mock_cluster(id: 'cluster2', title: 'Cluster Two')]
-    OodApi::App.stubs(:clusters).returns(@clusters)
+    OodApi::SiteClusters.stubs(:all).returns(@clusters)
   end
 
   def test_lists_clusters
@@ -35,7 +35,7 @@ class ListClustersToolErrorTest < Minitest::Test
   include TestHelpers
 
   def test_returns_error_on_adapter_error
-    OodApi::App.stubs(:clusters).returns([])
+    OodApi::SiteClusters.stubs(:all).returns([])
     Handlers::Clusters.stubs(:list).raises(Handlers::AdapterError, 'Adapter connection failed')
 
     result = ListClustersTool.call(server_context: nil)
@@ -53,7 +53,7 @@ class ListAccountsToolTest < Minitest::Test
     @adapter = mock('adapter')
     @cluster = mock_cluster(id: 'cluster1')
     @cluster.stubs(:job_adapter).returns(@adapter)
-    OodApi::App.stubs(:clusters).returns([@cluster])
+    OodApi::SiteClusters.stubs(:all).returns([@cluster])
   end
 
   def test_returns_accounts
@@ -66,7 +66,7 @@ class ListAccountsToolTest < Minitest::Test
   end
 
   def test_returns_error_for_missing_cluster
-    OodApi::App.stubs(:clusters).returns([])
+    OodApi::SiteClusters.stubs(:all).returns([])
     result = ListAccountsTool.call(server_context: nil, cluster_id: 'bad')
     assert result.to_h[:isError]
   end
@@ -80,7 +80,7 @@ class ListQueuesToolTest < Minitest::Test
     @adapter = mock('adapter')
     @cluster = mock_cluster(id: 'cluster1')
     @cluster.stubs(:job_adapter).returns(@adapter)
-    OodApi::App.stubs(:clusters).returns([@cluster])
+    OodApi::SiteClusters.stubs(:all).returns([@cluster])
   end
 
   def test_returns_queues
@@ -93,7 +93,7 @@ class ListQueuesToolTest < Minitest::Test
   end
 
   def test_returns_error_for_missing_cluster
-    OodApi::App.stubs(:clusters).returns([])
+    OodApi::SiteClusters.stubs(:all).returns([])
     result = ListQueuesTool.call(server_context: nil, cluster_id: 'bad')
     assert result.to_h[:isError]
   end
@@ -107,7 +107,7 @@ class GetClusterInfoToolTest < Minitest::Test
     @adapter = mock('adapter')
     @cluster = mock_cluster(id: 'cluster1')
     @cluster.stubs(:job_adapter).returns(@adapter)
-    OodApi::App.stubs(:clusters).returns([@cluster])
+    OodApi::SiteClusters.stubs(:all).returns([@cluster])
   end
 
   def test_returns_cluster_info
@@ -127,7 +127,7 @@ class GetClusterInfoToolTest < Minitest::Test
   end
 
   def test_returns_error_for_missing_cluster
-    OodApi::App.stubs(:clusters).returns([])
+    OodApi::SiteClusters.stubs(:all).returns([])
     result = GetClusterInfoTool.call(server_context: nil, cluster_id: 'bad')
     assert result.to_h[:isError]
   end
@@ -146,7 +146,7 @@ class GetClusterToolTest < Minitest::Test
 
   def setup
     @clusters = [mock_cluster(id: 'cluster1'), mock_cluster(id: 'cluster2')]
-    OodApi::App.stubs(:clusters).returns(@clusters)
+    OodApi::SiteClusters.stubs(:all).returns(@clusters)
   end
 
   def test_gets_cluster_by_id

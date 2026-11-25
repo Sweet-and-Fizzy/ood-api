@@ -10,7 +10,7 @@ class ListJobsToolTest < Minitest::Test
   def setup
     @cluster = mock_cluster(id: 'cluster1')
     @clusters = [@cluster]
-    OodApi::App.stubs(:clusters).returns(@clusters)
+    OodApi::SiteClusters.stubs(:all).returns(@clusters)
   end
 
   def test_lists_jobs
@@ -56,7 +56,7 @@ class GetJobToolTest < Minitest::Test
   def setup
     @cluster = mock_cluster(id: 'cluster1')
     @clusters = [@cluster]
-    OodApi::App.stubs(:clusters).returns(@clusters)
+    OodApi::SiteClusters.stubs(:all).returns(@clusters)
   end
 
   def test_gets_job
@@ -94,7 +94,7 @@ class ListHistoricJobsToolTest < Minitest::Test
   def setup
     @cluster = mock_cluster(id: 'cluster1')
     @clusters = [@cluster]
-    OodApi::App.stubs(:clusters).returns(@clusters)
+    OodApi::SiteClusters.stubs(:all).returns(@clusters)
   end
 
   def test_lists_historic_jobs
@@ -130,7 +130,7 @@ class SubmitJobToolTest < Minitest::Test
   def setup
     @cluster = mock_cluster(id: 'cluster1')
     @clusters = [@cluster]
-    OodApi::App.stubs(:clusters).returns(@clusters)
+    OodApi::SiteClusters.stubs(:all).returns(@clusters)
   end
 
   def test_submits_job
@@ -171,7 +171,7 @@ class CancelJobToolTest < Minitest::Test
   def setup
     @cluster = mock_cluster(id: 'cluster1')
     @clusters = [@cluster]
-    OodApi::App.stubs(:clusters).returns(@clusters)
+    OodApi::SiteClusters.stubs(:all).returns(@clusters)
   end
 
   def test_cancels_job
@@ -189,7 +189,7 @@ class CancelJobToolTest < Minitest::Test
   end
 
   def test_error_on_missing_cluster
-    OodApi::App.stubs(:clusters).returns([])
+    OodApi::SiteClusters.stubs(:all).returns([])
 
     result = CancelJobTool.call(cluster_id: 'bad', job_id: '123', server_context: nil)
     content = result.to_h
@@ -204,7 +204,7 @@ class HoldJobToolTest < Minitest::Test
   def setup
     @cluster = mock_cluster(id: 'cluster1')
     @clusters = [@cluster]
-    OodApi::App.stubs(:clusters).returns(@clusters)
+    OodApi::SiteClusters.stubs(:all).returns(@clusters)
   end
 
   def test_holds_job
@@ -236,7 +236,7 @@ class HoldJobToolTest < Minitest::Test
   end
 
   def test_error_on_missing_cluster
-    OodApi::App.stubs(:clusters).returns([])
+    OodApi::SiteClusters.stubs(:all).returns([])
 
     result = HoldJobTool.call(cluster_id: 'bad', job_id: '123', server_context: nil)
     content = result.to_h
@@ -251,7 +251,7 @@ class ReleaseJobToolTest < Minitest::Test
   def setup
     @cluster = mock_cluster(id: 'cluster1')
     @clusters = [@cluster]
-    OodApi::App.stubs(:clusters).returns(@clusters)
+    OodApi::SiteClusters.stubs(:all).returns(@clusters)
   end
 
   def test_releases_job
@@ -269,7 +269,7 @@ class ReleaseJobToolTest < Minitest::Test
   end
 
   def test_error_on_missing_cluster
-    OodApi::App.stubs(:clusters).returns([])
+    OodApi::SiteClusters.stubs(:all).returns([])
 
     result = ReleaseJobTool.call(cluster_id: 'bad', job_id: '123', server_context: nil)
     content = result.to_h
@@ -281,7 +281,7 @@ class ReleaseJobToolTest < Minitest::Test
   # internal error instead of a clean tool error. REST returns 400 here.
   def test_hold_and_release_report_a_bad_job_id_as_a_tool_error
     @mock_clusters = [mock_cluster(id: 'cluster1')]
-    OodApi::App.stubs(:clusters).returns(@mock_clusters)
+    OodApi::SiteClusters.stubs(:all).returns(@mock_clusters)
     bad = (+"job\xFF").force_encoding('UTF-8')
 
     [OodApi::Tools::HoldJobTool, OodApi::Tools::ReleaseJobTool].each do |tool|

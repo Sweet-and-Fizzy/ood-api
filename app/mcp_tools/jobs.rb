@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'base'
+require_relative '../../lib/site_clusters'
 require_relative '../handlers/jobs'
 
 module OodApi
@@ -21,7 +22,7 @@ module OodApi
       def self.run(cluster_id:, **_params)
         jobs, _cluster = audited('list_jobs', cluster: cluster_id) do
           Handlers::Jobs.list(
-            clusters:   OodApi::App.clusters,
+            clusters:   SiteClusters.all,
             cluster_id: cluster_id,
             user:       current_user
           )
@@ -56,7 +57,7 @@ module OodApi
         job, cluster = audited('get_job', cluster: cluster_id,
                                           job_id:  job_id) do
           Handlers::Jobs.get(
-            clusters:   OodApi::App.clusters,
+            clusters:   SiteClusters.all,
             cluster_id: cluster_id,
             job_id:     job_id
           )
@@ -93,7 +94,7 @@ module OodApi
         jobs, _cluster = audited('list_historic_jobs',
                                  cluster: cluster_id) do
           Handlers::Jobs.historic(
-            clusters:   OodApi::App.clusters,
+            clusters:   SiteClusters.all,
             cluster_id: cluster_id,
             user:       current_user
           )
@@ -164,7 +165,7 @@ module OodApi
       def self.run(cluster_id:, script_content:, **params)
         options = params.slice(*OPTIONS)
         job_info, cluster = audited('submit_job', **audit_fields(cluster_id, script_content, options)) do
-          Handlers::Jobs.submit(clusters: OodApi::App.clusters, cluster_id: cluster_id,
+          Handlers::Jobs.submit(clusters: SiteClusters.all, cluster_id: cluster_id,
                                 script_content: script_content, **options)
         end
         text = "Job submitted successfully.\nJob ID: #{job_info.id}\nCluster: #{cluster.id}\nStatus: #{job_info.status}"
@@ -190,7 +191,7 @@ module OodApi
         result = audited('cancel_job', cluster: cluster_id,
                                        job_id:  job_id) do
           Handlers::Jobs.cancel(
-            clusters:   OodApi::App.clusters,
+            clusters:   SiteClusters.all,
             cluster_id: cluster_id,
             job_id:     job_id
           )
@@ -216,7 +217,7 @@ module OodApi
 
       def self.run(cluster_id:, job_id:, **_params)
         audited('hold_job', cluster: cluster_id, job_id: job_id) do
-          Handlers::Jobs.hold(clusters: OodApi::App.clusters, cluster_id: cluster_id, job_id: job_id)
+          Handlers::Jobs.hold(clusters: SiteClusters.all, cluster_id: cluster_id, job_id: job_id)
         end
         text_response("Job #{job_id} held.")
       end
@@ -238,7 +239,7 @@ module OodApi
 
       def self.run(cluster_id:, job_id:, **_params)
         audited('release_job', cluster: cluster_id, job_id: job_id) do
-          Handlers::Jobs.release(clusters: OodApi::App.clusters, cluster_id: cluster_id, job_id: job_id)
+          Handlers::Jobs.release(clusters: SiteClusters.all, cluster_id: cluster_id, job_id: job_id)
         end
         text_response("Job #{job_id} released.")
       end
