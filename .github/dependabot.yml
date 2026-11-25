@@ -24,17 +24,16 @@ updates:
         dependency-type: production
         patterns:
           - "*"
-    # These are held to keep the app installable on Ruby 3.0, which OOD 3.x
-    # ships. Their next releases require a later Ruby than that floor allows,
-    # so Dependabot would reopen the same PR every week. The Gemfile records
-    # why each is pinned; remove the entry here when the floor moves.
+    # These are held to keep the app installable on Ruby 3.1, the floor the
+    # Gemfile states. Their next releases require a later Ruby, so Dependabot
+    # would reopen the same PR every week. The Gemfile records why each is
+    # pinned; keep these versions in step with its pins, and remove an entry
+    # when the floor moves.
     ignore:
       - dependency-name: excon
-        versions: [">= 1.2.6"]
+        versions: [">= 1.7.0"]
       - dependency-name: minitest
-        versions: [">= 5.26.2"]
-      - dependency-name: multi_json
-        versions: [">= 1.20.0"]
+        versions: [">= 6.0"]
       - dependency-name: public_suffix
         versions: [">= 7.0"]
       - dependency-name: parallel
