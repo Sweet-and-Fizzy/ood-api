@@ -8,8 +8,8 @@ module Handlers
   # What a job's scheduler knows about it beyond the portable status: its own
   # word for the state, which tells failed, timed-out and out-of-memory jobs
   # apart where the portable status says only "completed"; the reason it
-  # ended or is waiting; the directory it runs in; its script; and, for
-  # Slurm, the files its output and errors go to.
+  # ended or is waiting; the memory it asked for; the directory it runs in;
+  # its script; and, for Slurm, the files its output and errors go to.
   #
   # Slurm does not report a job's output files to ood_core, so they are
   # worked out the way sbatch does: from the script's #SBATCH --output and
@@ -32,6 +32,7 @@ module Handlers
         native_state:   value(native[:state])&.downcase,
         reason:         value(native[:reason]),
         expected_start: expected_start(info, native),
+        memory:         memory(native[:min_memory]),
         work_dir:       value(native[:work_dir]),
         script:         value(native[:command])
       }
@@ -53,6 +54,13 @@ module Handlers
       Time.strptime(text, text.length == 16 ? '%Y-%m-%dT%H:%M' : '%Y-%m-%dT%H:%M:%S').iso8601
     rescue ArgumentError
       nil
+    end
+
+    # The memory the job asked the scheduler for, as the scheduler writes it
+    # (Slurm: per node, such as 4G); nothing when it asked for none.
+    def memory(raw)
+      text = value(raw)
+      text.nil? || text.match?(/\A0+[KMGT]?\z/i) ? nil : text
     end
 
     def value(raw)
