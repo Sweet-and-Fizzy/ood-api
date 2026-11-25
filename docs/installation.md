@@ -189,6 +189,10 @@ The MCP endpoint is at `/mcp`. Configure your MCP client to connect via HTTP:
 claude mcp add ood-hpc --transport http https://ondemand.example.edu/pun/sys/ood-api/mcp
 ```
 
+With a pre-registered client, which the bundled Dex needs, add
+`--client-id <id> --callback-port <port>`; see
+[MCP Authentication](mcp-auth.md#client-configuration-1).
+
 **Claude Desktop (via mcp-remote):**
 
 ```json

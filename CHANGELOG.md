@@ -25,7 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own state, which tells a failed, timed-out or out-of-memory job from one
   that succeeded where the status says only `completed`; the reason it ended
   or is waiting, and for a waiting Slurm job when it is expected to start; the
-  nodes, cores and GPUs it asked for or holds, and the memory it asked for; how
+  nodes, CPUs and GPUs (per node on several nodes) it asked for or holds, and
+  the memory it asked for, per node or per CPU as squeue gives it; how
   long it has run, its time limit and the time left, with the time of the
   answer, every time with its UTC offset in the local time zone (`TZ`, when the
   caller sets it); its working directory and script; and on Slurm, the files
@@ -63,6 +64,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not use it.
 
 ### Fixed
+
+- A job submitted through the API or MCP is submitted from its working
+  directory, as the Dashboard does. Slurm records that directory as
+  `SLURM_SUBMIT_DIR`, so a script that starts with `cd $SLURM_SUBMIT_DIR` ran
+  in this app's own directory instead. A `workdir` this host does not have,
+  such as one only the cluster mounts, is submitted from where the app runs,
+  as before, and the scheduler still runs the job in it.
 
 - When the clusters directory (`OOD_CLUSTERS`, by default
   `/etc/ood/config/clusters.d`) does not exist, the cluster and job tools now
