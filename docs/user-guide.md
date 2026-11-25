@@ -262,7 +262,7 @@ and Cursor — including auto-refreshing tokens — is in
 
 ### 3.2 Available tools
 
-Up to 20 tools, grouped by area, required parameters in **bold**. A site
+Up to 22 tools, grouped by area, required parameters in **bold**. A site
 chooses which to enable: by default only the ones that list and read, with job
 submission and file writes turned on separately. Your client shows the ones
 your site offers. Chatting
@@ -347,6 +347,13 @@ from establishing access that outlasts the conversation.
 |---|---|---|
 | `list_env` | optional `prefix` | List allowed environment variables |
 | `get_env` | **name** | Get one variable |
+
+**Interactive apps**
+
+| Tool | Parameters | Does |
+|---|---|---|
+| `list_interactive_sessions` | — | Your interactive sessions (Jupyter, a desktop and so on), newest first, with their status and the Dashboard page to connect to them |
+| `list_interactive_apps` | — | The interactive apps the site offers, each sub-app on its own, with what its form asks for and the Dashboard page that starts one |
 
 There is also an `ood://context` resource carrying your site's policies and
 guidance; a well-behaved client reads it before acting.

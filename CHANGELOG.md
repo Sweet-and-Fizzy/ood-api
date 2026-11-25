@@ -34,6 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `#SBATCH --output` and `--error` lines or Slurm's default, with where each
   came from. `list_jobs` adds the scheduler's state after `completed`. The
   REST `GET /api/v1/jobs/:id` returns the same under `details`.
+- `list_interactive_sessions` lists the user's interactive app sessions as the
+  Dashboard records them, newest first, with each one's app, status from the
+  scheduler, job and start time, and the Dashboard page where the user
+  connects to them. `list_interactive_apps` lists the interactive apps
+  installed as system apps, each sub-app (such as one desktop per cluster)
+  on its own, with what its form asks for and the page that starts one.
+  Sessions are found under the Dashboard's data root (`OOD_DATAROOT` in its
+  env file, if set) and their status is looked up with one scheduler query
+  per cluster. Both are read tools; neither reads a session's connection
+  details.
 
 ### Changed
 
