@@ -84,7 +84,7 @@ module OodApi
           ['Job', job.id], ['Cluster', cluster.id], ['Name', job.job_name || '(unnamed)'],
           ['Owner', job.job_owner], ['Status', job.status],
           ['Scheduler state', details[:native_state]], ['Reason', details[:reason]],
-          ['Queue', job.queue_name], ['Resources', resources(job)], ['Memory', details[:memory]],
+          ['Queue', job.queue_name], ['Resources', resources(job)], ['Memory requested', memory(details)],
           *times(job, details),
           ['Working directory', details[:work_dir]], ['Script', details[:script]],
           ['Output file', file_line(details, :output)], ['Error file', file_line(details, :error)]
@@ -94,12 +94,21 @@ module OodApi
 
       # What the job asked for, or holds once running: nodes, cores and GPUs,
       # leaving out any the scheduler gives no count for.
+      # Slurm counts CPUs, which are hardware threads where a core has more
+      # than one, and reports a GPU request per node.
       def self.resources(job)
-        counts = [[job.allocated_nodes&.size, 'node'], [job.procs, 'core'], [job.gpus, 'GPU']]
-        parts = counts.filter_map do |count, unit|
-          "#{count.to_i} #{unit}#{'s' unless count.to_i == 1}" if count.to_i.positive?
+        nodes = job.allocated_nodes&.size.to_i
+        counts = [[nodes, 'node', ''], [job.procs, 'CPU', ''], [job.gpus, 'GPU', nodes > 1 ? ' per node' : '']]
+        parts = counts.filter_map do |count, unit, per|
+          "#{count.to_i} #{unit}#{'s' unless count.to_i == 1}#{per}" if count.to_i.positive?
         end
         parts.empty? ? nil : parts.join(', ')
+      end
+
+      # squeue gives the memory request per node, or per CPU for a job that
+      # asked with --mem-per-cpu, without saying which.
+      def self.memory(details)
+        details[:memory] && "#{details[:memory]} (per node, or per CPU if the job asked for memory per CPU)"
       end
 
       # When it was submitted and started, how long it has run against its

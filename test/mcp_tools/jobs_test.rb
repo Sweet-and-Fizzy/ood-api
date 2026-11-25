@@ -161,8 +161,20 @@ class GetJobToolTest < Minitest::Test
 
     text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '22').content.first[:text]
 
-    assert_match(/^Resources: 1 node, 8 cores, 1 GPU$/, text)
-    assert_match(/^Memory: 16G$/, text)
+    assert_match(/^Resources: 1 node, 8 CPUs, 1 GPU$/, text)
+    assert_match(/^Memory requested: 16G \(per node, or per CPU if the job asked for memory per CPU\)$/, text)
+  end
+
+  def test_gpus_on_several_nodes_are_per_node
+    nodes = Array.new(2) { OodCore::Job::NodeInfo.new(name: nil) }
+    job = mock_job_info(id: '24', status: :queued, procs: 16, gpus: 2, allocated_nodes: nodes)
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '24').content.first[:text]
+
+    assert_match(/^Resources: 2 nodes, 16 CPUs, 2 GPUs per node$/, text)
   end
 
   def test_no_gpus_and_no_memory_are_left_out
@@ -173,7 +185,7 @@ class GetJobToolTest < Minitest::Test
 
     text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '23').content.first[:text]
 
-    assert_match(/^Resources: 2 cores$/, text)
+    assert_match(/^Resources: 2 CPUs$/, text)
     refute_match(/GPU|^Memory/, text)
   end
 
