@@ -151,6 +151,32 @@ class GetJobToolTest < Minitest::Test
     assert_match(/^Expected start: #{Regexp.escape(estimate.getlocal.iso8601)}$/, text)
   end
 
+  def test_a_job_shows_the_nodes_cores_gpus_and_memory_it_asked_for
+    job = mock_job_info(id: '22', status: :queued, procs: 8, gpus: 1,
+                        allocated_nodes: [OodCore::Job::NodeInfo.new(name: nil)],
+                        native: { state: 'PENDING', min_memory: '16G' })
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '22').content.first[:text]
+
+    assert_match(/^Resources: 1 node, 8 cores, 1 GPU$/, text)
+    assert_match(/^Memory: 16G$/, text)
+  end
+
+  def test_no_gpus_and_no_memory_are_left_out
+    job = mock_job_info(id: '23', status: :running, procs: 2, gpus: 0, native: { min_memory: '0' })
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '23').content.first[:text]
+
+    assert_match(/^Resources: 2 cores$/, text)
+    refute_match(/GPU|^Memory/, text)
+  end
+
   def test_a_failed_slurm_job_shows_the_schedulers_state_reason_and_output_file
     job = mock_job_info(id: '13', job_name: 'growth', status: :completed,
                         native: { state: 'FAILED', reason: 'NonZeroExitCode', work_dir: '/home/u/project' })

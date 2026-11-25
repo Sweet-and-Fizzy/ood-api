@@ -84,11 +84,22 @@ module OodApi
           ['Job', job.id], ['Cluster', cluster.id], ['Name', job.job_name || '(unnamed)'],
           ['Owner', job.job_owner], ['Status', job.status],
           ['Scheduler state', details[:native_state]], ['Reason', details[:reason]],
-          ['Queue', job.queue_name], *times(job, details),
+          ['Queue', job.queue_name], ['Resources', resources(job)], ['Memory', details[:memory]],
+          *times(job, details),
           ['Working directory', details[:work_dir]], ['Script', details[:script]],
           ['Output file', file_line(details, :output)], ['Error file', file_line(details, :error)]
         ]
         rows.to_h.compact.map { |label, value| "#{label}: #{value}" }.join("\n")
+      end
+
+      # What the job asked for, or holds once running: nodes, cores and GPUs,
+      # leaving out any the scheduler gives no count for.
+      def self.resources(job)
+        counts = [[job.allocated_nodes&.size, 'node'], [job.procs, 'core'], [job.gpus, 'GPU']]
+        parts = counts.filter_map do |count, unit|
+          "#{count.to_i} #{unit}#{'s' unless count.to_i == 1}" if count.to_i.positive?
+        end
+        parts.empty? ? nil : parts.join(', ')
       end
 
       # When it was submitted and started, how long it has run against its
