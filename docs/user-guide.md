@@ -35,9 +35,10 @@ If you want to manage your HPC work by chatting with an AI assistant (Claude
 Desktop, Claude Code, Cursor, etc.) instead of using a terminal, this is all
 you need.
 
-**1. Get two things from your site administrator:** your OOD host address
-(something like `ondemand.example.edu`), and whether your site has "OAuth
-discovery" set up (your admin will know, it changes the command below).
+**1. Get these from your site administrator:** your OOD host address
+(something like `ondemand.example.edu`), whether your site has "OAuth
+discovery" set up, and, if your site gives you one, a client ID and callback
+port for MCP clients. Your admin will know; they change the command below.
 
 **2. Connect your client.** If your site has OAuth discovery, point your
 client at the address and it'll open a browser for you to log in:
@@ -45,6 +46,18 @@ client at the address and it'll open a browser for you to log in:
 ```bash
 claude mcp add ood-hpc --transport http https://<your-ood-host>/pun/sys/ood-api/mcp
 ```
+
+If your site gave you a client ID and callback port, add them:
+
+```bash
+claude mcp add ood-hpc --transport http \
+  --client-id <client-id> --callback-port <port> \
+  https://<your-ood-host>/pun/sys/ood-api/mcp
+```
+
+The login page is your site's usual one. Sign in only when your own client
+opened it, and never enter a code someone else sent you: whoever started that
+sign-in would get access to your account.
 
 If not, you'll need a JWT from your identity provider first. Ask your
 administrator for your site's issuer URL and client ID, then use a tool like
