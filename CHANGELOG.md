@@ -36,21 +36,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Dashboard records them, newest first, with each one's app, status from the
   scheduler, job and start time, and the Dashboard page where the user
   connects to them. `list_interactive_apps` lists the interactive apps
-  installed as system apps, each with what its form asks for and the page
-  that starts one. Both are read tools; neither reads a session's connection
+  installed as system apps, each sub-app (such as one desktop per cluster)
+  on its own, with what its form asks for and the page that starts one.
+  Sessions are found under the Dashboard's data root (`OOD_DATAROOT` in its
+  env file, if set) and their status is looked up with one scheduler query
+  per cluster. Both are read tools; neither reads a session's connection
   details.
 - `list_software` lists the software installed as environment modules, as the
   Dashboard's Module Browser shows it: each module's versions per cluster,
   newest first, and any module to load first. It reads the same Lmod spider
   files as the Module Browser, from `OOD_MODULE_FILE_DIR`, the Dashboard's env
-  file or `module_file_dir` in ondemand.d, and leaves hidden modules out. A
-  site that publishes no module list gets an error saying so.
+  file or `module_file_dir` in ondemand.d, and leaves hidden modules out. An
+  exact name comes first, then names that start with it. Each file is parsed
+  once until it changes. A site that publishes no module list gets an error
+  saying so, and a cluster whose list cannot be read is named.
 - `get_quota_and_balance` gives the user's storage quotas (space and files
   used against each limit, and their own share of a shared quota) and
   allocation balances, from the JSON files or URLs the Dashboard reads for its
   quota and balance warnings, named in `OOD_QUOTA_PATH` and `OOD_BALANCE_PATH`
-  in the environment or the Dashboard's env file. URLs are fetched with a
-  5-second limit and files are read up to 4 MiB.
+  in the environment or the Dashboard's env file. A URL gets 5 seconds to
+  connect and 10 in all, and a file or response is read up to 64 MiB. A
+  source that cannot be read is reported as such, not as having no quotas.
 
 ### Changed
 
