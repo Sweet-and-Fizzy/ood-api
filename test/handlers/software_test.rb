@@ -99,6 +99,15 @@ class HandlersSoftwareTest < Minitest::Test
     assert_nil Handlers::Software.in_child { raise 'boom' }, 'a child that fails gives nothing'
   end
 
+  def test_a_name_with_invalid_text_does_not_lose_the_cluster
+    spider = "{\"py\xFFthon\": {\"/m\": {\"Version\": \"3.12\"}}, \"gcc\": {\"/g\": {\"Version\": \"12\"}}}"
+    File.binwrite(File.join(@dir, 'hpc.json'), spider)
+
+    result = Handlers::Software.find(clusters: [@clusters.first])
+    assert_empty result[:unlisted]
+    assert_includes result[:modules].map(&:name), 'gcc'
+  end
+
   def test_repeated_names_and_prerequisites_are_one_object
     kept = Handlers::Software.modules([['a', '1', [['gcc/12']]], ['a', '2', [['gcc/12']]]], 'hpc')
 
