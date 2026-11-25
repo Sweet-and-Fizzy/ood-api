@@ -94,11 +94,11 @@ module OodApi
       # When it was submitted and started, how long it has run against its
       # limit, and, for a pending job, when the scheduler expects it to start.
       # The time of the answer comes with them, so the reader can work out
-      # what has changed since.
+      # what has changed since. Every time is in UTC and marked Z.
       def self.times(job, details)
         [
-          ['Submitted', job.submission_time&.iso8601 || 'N/A'],
-          ['Started', job.dispatch_time&.iso8601 || 'N/A'],
+          ['Submitted', job.submission_time&.getutc&.iso8601 || 'N/A'],
+          ['Started', job.dispatch_time&.getutc&.iso8601 || 'N/A'],
           ['Expected start', details[:expected_start]],
           ['Run time so far', job.wallclock_time ? duration(job.wallclock_time) : 'N/A'],
           *limit_rows(job),

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'shellwords'
+require 'time'
 require_relative 'files'
 
 module Handlers
@@ -38,15 +39,19 @@ module Handlers
       details.compact
     end
 
-    # Slurm's estimate of when a waiting job will start, from its start-time
-    # field; nothing for a job that is not waiting or has no estimate.
+    # Slurm's estimate of when a waiting job will start, in UTC; nothing for
+    # a job that is not waiting or has no estimate. squeue prints it in the
+    # local time zone of the process that ran it, which is this one, with
+    # no zone marked, so it is read as local time and converted.
     def expected_start(info, native)
       return nil unless info.status.queued? || info.status.queued_held?
 
       text = value(native[:start_time])
       return nil unless text&.match?(/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?\z/)
 
-      text
+      Time.strptime(text, text.length == 16 ? '%Y-%m-%dT%H:%M' : '%Y-%m-%dT%H:%M:%S').getutc.iso8601
+    rescue ArgumentError
+      nil
     end
 
     def value(raw)

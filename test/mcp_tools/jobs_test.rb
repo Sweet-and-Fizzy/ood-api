@@ -113,8 +113,21 @@ class GetJobToolTest < Minitest::Test
     assert_match(/^Run time so far: 1h 07m 14s$/, text)
     assert_match(/^Time limit: 8h 00m 00s$/, text)
     assert_match(/^Time left: 6h 52m 46s$/, text)
-    assert_match(/^Checked at: \d{4}-\d{2}-\d{2}T/, text)
+    assert_match(/^Checked at: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/, text)
     refute_match(/Wall time/, text)
+  end
+
+  def test_every_time_is_given_in_utc
+    eastern = Time.new(2026, 11, 25, 14, 0, 0, '-05:00')
+    job = mock_job_info(id: '17', status: :running, submission_time: eastern, dispatch_time: eastern + 60)
+    adapter = mock('adapter')
+    adapter.stubs(:info).returns(job)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = GetJobTool.call(server_context: nil, cluster_id: 'cluster1', job_id: '17').content.first[:text]
+
+    assert_match(/^Submitted: 2026-11-25T19:00:00Z$/, text)
+    assert_match(/^Started: 2026-11-25T19:01:00Z$/, text)
   end
 
   def test_a_failed_slurm_job_shows_the_schedulers_state_reason_and_output_file
