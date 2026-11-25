@@ -83,11 +83,28 @@ class HandlersSoftwareTest < Minitest::Test
 
   def test_a_file_is_parsed_once_until_it_changes
     path = File.join(@dir, 'hpc.json')
-    JSON.expects(:parse).twice.returns(SPIDER)
+    Handlers::Software.expects(:in_child).twice.yields.returns([])
     2.times { Handlers::Software.find(clusters: [@clusters.first]) }
 
     File.write(path, JSON.generate(SPIDER.merge('extra' => {})))
     Handlers::Software.find(clusters: [@clusters.first])
+  end
+
+  def test_the_parse_runs_in_a_child_and_only_its_result_comes_back
+    parent = Process.pid
+    child, list = Handlers::Software.in_child { [Process.pid, Handlers::Software.spider(Pathname.new(File.join(@dir, 'hpc.json')))] }
+
+    refute_equal parent, child
+    assert_includes list, ['python', '3.12.4', [['gcc/12.3.0'], ['intel/2024.1']]]
+    assert_nil Handlers::Software.in_child { raise 'boom' }, 'a child that fails gives nothing'
+  end
+
+  def test_repeated_names_and_prerequisites_are_one_object
+    kept = Handlers::Software.modules([['a', '1', [['gcc/12']]], ['a', '2', [['gcc/12']]]], 'hpc')
+
+    assert kept[0][:name].equal?(kept[1][:name])
+    assert kept[0][:version].prerequisites.equal?(kept[1][:version].prerequisites)
+    assert kept[0][:version].cluster_id.equal?(kept[1][:version].cluster_id)
   end
 
   def test_names_past_the_limit_are_counted
