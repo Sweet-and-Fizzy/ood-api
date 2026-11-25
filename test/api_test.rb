@@ -60,6 +60,17 @@ class ApiTest < Minitest::Test
     assert last_response.ok?
   end
 
+  def test_missing_clusters_directory_is_a_503_that_says_so
+    ENV.delete('OOD_API_APP_TOKENS')
+    OodApi::App.unstub(:clusters)
+    OodApi::SiteClusters.stubs(:all).raises(Handlers::ConfigurationError, 'No cluster configuration at /x')
+    get '/api/v1/clusters'
+
+    assert_equal 503, last_response.status
+    assert_equal 'service_unavailable', json_response['error']
+    assert_includes json_response['message'], 'No cluster configuration at /x'
+  end
+
   def test_default_mode_passes_through_apache_validated_jwt
     # Option 1 from docs/api.md: Apache validates the JWT against a JWKS
     # before the request reaches the PUN. ood-api must not try to look the

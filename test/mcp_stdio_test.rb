@@ -268,6 +268,21 @@ class McpStdioTest < Minitest::Test
     end
   end
 
+  def test_a_missing_clusters_directory_is_a_tool_error_not_a_protocol_error
+    Dir.mktmpdir('clusters') do |dir|
+      missing = File.join(dir, 'missing')
+      env = { 'RACK_ENV' => 'development', 'OOD_API_LOCAL' => 'true', 'OOD_CLUSTERS' => missing }
+      input = "#{JSON.generate(jsonrpc: '2.0', id: 1, method: 'tools/call',
+                               params: { name: 'list_clusters', arguments: {} })}\n"
+
+      reply, err = run_script(env, input: input)
+
+      assert reply.key?('result'), "#{reply['error']}\n#{err}"
+      assert_equal true, reply.dig('result', 'isError')
+      assert_includes reply.dig('result', 'content', 0, 'text'), missing
+    end
+  end
+
   def test_the_script_can_be_started_by_a_relative_path
     reply, = run_script({ 'RACK_ENV' => 'development', 'OOD_API_LOCAL' => 'true' },
                         script: File.join(File.basename(ROOT), 'bin', 'mcp-stdio'), chdir: File.dirname(ROOT))

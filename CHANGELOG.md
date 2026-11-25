@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   installs on Ruby 3.1. `multi_json` is no longer pinned, since `fog-json` 1.5
   does not use it.
 
+### Fixed
+
+- When the clusters directory (`OOD_CLUSTERS`, by default
+  `/etc/ood/config/clusters.d`) does not exist, the cluster and job tools now
+  answer with a tool error that names the directory, and REST with a 503
+  saying the same. Before, MCP clients got a bare internal error and REST an
+  unexplained 500.
+
 ## [0.5.0] - 2026-11-23
 
 A site now decides what the app serves, and a fresh install serves less. Read

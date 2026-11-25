@@ -26,6 +26,9 @@ module Handlers
   # The filesystem itself failed: an I/O error or a stale network handle.
   # Nothing about the request is wrong, and retrying later may work.
   class FilesystemError < Error; end
+  # The site's own configuration is missing, such as the clusters directory.
+  # Nothing about the request is wrong; an administrator has to fix it.
+  class ConfigurationError < Error; end
 
   # Wraps every call into an ood_core job adapter.
   #
@@ -44,7 +47,7 @@ module Handlers
   # must pass through untouched rather than being flattened into AdapterError.
   PASSTHROUGH_ERRORS = [
     NotFoundError, ValidationError, ForbiddenError,
-    NotSupportedError, PayloadTooLargeError, StorageError, FilesystemError
+    NotSupportedError, PayloadTooLargeError, StorageError, FilesystemError, ConfigurationError
   ].freeze
 
   # Recognising "the scheduler is down" from an adapter error message.
