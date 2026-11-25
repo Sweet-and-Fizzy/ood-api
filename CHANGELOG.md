@@ -44,6 +44,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   env file, if set) and their status is looked up with one scheduler query
   per cluster. Both are read tools; neither reads a session's connection
   details.
+- `list_software` lists the software installed as environment modules, as the
+  Dashboard's Module Browser shows it: each module's versions per cluster,
+  newest first, and any module to load first. It reads the same Lmod spider
+  files as the Module Browser, from `OOD_MODULE_FILE_DIR`, the Dashboard's env
+  file or `module_file_dir` in ondemand.d, and leaves hidden modules out. An
+  exact name comes first, then names that start with it. Each file is parsed
+  once until it changes, in a short-lived child process, so the user's server
+  keeps only the module list (about 10 MB for 20,000 module versions) and not
+  what parsing the file took. A site that publishes no module list gets an error
+  saying so, and a cluster whose list cannot be read is named.
 
 ### Changed
 

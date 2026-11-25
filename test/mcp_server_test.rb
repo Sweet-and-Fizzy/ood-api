@@ -96,6 +96,7 @@ class McpServerTest < Minitest::Test
     'find_files'                => [true,  false, true],
     'list_interactive_sessions' => [true, false, true],
     'list_interactive_apps'     => [true, false, true],
+    'list_software'             => [true, false, true],
     'read_file'                 => [true,  false, true],
     'list_env'                  => [true,  false, true],
     'get_env'                   => [true,  false, true],

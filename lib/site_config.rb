@@ -204,6 +204,17 @@ module OodApi
       value.nil? || ['true', '1', 'yes', 'on'].include?(value.to_s.strip.downcase)
     end
 
+    # Where the Dashboard's Module Browser reads each cluster's list of
+    # software modules, looked up where the Dashboard looks: its variable,
+    # then the Dashboard's env file, then `module_file_dir` in ondemand.d.
+    #
+    # @return [Pathname, nil]
+    def module_file_dir
+      given = [ENV.fetch('OOD_MODULE_FILE_DIR', nil), dashboard_env['OOD_MODULE_FILE_DIR'], config[:module_file_dir]]
+      found = given.map { |value| value.to_s.scrub.strip }.find { |value| !value.empty? }
+      found && Pathname.new(found)
+    end
+
     # The Dashboard serves no file browser when the Files app is not
     # installed next to it, which is how a site removes file access.
     def files_app_installed?
