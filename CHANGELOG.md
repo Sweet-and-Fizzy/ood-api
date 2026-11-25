@@ -27,6 +27,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A job submitted through the API or MCP is submitted from its working
+  directory, as the Dashboard does. Slurm records that directory as
+  `SLURM_SUBMIT_DIR`, so a script that starts with `cd $SLURM_SUBMIT_DIR` ran
+  in this app's own directory instead. A `workdir` that does not exist is now
+  refused before submission.
+
 - When the clusters directory (`OOD_CLUSTERS`, by default
   `/etc/ood/config/clusters.d`) does not exist, the cluster and job tools now
   answer with a tool error that names the directory, and REST with a 503

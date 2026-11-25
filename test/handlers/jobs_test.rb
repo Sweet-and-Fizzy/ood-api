@@ -536,6 +536,32 @@ class HandlersJobsTest < Minitest::Test
                           after: false, afterok: false, afternotok: nil, afterany: false)
   end
 
+  # Slurm records the directory sbatch ran in as SLURM_SUBMIT_DIR, and scripts
+  # commonly start with `cd $SLURM_SUBMIT_DIR`.
+  def test_submit_runs_the_scheduler_from_the_jobs_working_directory
+    Dir.mktmpdir('ood-submit-dir') do |dir|
+      seen = nil
+      @adapter.expects(:submit).with { seen = Dir.pwd }.returns('301')
+      @adapter.stubs(:info).returns(mock_job_info(id: '301'))
+      before = Dir.pwd
+
+      Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: '#!/bin/bash', workdir: dir)
+
+      assert_equal File.realpath(dir), File.realpath(seen)
+      assert_equal before, Dir.pwd
+    end
+  end
+
+  def test_a_workdir_that_does_not_exist_is_refused
+    @adapter.expects(:submit).never
+
+    err = assert_raises(Handlers::ValidationError) do
+      Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: '#!/bin/bash',
+                            workdir: File.join(Dir.tmpdir, "ood-no-such-dir-#{SecureRandom.hex(4)}"))
+    end
+    assert_match(/not an existing directory/, err.message)
+  end
+
   def test_submit_treats_an_empty_workdir_as_not_given
     @adapter.expects(:submit).with { |script| !script.workdir.to_s.empty? }.returns('300')
     @adapter.stubs(:info).returns(mock_job_info(id: '300'))
