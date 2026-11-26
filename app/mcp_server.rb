@@ -45,7 +45,7 @@ MCP.configure do |config|
           client_version: OodApi.clip_client_field(client[:version]),
           duration:       data[:duration]&.round(4)
         )
-        OodApi.remember_mcp_client(client[:name], client[:version])
+        OodApi.remember_mcp_client(client[:name], client[:version], Handlers::Audit.context[:token_id])
       elsif data[:error].nil?
         OodApi.audit_stateless_client(data)
       end
@@ -100,9 +100,10 @@ module OodApi
 
   # A client is recorded once per process. Over stdio that is once per
   # connection; the HTTP endpoint serves every client of the PUN from one
-  # long-lived process, so there it is once per distinct client until the
-  # process is recycled. The set is bounded because the identity is whatever
-  # the caller says it is; past the bound, new identities go unrecorded.
+  # long-lived process, so there it is once per distinct client and app token
+  # until the process is recycled. The set is bounded because the identity is
+  # whatever the caller says it is; past the bound, new identities go
+  # unrecorded, and the first one refused is recorded as `mcp_clients_limit`.
   MCP_CLIENTS_SEEN_LIMIT = 64
   MCP_CLIENT_FIELD_LIMIT = 256
   MCP_CLIENTS_LOCK = Mutex.new
@@ -113,11 +114,18 @@ module OodApi
     Thread.current[MCP_REQUEST_META_KEY] = meta.is_a?(Hash) ? meta : nil
   end
 
-  # Called after the gem has served a request without error, so the envelope
-  # it carried has already been accepted.
+  # Called after the gem has served a request without error. That alone does
+  # not mean the gem accepted the envelope: it never reads one for a
+  # notification, for a method it has no handler for (instrumented as
+  # `unsupported_method`, with no error set), or for `server/discover` outside
+  # the modern era. So those are skipped, and the protocol version must be one
+  # the gem serves.
   def self.audit_stateless_client(data)
+    method = data[:method]
+    return if method == 'unsupported_method' || MCP::Methods.notification?(method)
+
     name, version, protocol_version = stateless_client_identity(Thread.current[MCP_REQUEST_META_KEY])
-    return unless name && remember_mcp_client(name, version)
+    return unless name && remember_mcp_client(name, version, Handlers::Audit.context[:token_id])
 
     Handlers::Audit.emit_event(
       op:               'mcp_initialize',
@@ -137,26 +145,42 @@ module OodApi
 
     protocol_version = meta[MCP::RequestEnvelope::PROTOCOL_VERSION_META_KEY]
     info = meta[MCP::RequestEnvelope::CLIENT_INFO_META_KEY]
-    return unless protocol_version.is_a?(String) && info.is_a?(Hash)
+    return unless MCP::Configuration.modern_protocol_version?(protocol_version) && info.is_a?(Hash)
 
     identity = [info['name'], info['version'], protocol_version]
     identity if identity.all?(String) && !identity.first.empty?
   end
 
+  # @param token_id [String, nil] the app token the request came with
   # @return [Boolean] true the first time this process sees the client
-  def self.remember_mcp_client(name, version)
-    key = [clip_client_field(name), clip_client_field(version)]
-    MCP_CLIENTS_LOCK.synchronize do
+  def self.remember_mcp_client(name, version, token_id)
+    key = [clip_client_field(name), clip_client_field(version), token_id]
+    first_refusal = false
+    remembered = MCP_CLIENTS_LOCK.synchronize do
       @mcp_clients_seen ||= Set.new
-      next false if @mcp_clients_seen.include?(key) || @mcp_clients_seen.size >= MCP_CLIENTS_SEEN_LIMIT
+      next false if @mcp_clients_seen.include?(key)
+
+      if @mcp_clients_seen.size >= MCP_CLIENTS_SEEN_LIMIT
+        first_refusal = !@mcp_clients_limit_reported
+        @mcp_clients_limit_reported = true
+        next false
+      end
 
       @mcp_clients_seen << key
       true
     end
+    if first_refusal
+      Handlers::Audit.emit_event(op: 'mcp_clients_limit', user: ENV['USER'] || ENV['LOGNAME'] || 'unknown',
+                                 source: 'mcp', limit: MCP_CLIENTS_SEEN_LIMIT)
+    end
+    remembered
   end
 
   def self.forget_mcp_clients!
-    MCP_CLIENTS_LOCK.synchronize { @mcp_clients_seen = nil }
+    MCP_CLIENTS_LOCK.synchronize do
+      @mcp_clients_seen = nil
+      @mcp_clients_limit_reported = false
+    end
   end
 
   # Self-reported values, so a client cannot make the audit line arbitrarily long.

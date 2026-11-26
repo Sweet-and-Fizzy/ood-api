@@ -75,8 +75,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The audit log records which MCP client connected for clients of the
   2026-07-28 protocol, which has no `initialize` request. The
   `op=mcp_initialize` line is written the first time a process sees a client's
-  name and version, and adds `protocol_version`. Clients of older protocols are
-  recorded as before. See [audit log](docs/installation.md#audit-log).
+  name and version under an application token, and adds `protocol_version`.
+  Clients of older protocols are recorded as before. See [audit log](docs/installation.md#audit-log).
 - A job submitted through the API or MCP is submitted from its working
   directory, as the Dashboard does. Slurm records that directory as
   `SLURM_SUBMIT_DIR`, so a script that starts with `cd $SLURM_SUBMIT_DIR` ran

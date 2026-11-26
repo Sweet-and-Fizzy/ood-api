@@ -132,6 +132,24 @@ class McpStdioTest < Minitest::Test
     assert_match(/client=ood-agent client_version=2\.0\.1 protocol_version=2026-07-28 transport=stdio/, lines.first)
   end
 
+  # Over stdio nothing checks the envelope before the gem, and the gem does not
+  # read it for a method it has no handler for, for a notification, or for
+  # `server/discover` on a connection that has not chosen the new protocol.
+  # Client info carried that way is never recorded.
+  def test_client_info_the_server_never_accepted_is_not_recorded
+    OodApi.forget_mcp_clients!
+    meta = { 'io.modelcontextprotocol/protocolVersion'    => '1999-01-01',
+             'io.modelcontextprotocol/clientCapabilities' => {},
+             'io.modelcontextprotocol/clientInfo'         => { name: 'ghost', version: '1' } }
+    modern = meta.merge('io.modelcontextprotocol/protocolVersion' => '2026-07-28')
+    notification = JSON.generate(jsonrpc: '2.0', method: 'notifications/initialized', params: { _meta: modern })
+    _out, err = capture_io do
+      replies(request(1, 'server/discover', _meta: meta), request(2, 'no/such_method', _meta: modern), notification)
+    end
+
+    assert_empty err.lines.grep(/op=mcp_initialize/), err
+  end
+
   def test_nothing_is_served_until_the_site_switches_it_on
     write_settings('')
     reply = replies(request(1, 'tools/list')).first

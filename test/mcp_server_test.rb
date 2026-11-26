@@ -332,13 +332,15 @@ class McpServerTest < Minitest::Test
     meta = { 'io.modelcontextprotocol/protocolVersion'    => MODERN_VERSION,
              'io.modelcontextprotocol/clientCapabilities' => {} }
     meta['io.modelcontextprotocol/clientInfo'] = client_info unless client_info.nil?
-    JSON.generate(jsonrpc: '2.0', id: id, method: method, params: { _meta: meta })
+    message = { jsonrpc: '2.0', method: method, params: { _meta: meta } }
+    message[:id] = id unless id.nil?
+    JSON.generate(message)
   end
 
   # @return [Array(Integer, Hash, String)] status, parsed reply, audit output
-  def post_capturing_audit(body)
+  def post_capturing_audit(body, headers = {})
     OodApi.forget_mcp_clients! unless @keep_seen_clients
-    env = Rack::MockRequest.env_for('/', method: 'POST', input: body)
+    env = Rack::MockRequest.env_for('/', { method: 'POST', input: body }.merge(headers))
     env['CONTENT_TYPE'] = 'application/json'
     env['HTTP_ACCEPT'] = 'application/json, text/event-stream'
     if body.include?(MODERN_VERSION)
@@ -348,7 +350,8 @@ class McpServerTest < Minitest::Test
     status = reply = nil
     _out, err = capture_io do
       status, _headers, resp = OodApi.mcp_rack_app.call(env)
-      reply = JSON.parse(Array(resp).join)
+      text = Array(resp).join
+      reply = text.empty? ? {} : JSON.parse(text)
     end
     [status, reply, err]
   end
@@ -436,6 +439,61 @@ protocol_version=#{MODERN_VERSION}/o, lines.first)
     line = client_lines(err).first
     refute_nil line
     assert_operator line.bytesize, :<, 2_000
+  end
+
+  # The HTTP endpoint serves every app token from one process, so the same
+  # client connecting under a second token is a second record.
+  def test_same_modern_client_under_another_token_is_audited_again
+    setup_token_storage
+    OodApi.forget_mcp_clients!
+    @keep_seen_clients = true
+    body = modern_body(1, { name: 'ood-agent', version: '2.0.1' })
+    first = create_test_token('A')
+    second = create_test_token('B')
+    _, _, err_a = post_capturing_audit(body, 'HTTP_X_OOD_API_TOKEN' => first.token)
+    _, _, err_b = post_capturing_audit(body, 'HTTP_X_OOD_API_TOKEN' => second.token)
+    assert_match(/token_id=#{first.id}/, client_lines(err_a).join)
+    assert_match(/token_id=#{second.id}/, client_lines(err_b).join)
+  ensure
+    Handlers::Audit.context = nil
+    teardown_token_storage
+  end
+
+  # Past the bound on remembered clients, the first refusal is said once
+  # rather than new clients going unrecorded without a trace.
+  def test_reaching_the_client_limit_is_recorded_once
+    OodApi.forget_mcp_clients!
+    @keep_seen_clients = true
+    OodApi::MCP_CLIENTS_SEEN_LIMIT.times { |i| OodApi.remember_mcp_client("c#{i}", '1', nil) }
+    _, reply, first = post_capturing_audit(modern_body(1, { name: 'late', version: '1' }))
+    _, _, second = post_capturing_audit(modern_body(2, { name: 'later', version: '1' }))
+    assert reply['result']
+    assert_empty client_lines(first + second)
+    assert_equal 1, (first + second).lines.grep(/op=mcp_clients_limit /).length, first + second
+  end
+
+  # The gem only validates the envelope of requests it dispatches, so these
+  # reach the hook with `_meta` the gem never accepted. None is recorded.
+  def test_unvalidated_envelopes_are_not_audited
+    info = { name: 'ghost', version: '1' }
+    [modern_body(1, info, method: 'no/such_method'),
+     modern_body(nil, info, method: 'notifications/initialized')].each do |body|
+      _, _, err = post_capturing_audit(body)
+      assert_empty client_lines(err), body
+    end
+  end
+
+  # The `_meta` noted for one request must not be read for the next: here the
+  # first is refused before the gem runs, so a stale note would be recorded
+  # against the second request, which carries no client info at all.
+  def test_a_refused_requests_client_info_is_not_read_for_the_next_request
+    OodApi.forget_mcp_clients!
+    @keep_seen_clients = true
+    _, refused, = post_capturing_audit(modern_body(1, { name: 'ghost', version: '1' }, method: 'prompts/list'))
+    assert_equal(-32_601, refused.dig('error', 'code'))
+    _, reply, err = post_capturing_audit(JSON.generate(jsonrpc: '2.0', id: 2, method: 'tools/list'))
+    assert reply['result']
+    assert_empty client_lines(err)
   end
 
   # mcp 1.0.0 added DNS-rebinding protection defaulting to an allowlist of
