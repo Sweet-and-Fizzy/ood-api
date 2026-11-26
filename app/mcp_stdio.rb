@@ -39,6 +39,7 @@ module OodApi
         return nil if line.strip.empty?
 
         parsed = OodApi.parse_json(line)
+        OodApi.note_mcp_request(parsed)
         # One request to a line, as /mcp takes one to a body. A batch would
         # pass the checks below unexamined.
         return error_line(nil, JSONRPC_INVALID_REQUEST, 'A message must be a single JSON object') if unusable?(parsed)

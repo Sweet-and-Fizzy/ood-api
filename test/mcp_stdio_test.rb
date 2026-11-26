@@ -113,6 +113,25 @@ class McpStdioTest < Minitest::Test
     assert_match(/op=list_env .*transport=stdio/, err)
   end
 
+  # The 2026-07-28 protocol has no `initialize`; the client names itself on
+  # every request. One connection is one process, so it is recorded once.
+  def test_a_stateless_client_is_recorded_once_per_connection
+    OodApi.forget_mcp_clients!
+    meta = { 'io.modelcontextprotocol/protocolVersion'    => '2026-07-28',
+             'io.modelcontextprotocol/clientCapabilities' => {},
+             'io.modelcontextprotocol/clientInfo'         => { name: 'ood-agent', version: '2.0.1' } }
+    result = nil
+    _out, err = capture_io do
+      result = replies(request(1, 'tools/list', _meta: meta),
+                       request(2, 'tools/call', name: 'list_env', arguments: {}, _meta: meta))
+    end
+
+    assert(result.all? { |reply| reply['result'] }, result.inspect)
+    lines = err.lines.grep(/op=mcp_initialize/)
+    assert_equal 1, lines.length, err
+    assert_match(/client=ood-agent client_version=2\.0\.1 protocol_version=2026-07-28 transport=stdio/, lines.first)
+  end
+
   def test_nothing_is_served_until_the_site_switches_it_on
     write_settings('')
     reply = replies(request(1, 'tools/list')).first

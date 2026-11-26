@@ -457,9 +457,21 @@ ood_api_audit ts=2026-11-21T15:25:15.624Z op=list_files user=alice source=rest s
 | `path`, `cluster`, `job_id` | What the operation was about |
 | `script_sha256`, `script_bytes` | On job submission, the digest and size of the script |
 | `token_id` | The application token that made the request, when tokens are on |
+| `client`, `client_version` | On `mcp_initialize`, the name and version the MCP client gave for itself, cut at 256 characters |
+| `protocol_version` | On `mcp_initialize`, the MCP protocol version, for clients of the 2026-07-28 protocol |
 
 Values are quoted and control characters escaped, so a file name cannot
-forge a line. There is no request id or client address; match against
+forge a line.
+
+`op=mcp_initialize` records which MCP client connected. A client of an older
+protocol announces itself with an `initialize` request, and each one is
+recorded. A client of the 2026-07-28 protocol sends no `initialize`, and
+names itself on every request instead, so it is recorded the first time a
+process sees that name and version: once per connection over `bin/mcp-stdio`,
+and once per PUN process for `/mcp`, which serves every client of the PUN
+until Passenger recycles it, up to 64 distinct clients per process. A name or version that is missing or not a
+string is not recorded, and the request is served as usual. The client
+identity is whatever the client says it is. There is no request id or client address; match against
 Apache's access log by time and user.
 
 ## Troubleshooting
