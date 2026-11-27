@@ -61,10 +61,7 @@ module Handlers
     # Where the Dashboard keeps one JSON record per session, under its data
     # root, found as the Dashboard finds it.
     def db
-      env = OodApi::SiteConfig.dashboard_env
-      root = [env['OOD_DATAROOT'], env['RAILS_DATAROOT']].map(&:to_s).find { |v| !v.strip.empty? }
-      root ||= "~/#{ENV.fetch('OOD_PORTAL', 'ondemand')}/data/sys/dashboard"
-      Pathname.new(File.expand_path(root)).join('batch_connect', 'db')
+      OodApi::SiteConfig.dashboard_data_root.join('batch_connect', 'db')
     end
 
     def records

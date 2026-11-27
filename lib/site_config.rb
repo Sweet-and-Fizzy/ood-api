@@ -28,7 +28,9 @@ module OodApi
     OWN_NAMES = [:capabilities, :disable, :rest, :mcp, :local, :app_tokens, :token_max_days, :token_allow_never].freeze
     # A file in ondemand.d that names one of these holds a setting this app
     # follows, so it matters here if that file cannot be read.
-    FOLLOWED_SETTINGS = /(?:^|[\s{,])["']?(?:allowlist[_-]?path|download_enabled|upload_enabled|ood[_-]?api)["']?\s*:/i
+    FOLLOWED_SETTINGS = /(?:^|[\s{,])["']?
+                         (?:allowlist[_-]?path|shared[_-]?project[_-]?path|download_enabled|upload_enabled|ood[_-]?api)
+                         ["']?\s*:/ix
     # Every variable the app reads. Any other OOD_API_ name is a mistake.
     KNOWN_VARIABLES = ['ALLOW_NATIVE', 'ALLOWED_ORIGINS', 'APP_TOKENS', 'CAPABILITIES', 'CONTEXT_PATH', 'DISABLE',
                        'ENV_ALLOWLIST', 'LOCAL', 'MAX_CONTEXT_BYTES', 'MAX_CONTEXT_TOTAL_BYTES', 'MAX_FILE_READ',
@@ -222,6 +224,41 @@ module OodApi
       return true unless apps.directory?
 
       apps.join('files', 'manifest.yml').readable?
+    end
+
+    # The Dashboard's Project Manager is served only when its app is
+    # installed beside the Dashboard, as the Files app is.
+    def projects_app_installed?
+      apps = sys_apps
+      return true unless apps.directory?
+
+      apps.join('projects', 'manifest.yml').readable?
+    end
+
+    # Where the Dashboard keeps the user's own data: OOD_DATAROOT or
+    # RAILS_DATAROOT in the Dashboard's env file, else
+    # ~/<portal>/data/sys/dashboard. An OOD_DATAROOT in this app's own
+    # environment names this app's data, not the Dashboard's, so it is not
+    # read.
+    #
+    # @return [Pathname]
+    def dashboard_data_root
+      given = ['OOD_DATAROOT', 'RAILS_DATAROOT'].map { |name| dashboard_env[name] }
+      root = given.map { |value| value.to_s.scrub.strip }.find { |value| !value.empty? }
+      root ||= "~/#{ENV.fetch('OOD_PORTAL', 'ondemand')}/data/sys/dashboard"
+      Pathname.new(File.expand_path(root))
+    end
+
+    # The directories the Project Manager offers shared projects from, read
+    # where the Dashboard reads them: OOD_SHARED_PROJECT_PATH, then
+    # `shared_project_path` in ondemand.d. Colon-separated or a list. As in
+    # the Dashboard, a variable set to nothing means no shared locations.
+    #
+    # @return [Array<Pathname>]
+    def shared_project_paths
+      given = [ENV.fetch('OOD_SHARED_PROJECT_PATH', nil), dashboard_env['OOD_SHARED_PROJECT_PATH']]
+      paths = given.compact.map(&:scrub).first || config.fetch(:shared_project_path, [])
+      Array(paths).flat_map { |path| path.to_s.strip.split(':') }.reject(&:empty?).map { |path| Pathname.new(path) }
     end
 
     # The directory the Dashboard is installed in: the one this app is in,

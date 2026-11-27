@@ -262,7 +262,7 @@ and Cursor — including auto-refreshing tokens — is in
 
 ### 3.2 Available tools
 
-Up to 24 tools, grouped by area, required parameters in **bold**. A site
+Up to 27 tools, grouped by area, required parameters in **bold**. A site
 chooses which to enable: by default only the ones that list and read, with job
 submission and file writes turned on separately. Your client shows the ones
 your site offers. Chatting
@@ -354,6 +354,14 @@ from establishing access that outlasts the conversation.
 |---|---|---|
 | `list_interactive_sessions` | — | Your interactive sessions (Jupyter, a desktop and so on), newest first, with their status and the Dashboard page to connect to them |
 | `list_interactive_apps` | — | The interactive apps the site offers, each sub-app on its own, with what its form asks for and the Dashboard page that starts one |
+
+**Projects**
+
+| Tool | Parameters | Does |
+|---|---|---|
+| `list_projects` | — | Your projects in the Dashboard's Project Manager, with each one's directory and Dashboard page |
+| `get_project` | **project_id** | A project's launchers, with the ids of the fields each form asks for, and the jobs the Project Manager logged for it: the status it last saw and the status now. A launcher's defaults and choices are filled in by the Dashboard, so they are not shown |
+| `open_launcher` | **project_id**, **launcher_id** | The Dashboard page for a launcher. It submits nothing: you check the form there and press Launch |
 
 **Software**
 
