@@ -134,7 +134,8 @@ class McpStdioTest < Minitest::Test
 
   # Over stdio nothing checks the envelope before the gem, and the gem does not
   # read it for a method it has no handler for, for a notification, or for
-  # `server/discover` on a connection that has not chosen the new protocol.
+  # `server/discover` on a connection that has not chosen the new protocol,
+  # even when it names the new protocol but leaves out part of the envelope.
   # Client info carried that way is never recorded.
   def test_client_info_the_server_never_accepted_is_not_recorded
     OodApi.forget_mcp_clients!
@@ -142,9 +143,11 @@ class McpStdioTest < Minitest::Test
              'io.modelcontextprotocol/clientCapabilities' => {},
              'io.modelcontextprotocol/clientInfo'         => { name: 'ghost', version: '1' } }
     modern = meta.merge('io.modelcontextprotocol/protocolVersion' => '2026-07-28')
+    partial = modern.except('io.modelcontextprotocol/clientCapabilities')
     notification = JSON.generate(jsonrpc: '2.0', method: 'notifications/initialized', params: { _meta: modern })
     _out, err = capture_io do
-      replies(request(1, 'server/discover', _meta: meta), request(2, 'no/such_method', _meta: modern), notification)
+      replies(request(1, 'server/discover', _meta: meta), request(2, 'no/such_method', _meta: modern), notification,
+              request(3, 'server/discover', _meta: partial))
     end
 
     assert_empty err.lines.grep(/op=mcp_initialize/), err
