@@ -368,6 +368,7 @@ class McpServerTest < Minitest::Test
     assert_equal 1, lines.length, err
     assert_match(/op=mcp_initialize user=\S+ source=mcp client=ood-agent client_version=2\.0\.1 \
 protocol_version=#{MODERN_VERSION}/o, lines.first)
+    refute_match(/duration=/, lines.first)
   end
 
   def test_modern_client_is_audited_once
@@ -472,6 +473,23 @@ protocol_version=#{MODERN_VERSION}/o, lines.first)
     assert_equal 1, (first + second).lines.grep(/op=mcp_clients_limit /).length, first + second
   end
 
+  # A client that sends `initialize` is recorded on every one, so it takes no
+  # place among the remembered clients and cannot be the one that reaches
+  # the bound.
+  def test_legacy_initialize_takes_no_place_among_remembered_clients
+    OodApi.forget_mcp_clients!
+    @keep_seen_clients = true
+    (OodApi::MCP_CLIENTS_SEEN_LIMIT - 1).times { |i| OodApi.remember_mcp_client("c#{i}", '1', nil) }
+    body = JSON.generate(jsonrpc: '2.0', id: 1, method: 'initialize',
+                         params: { protocolVersion: '2025-06-18', capabilities: {},
+                                   clientInfo: { name: 'probe', version: '9.9' } })
+    _, _, legacy = post_capturing_audit(body)
+    _, _, modern = post_capturing_audit(modern_body(2, { name: 'ood-agent', version: '2.0.1' }))
+    assert_equal 1, client_lines(legacy).length, legacy
+    assert_equal 1, client_lines(modern).length, modern
+    refute_match(/op=mcp_clients_limit/, legacy + modern)
+  end
+
   # The gem only validates the envelope of requests it dispatches, so these
   # reach the hook with `_meta` the gem never accepted. None is recorded.
   def test_unvalidated_envelopes_are_not_audited
@@ -494,6 +512,18 @@ protocol_version=#{MODERN_VERSION}/o, lines.first)
     _, reply, err = post_capturing_audit(JSON.generate(jsonrpc: '2.0', id: 2, method: 'tools/list'))
     assert reply['result']
     assert_empty client_lines(err)
+  end
+
+  # A request with no body never reaches the gem, and leaves nothing noted
+  # from an earlier request on the same thread.
+  def test_a_request_without_a_body_clears_the_noted_client_info
+    Thread.current[OodApi::MCP_REQUEST_META_KEY] = { 'stale' => true }
+    request = Rack::Request.new(Rack::MockRequest.env_for('/', method: 'POST').tap { |env| env.delete('rack.input') })
+    assert_nil request.body
+    assert_nil OodApi.precheck_request_body(request)
+    assert_nil Thread.current[OodApi::MCP_REQUEST_META_KEY]
+  ensure
+    Thread.current[OodApi::MCP_REQUEST_META_KEY] = nil
   end
 
   # mcp 1.0.0 added DNS-rebinding protection defaulting to an allowlist of

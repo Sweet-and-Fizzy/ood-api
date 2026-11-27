@@ -469,9 +469,9 @@ protocol announces itself with an `initialize` request, and each one is
 recorded. A client of the 2026-07-28 protocol sends no `initialize`, and
 names itself on every request instead, so it is recorded the first time a
 process sees that name and version from that application token: once per
-connection over `bin/mcp-stdio`, and once per PUN process for `/mcp`, which
-serves every client of the PUN until Passenger recycles it. A process
-remembers up to 64 clients; the first one past that is recorded as
+connection over `bin/mcp-stdio`, and once per application process for
+`/mcp` until Passenger recycles it. A process remembers up to 64 clients of
+the 2026-07-28 protocol; the first one past that is recorded as
 `op=mcp_clients_limit`, and later new clients in that process are not
 recorded. A name or version that is missing or not a string is not recorded,
 and the request is served as usual. The client identity is whatever the

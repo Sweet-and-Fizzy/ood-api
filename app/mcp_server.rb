@@ -25,7 +25,8 @@ MCP.configure do |config|
   # `around_request` wraps the request; `instrumentation_callback` is
   # soft-deprecated upstream and slated for removal. It must call the block and
   # return its value, and the audit has to run *after* that call — `client` is
-  # only added to `data` while the request handler is running.
+  # only added to `data` while the request handler is running. The gem adds
+  # `duration` after this returns, so the lines here carry none.
   #
   # The rescue is not decoration. Upstream invokes this from an `ensure` with
   # no rescue of its own, so a raise here discards an already-successful result
@@ -42,10 +43,8 @@ MCP.configure do |config|
           user:           user,
           source:         'mcp',
           client:         OodApi.clip_client_field(client[:name]),
-          client_version: OodApi.clip_client_field(client[:version]),
-          duration:       data[:duration]&.round(4)
+          client_version: OodApi.clip_client_field(client[:version])
         )
-        OodApi.remember_mcp_client(client[:name], client[:version], Handlers::Audit.context[:token_id])
       elsif data[:error].nil?
         OodApi.audit_stateless_client(data)
       end
@@ -93,17 +92,20 @@ module OodApi
 
   # The 2026-07-28 protocol is stateless: there is no `initialize`, and a
   # client names itself in every request's `_meta` instead. The gem validates
-  # that envelope but does not pass it to `around_request` (`data[:client]` is
-  # only ever set by `initialize`), so each transport hands the parsed `_meta`
-  # over here, per thread, before the gem runs.
+  # that envelope but does not pass it to `around_request` (`data[:client]`
+  # comes only from `initialize`, and from methods it has no handler for), so
+  # each transport hands the parsed `_meta` over here, per thread, before the
+  # gem runs.
   MCP_REQUEST_META_KEY = :ood_api_mcp_request_meta
 
-  # A client is recorded once per process. Over stdio that is once per
-  # connection; the HTTP endpoint serves every client of the PUN from one
-  # long-lived process, so there it is once per distinct client and app token
-  # until the process is recycled. The set is bounded because the identity is
-  # whatever the caller says it is; past the bound, new identities go
-  # unrecorded, and the first one refused is recorded as `mcp_clients_limit`.
+  # A client of the stateless protocol is recorded once per process. Over
+  # stdio that is once per connection; over HTTP it is once per distinct
+  # client and app token in each app process until the process is recycled.
+  # The set is bounded because the identity is whatever the caller says it
+  # is; past the bound, new identities go unrecorded, and the first one
+  # refused is recorded as `mcp_clients_limit`. A client that sends
+  # `initialize` is recorded on every `initialize` and takes no place in the
+  # set.
   MCP_CLIENTS_SEEN_LIMIT = 64
   MCP_CLIENT_FIELD_LIMIT = 256
   MCP_CLIENTS_LOCK = Mutex.new
@@ -118,8 +120,9 @@ module OodApi
   # not mean the gem accepted the envelope: it never reads one for a
   # notification, for a method it has no handler for (instrumented as
   # `unsupported_method`, with no error set), or for `server/discover` outside
-  # the modern era. So those are skipped, and the protocol version must be one
-  # the gem serves.
+  # the modern era. So those are skipped, and a client is recorded only from a
+  # whole envelope (protocol version, client info and client capabilities)
+  # with a protocol version the gem serves.
   def self.audit_stateless_client(data)
     method = data[:method]
     return if method == 'unsupported_method' || MCP::Methods.notification?(method)
@@ -133,8 +136,7 @@ module OodApi
       source:           'mcp',
       client:           clip_client_field(name),
       client_version:   clip_client_field(version),
-      protocol_version: clip_client_field(protocol_version),
-      duration:         data[:duration]&.round(4)
+      protocol_version: clip_client_field(protocol_version)
     )
   end
 
@@ -145,7 +147,9 @@ module OodApi
 
     protocol_version = meta[MCP::RequestEnvelope::PROTOCOL_VERSION_META_KEY]
     info = meta[MCP::RequestEnvelope::CLIENT_INFO_META_KEY]
-    return unless MCP::Configuration.modern_protocol_version?(protocol_version) && info.is_a?(Hash)
+    capabilities = meta[MCP::RequestEnvelope::CLIENT_CAPABILITIES_META_KEY]
+    return unless MCP::Configuration.modern_protocol_version?(protocol_version) &&
+                  info.is_a?(Hash) && capabilities.is_a?(Hash)
 
     identity = [info['name'], info['version'], protocol_version]
     identity if identity.all?(String) && !identity.first.empty?
