@@ -607,7 +607,7 @@ GET /api/v1/jobs/historic?cluster=:cluster_id
 **Errors:**
 - 400 - Missing `cluster` parameter
 - 404 - Cluster not found
-- **501 - Not supported by this cluster's scheduler adapter** (see note above)
+- **501 - Not supported by this cluster's scheduler adapter** (see note above), or the cluster keeps no job accounting, such as Slurm without slurmdbd
 - 503 - Scheduler communication error
 
 **Example:**

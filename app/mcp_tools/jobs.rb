@@ -167,7 +167,9 @@ module OodApi
     class ListHistoricJobsTool < Base
       tool_name 'list_historic_jobs'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
-      description 'List historic (completed) jobs on a cluster'
+      description "List the user's finished jobs on a cluster, with how each ended (the scheduler's own " \
+                  'state, such as OUT_OF_MEMORY or TIMEOUT) and the memory it asked for and used where the ' \
+                  'scheduler reports them. Needs the cluster to keep job accounting.'
       input_schema({
         type:       'object',
         properties: {
@@ -188,12 +190,24 @@ module OodApi
         if jobs.empty?
           text = "No historic jobs found on cluster #{cluster_id}."
         else
-          lines = jobs.map do |j|
-            "- #{j.id}: #{j.job_name || '(unnamed)'} [#{j.status}]"
-          end
+          lines = jobs.map { |j| historic_line(j) }
           text = "Found #{jobs.size} historic job(s) on #{cluster_id}:\n#{lines.join("\n")}"
         end
         text_response(text)
+      end
+
+      # One job: its id and name, then how it ended in the scheduler's own
+      # words, since ood_core reports a job that ran out of memory, timed out
+      # or failed all as completed.
+      def self.historic_line(job)
+        native = job.native.is_a?(Hash) ? job.native : {}
+        state = native[:state].to_s.strip
+        details = [state.empty? ? job.status.to_s : state]
+        { req_mem: 'memory requested', max_rss: 'most memory used', elapsed: 'ran for' }.each do |key, label|
+          value = native[key].to_s.strip
+          details << "#{label} #{value}" unless value.empty?
+        end
+        "- #{job.id}: #{job.job_name || '(unnamed)'} [#{details.join(', ')}]".scrub('?')
       end
     end
 
