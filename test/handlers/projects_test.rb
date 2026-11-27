@@ -14,7 +14,7 @@ class HandlersProjectsTest < Minitest::Test
     @data = File.join(@home, 'ondemand/data/sys/dashboard')
     OodApi::SiteConfig.stubs(:dashboard_env).returns({ 'OOD_DATAROOT' => @data })
     OodApi::SiteConfig.stubs(:shared_project_paths).returns([])
-    Projects.stubs(:home).returns(@home)
+    Projects.stubs(:file_roots).returns([Pathname.new(@home)])
     FileUtils.mkdir_p(File.join(@data, 'projects'))
     @cluster = mock_cluster(id: 'hpc')
   end
@@ -107,7 +107,7 @@ class HandlersProjectsTest < Minitest::Test
     lookup('abc12345' => outside)
 
     found = Projects.list[:projects].first
-    assert_match(/outside your home and the shared project locations/, found.problem)
+    assert_match(/outside the places this site lets the assistant read/, found.problem)
     assert_equal 'abc12345', found.name
   ensure
     FileUtils.rm_rf(outside)
@@ -131,7 +131,7 @@ class HandlersProjectsTest < Minitest::Test
     File.symlink(outside, link)
     lookup('abc12345' => link)
 
-    assert_match(/outside your home/, Projects.list[:projects].first.problem)
+    assert_match(/outside the places/, Projects.list[:projects].first.problem)
   ensure
     FileUtils.rm_rf(outside)
   end
@@ -187,10 +187,16 @@ class HandlersProjectsTest < Minitest::Test
 
   def test_a_job_log_as_the_dashboard_writes_it
     dir = project('abc12345', 'Cell growth')
+    native = { 'account' => 'pzs0714', 'job_id' => '101', 'job_name' => 'fit', 'state' => 'COMPLETED',
+               'partition' => 'batch', 'reason' => 'None', 'nodes' => '1', 'min_memory' => '4G',
+               'time_limit' => '1:00:00', 'time_used' => '0:01:00', 'nodelist' => 'hpc-c1',
+               'work_dir' => '/home/jesse/projects/growth', 'start_time' => '2026-11-27T10:00:00',
+               'submit_time' => '2026-11-27T09:59:00', 'gres' => 'N/A', 'tres_alloc' => 'cpu=4,mem=4G,node=1' }
     log = [{ 'id' => '101', 'status' => 'completed', 'allocated_nodes' => [], 'submit_host' => nil,
-             'job_name' => 'fit', 'job_owner' => 'jesse', 'procs' => 4, 'queue_name' => 'batch',
-             'wallclock_time' => 60, 'submission_time' => Time.at(1_000), 'native' => { 'state' => 'COMPLETED' },
-             'gpus' => 0, 'cluster' => 'hpc' }]
+             'job_name' => 'fit', 'job_owner' => 'jesse', 'accounting_id' => 'pzs0714', 'procs' => 4,
+             'queue_name' => 'batch', 'wallclock_time' => 60, 'wallclock_limit' => 3600, 'cpu_time' => nil,
+             'submission_time' => Time.at(1_000), 'dispatch_time' => Time.at(1_060), 'native' => native,
+             'gpus' => 0, 'tasks' => [], 'cluster' => 'hpc' }]
     File.write(File.join(dir, '.ondemand', 'job_log.yml'), log.to_yaml)
     lookup('abc12345' => dir)
 
@@ -316,5 +322,55 @@ class HandlersProjectsTest < Minitest::Test
 
   def test_the_data_root_follows_the_dashboards_env_file
     assert_equal Pathname.new(File.join(@data, 'projects')), Projects.data_root
+  end
+
+  def test_jobs_on_a_cluster_the_site_does_not_offer_are_not_asked_about
+    hidden = mock_cluster(id: 'secret', hidden: true)
+    hidden.expects(:job_adapter).never
+    closed = mock_cluster(id: 'closed')
+    closed.stubs(:job_allow?).returns(false)
+    closed.expects(:job_adapter).never
+    dir = project('abc12345', 'Cell growth')
+    File.write(File.join(dir, '.ondemand', 'job_log.yml'),
+               [{ 'id' => '1', 'cluster' => 'secret', 'status' => 'running' },
+                { 'id' => '2', 'cluster' => 'closed', 'status' => 'running' }].to_yaml)
+    lookup('abc12345' => dir)
+
+    jobs = Projects.get('abc12345', clusters: [hidden, closed], user: 'jesse').jobs
+    assert_equal ['unknown', 'unknown'], jobs.map(&:status)
+  end
+
+  def test_a_scheduler_that_does_not_answer_is_not_asked_once_per_job
+    dir = project('abc12345', 'Cell growth')
+    log = (1..10).map { |n| { 'id' => n.to_s, 'cluster' => 'hpc', 'status' => 'queued', 'job_owner' => 'bob' } }
+    File.write(File.join(dir, '.ondemand', 'job_log.yml'), log.to_yaml)
+    lookup('abc12345' => dir)
+    adapter = mock('adapter')
+    adapter.expects(:info_where_owner).once.raises(StandardError, 'slurmctld down')
+    adapter.expects(:info).never
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    jobs = Projects.get('abc12345', clusters: [@cluster], user: 'jesse').jobs
+    assert_equal ['unknown'] * 10, jobs.map(&:status)
+  end
+
+  def test_a_nul_in_a_project_directory_is_unavailable_not_a_failure
+    File.write(lookup_file, "abc12345: \"/home/a\\0b\"\nother: #{File.join(@home, 'gone')}\n")
+
+    found = Projects.list[:projects]
+    assert_equal ['abc12345', 'other'], found.map(&:id)
+    assert_match(/could not be understood/, found.first.problem)
+    refute_includes found.first.directory, "\0"
+  end
+
+  def test_one_bad_launcher_is_that_launchers_problem_only
+    dir = project('abc12345', 'Cell growth')
+    path = File.join(dir, '.ondemand', 'launchers', 'aaaa0001')
+    FileUtils.mkdir_p(path)
+    File.write(File.join(path, 'form.yml'), "{ broken\n")
+    lookup('abc12345' => dir)
+
+    error = assert_raises(Projects::LauncherUnavailable) { Projects.launcher('abc12345', 'aaaa0001') }
+    assert_kind_of Handlers::Error, error
   end
 end

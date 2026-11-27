@@ -227,10 +227,16 @@ module OodApi
     end
 
     # The Dashboard's Project Manager is served only when its app is
-    # installed beside the Dashboard, as the Files app is.
+    # installed beside the Dashboard, as the Files app is. Before Open
+    # OnDemand 4.0 its projects were laid out differently (scripts, not
+    # launchers, and no job log), and that layout is not read, so a
+    # Dashboard without launchers counts as having no Project Manager.
     def projects_app_installed?
       apps = sys_apps
       return true unless apps.directory?
+
+      dashboard = apps.join('dashboard')
+      return false if dashboard.directory? && !dashboard.join('app', 'models', 'launcher.rb').file?
 
       apps.join('projects', 'manifest.yml').readable?
     end

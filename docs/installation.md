@@ -279,7 +279,7 @@ the settings above ask for:
 | Dashboard setting | Effect here |
 |---|---|
 | The Files app is not installed (`/var/www/ood/apps/sys/files`) | No file tools at all |
-| The Project Manager is not installed (`/var/www/ood/apps/sys/projects`) | No project tools |
+| The Project Manager is not installed (`/var/www/ood/apps/sys/projects`), or Open OnDemand is older than 4.0 | No project tools |
 | `download_enabled: false` | `read_file` is off |
 | `upload_enabled: false` | `write_file` is off |
 | A cluster with `hidden: true` in its metadata | The cluster is not listed and cannot be used, as in the Dashboard's own job tools, which leave hidden clusters out |
@@ -434,7 +434,7 @@ the first second after a restart can get a 502 while the PUN starts.
 | `OOD_API_ALLOWED_ORIGINS` | No | unset | Comma-separated origins (for example `https://portal.example.edu`) whose browser requests are accepted in addition to the portal's own. Only needed if a front end on another origin calls this API. |
 | `OOD_API_CONFIG_ROOT` | No | `/etc/ood/config/apps/<app>` | The directory holding the app's `config.yml` and `env`. `<app>` is the name the app is installed under. Set it in `pun_custom_env` if you need it; it cannot be set in the env file it locates. |
 | `OOD_DOWNLOAD_ENABLED`, `OOD_UPLOAD_ENABLED` | No | `true` | The Dashboard's own switches, read from the PUN environment, the Dashboard's env file, or `download_enabled` and `upload_enabled` in `ondemand.d`. See [what to enable](#what-to-enable). |
-| `OOD_SHARED_PROJECT_PATH` | No | unset | The Project Manager's shared project locations, read from the PUN environment, the Dashboard's env file, or `shared_project_path` in `ondemand.d`. The project tools show a project only when its directory is in the user's home, the Dashboard's data root or one of these. Projects are found under the Dashboard's data root, `OOD_DATAROOT` in the Dashboard's env file. |
+| `OOD_SHARED_PROJECT_PATH` | No | unset | The Project Manager's shared project locations, read from the PUN environment, the Dashboard's env file, or `shared_project_path` in `ondemand.d`. The project tools read a project only when its directory is where the file tools may read (the file allowlist, or the home and temp directories without one), in the Dashboard's data root or in one of these; a project elsewhere is listed as unavailable. Projects are found under the Dashboard's data root, `OOD_DATAROOT` in the Dashboard's env file. |
 | `OOD_ALLOWLIST_PATH` | No | unset | Open OnDemand's own file allowlist. It is read from the PUN environment, from the Dashboard's env file (`/etc/ood/config/apps/dashboard/env`), and from `allowlist_path` in `/etc/ood/config/ondemand.d`, in that order. The Dashboard in Open OnDemand 4.2 and earlier does not read `allowlist_path` from `ondemand.d`, so on those releases set the allowlist in the Dashboard's env file, which confines both. When set, file access through this API is confined to the same colon-separated paths as the Dashboard file browser. Unset, it is confined to the home and temp directories. |
 
 ## Audit log

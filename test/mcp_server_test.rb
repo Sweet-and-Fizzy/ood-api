@@ -113,6 +113,15 @@ class McpServerTest < Minitest::Test
     'delete_file'               => [false, true,  true]
   }.freeze
 
+  def test_the_instructions_say_open_launcher_submits_nothing
+    assert_includes OodApi.mcp_instructions, 'open_launcher only gives the page where the user submits a launcher'
+    assert_includes OodApi.mcp_instructions, 'never say it started or submitted a job'
+
+    OodApi::Capabilities.stubs(:enabled?).returns(true)
+    OodApi::Capabilities.stubs(:enabled?).with('open_launcher').returns(false)
+    refute_includes OodApi.mcp_instructions, 'open_launcher'
+  end
+
   def test_every_tool_declares_annotations
     server = OodApi.build_mcp_server
     request = JSON.generate(jsonrpc: '2.0', id: 4, method: 'tools/list', params: {})

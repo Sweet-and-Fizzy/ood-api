@@ -5,7 +5,9 @@ require 'etc'
 require 'pathname'
 require 'time'
 require 'yaml'
+require_relative 'clusters'
 require_relative 'errors'
+require_relative 'files'
 require_relative 'sessions'
 require_relative '../../lib/site_config'
 
@@ -25,7 +27,9 @@ module Handlers
     LOOKUP_LIMIT = 256 * 1024
     MANIFEST_LIMIT = 64 * 1024
     FORM_LIMIT = 256 * 1024
-    JOB_LOG_LIMIT = 4 * 1024 * 1024
+    # The job log is never trimmed, and each entry holds what the scheduler
+    # said about the job.
+    JOB_LOG_LIMIT = 16 * 1024 * 1024
     MAX_PROJECTS = 200
     MAX_LAUNCHERS = 50
     MAX_FIELDS = 100
@@ -34,6 +38,9 @@ module Handlers
     # A file the Project Manager keeps that could not be read, or that does
     # not hold what the Project Manager writes there.
     class Unavailable < StandardError; end
+
+    # One launcher's form could not be read; the rest of the project can.
+    class LauncherUnavailable < Error; end
 
     Project = Struct.new(:id, :name, :description, :directory, :page, :problem, keyword_init: true)
     Launcher = Struct.new(:id, :title, :fields, :page, keyword_init: true)
@@ -91,6 +98,10 @@ module Handlers
       raise NotFoundError, missing unless form.file?
 
       [found, read_launcher(form, dir, found.id).first]
+    rescue Unavailable => e
+      raise if found.nil? || found.problem
+
+      raise LauncherUnavailable, "launcher #{launcher_id} in project #{found.id} could not be read: #{e.message}"
     end
 
     def find(id)
@@ -121,7 +132,7 @@ module Handlers
       raise Unavailable, "#{file} does not hold a list of projects" unless data.is_a?(Hash)
 
       data.filter_map do |id, dir|
-        [id.to_s, dir.to_s] if id.to_s.match?(PROJECT_ID) && dir.is_a?(String) && !dir.empty?
+        [id.to_s, dir] if id.to_s.match?(PROJECT_ID) && dir.is_a?(String) && !dir.empty?
       end
     end
 
@@ -132,42 +143,46 @@ module Handlers
 
       Project.new(id: id, name: text(manifest['name']) || id, description: text(manifest['description']).to_s,
                   directory: real.to_s, page: page(id))
-    rescue Unavailable, SystemCallError => e
-      Project.new(id: id, name: id, description: '', directory: dir.to_s, page: page(id),
+    rescue Unavailable, SystemCallError, ArgumentError => e
+      Project.new(id: id, name: id, description: '', directory: dir.to_s.scrub.delete("\0"), page: page(id),
                   problem: "unavailable: #{problem_text(e)}")
     end
 
     # The project's directory, with its links resolved, when it is in one of
-    # the allowed roots.
+    # the allowed roots. The Dashboard lets a project be anywhere, so a
+    # project elsewhere is reported, not hidden.
     def allowed_directory(dir)
       real = Pathname.new(dir).realpath
       raise Unavailable, 'its directory is not a directory' unless real.directory?
       return real if allowed_roots.any? { |root| under?(real, root) }
 
-      raise Unavailable, 'its directory is outside your home and the shared project locations'
+      raise Unavailable, 'its directory is outside the places this site lets the assistant read'
     rescue Errno::ENOENT
       raise Unavailable, 'its directory no longer exists'
     end
 
-    # Home, the Dashboard's data root, where it makes a project by
-    # default, and the shared project locations. A root that is not
-    # absolute, or is /, allows nothing.
+    # Where the file tools may read (the site's file allowlist, or home and
+    # the temp directories without one), the Dashboard's data root, where it
+    # makes a project by default, and the shared project locations. A shared
+    # location that is not absolute, or is /, allows nothing.
     def allowed_roots
-      [home, data_root, *OodApi::SiteConfig.shared_project_paths].filter_map do |root|
-        root = Pathname.new(root)
-        next unless root.absolute?
-
+      shared = OodApi::SiteConfig.shared_project_paths.select(&:absolute?).filter_map do |root|
         real = root.realpath
         real.root? ? nil : real
       rescue SystemCallError
         nil
       end
+      (file_roots + [real_or_nil(data_root)] + shared).compact.uniq
     end
 
-    # The user's home as the system records it, which a changed HOME does
-    # not move.
-    def home
-      Etc.getpwuid(Process.uid).dir
+    def file_roots
+      Files.allowed_path_roots
+    end
+
+    def real_or_nil(path)
+      path.realpath
+    rescue SystemCallError
+      nil
     end
 
     def under?(path, root)
@@ -254,23 +269,25 @@ module Handlers
     # Each job's status now. The user's own jobs come from one query per
     # cluster, as list_jobs reports them. A job not among them, such as a
     # teammate's in a shared project, is asked about by its id, as the
-    # Project Manager does. When the scheduler cannot be asked, the status
-    # now is unknown.
+    # Project Manager does. On a cluster the site does not offer, or whose
+    # scheduler did not answer the first query, the status now is unknown.
     def with_live_status(jobs, clusters, user)
       open = jobs.reject { |job| job.last_known_status == 'completed' }
       live = open.map(&:cluster_id).uniq.to_h do |cluster_id|
         [cluster_id, Sessions.current_jobs(find_cluster(clusters, cluster_id), user)]
       end
-      jobs.each do |job|
-        next job.status = 'completed' if job.last_known_status == 'completed'
+      jobs.each { |job| job.status = status_now(job, live[job.cluster_id], clusters) }
+    end
 
-        statuses = live[job.cluster_id]
-        job.status = statuses&.fetch(job.id, nil) || job_status(find_cluster(clusters, job.cluster_id), job.id)
-      end
+    def status_now(job, statuses, clusters)
+      return 'completed' if job.last_known_status == 'completed'
+      return 'unknown' if statuses.nil?
+
+      statuses.fetch(job.id) { job_status(find_cluster(clusters, job.cluster_id), job.id) }
     end
 
     def find_cluster(clusters, id)
-      clusters.find { |c| c.id.to_s == id }
+      clusters.find { |c| c.id.to_s == id && Clusters.offered?(c) }
     end
 
     def job_status(cluster, job_id)
@@ -293,7 +310,10 @@ module Handlers
     # objects but times. nil for an empty file. The file is opened without
     # following a link and read only if it is a regular file, so a link
     # swapped in after the checks, or a pipe that would never end, is
-    # refused.
+    # refused. Only the last part of the path is held to this: a directory
+    # above it swapped for a link in the moment between the check and the
+    # read can still be followed, which exposes at most a name or title
+    # from a file the user can read anyway.
     def load_yaml(file, limit)
       text = File.open(file, File::RDONLY | File::NONBLOCK | File::NOFOLLOW, binmode: true) do |io|
         raise Unavailable, "#{file.basename} is not a regular file" unless io.stat.file?
@@ -310,6 +330,8 @@ module Handlers
     end
 
     def problem_text(error)
+      return 'its directory could not be understood' if error.is_a?(ArgumentError)
+
       error.is_a?(SystemCallError) ? "it could not be read (#{error.class.name.split('::').last})" : error.message
     end
 
