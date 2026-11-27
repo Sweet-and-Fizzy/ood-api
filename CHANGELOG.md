@@ -85,6 +85,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   saying the same. Before, MCP clients got a bare internal error and REST an
   unexplained 500.
 
+- On a cluster that keeps no job accounting, such as Slurm without slurmdbd,
+  `list_historic_jobs` now says the cluster keeps no record of finished jobs
+  and points to looking a recent job up by its id or reading its output
+  file, and REST answers 501 saying the same. Before, both passed on the
+  scheduler's "accounting storage is disabled" as a failure.
+
+- `list_historic_jobs` shows how each job ended in the scheduler's own
+  words, such as `OUT_OF_MEMORY` or `TIMEOUT`, with the memory it asked for
+  and used and how long it ran, where the scheduler reports them. Before, a
+  job that ran out of memory, timed out or failed all showed as `completed`.
+
 - A folder named `dashboard` in the directory above this app no longer makes
   the app treat that directory as Open OnDemand's apps directory. It has to
   hold an installed Dashboard, with a `manifest.yml`. Before, checking the app

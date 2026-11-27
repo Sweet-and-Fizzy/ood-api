@@ -234,6 +234,31 @@ class ListHistoricJobsToolTest < Minitest::Test
     assert_includes text, 'old_sim'
   end
 
+  def test_shows_how_each_job_ended_and_its_memory
+    jobs = [
+      mock_job_info(id: '200', job_name: 'fit', status: :completed, job_owner: ENV.fetch('USER', nil),
+                    native: { state: 'OUT_OF_MEMORY', req_mem: '4G', max_rss: '', elapsed: '00:12:03' }),
+      mock_job_info(id: '201', job_name: 'plot', status: :completed, job_owner: ENV.fetch('USER', nil))
+    ]
+    adapter = mock('adapter')
+    adapter.stubs(:info_historic).returns(jobs)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = ListHistoricJobsTool.call(server_context: nil, cluster_id: 'cluster1').to_h[:content].first[:text]
+    assert_includes text, '- 200: fit [OUT_OF_MEMORY, memory requested 4G, ran for 00:12:03]'
+    assert_includes text, '- 201: plot [completed]'
+  end
+
+  def test_a_cluster_with_no_accounting_is_a_clear_tool_error
+    adapter = mock('adapter')
+    adapter.stubs(:info_historic).raises(OodCore::JobAdapterError, 'Slurm accounting storage is disabled')
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    content = ListHistoricJobsTool.call(server_context: nil, cluster_id: 'cluster1').to_h
+    assert content[:isError]
+    assert_match(/keeps no record of finished jobs/, content[:content].first[:text])
+  end
+
   def test_error_on_missing_cluster
     result = ListHistoricJobsTool.call(server_context: nil, cluster_id: 'nonexistent')
     content = result.to_h

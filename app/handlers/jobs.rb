@@ -18,10 +18,23 @@ module Handlers
       [jobs, cluster]
     end
 
+    # What a scheduler says when it keeps no record of finished jobs: Slurm's
+    # sacct without slurmdbd.
+    NO_ACCOUNTING = /accounting storage is disabled/i
+
     def self.historic(clusters:, cluster_id:, user:, opts: {})
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
-      jobs = Handlers.with_adapter(cluster, 'get job history') do
-        cluster.job_adapter.info_historic(opts: opts)
+      jobs = begin
+        Handlers.with_adapter(cluster, 'get job history') do
+          cluster.job_adapter.info_historic(opts: opts)
+        end
+      rescue AdapterError => e
+        raise unless NO_ACCOUNTING.match?(e.message.to_s.scrub('?'))
+
+        raise NotSupportedError,
+              "Cluster '#{cluster.id}' keeps no record of finished jobs, because its scheduler has job " \
+              'accounting turned off. A job that finished recently can still be looked up by its id, ' \
+              "and a job's output file shows how it ended."
       end
       # Filter by user — some adapters (e.g., Slurm sacct) may return
       # cluster-wide history, not just the current user's jobs.
