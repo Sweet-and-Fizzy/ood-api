@@ -18,15 +18,64 @@ module Handlers
       [jobs, cluster]
     end
 
+    # What a scheduler says when it keeps no record of finished jobs: Slurm's
+    # sacct without slurmdbd.
+    NO_ACCOUNTING = /accounting storage is disabled/i
+
     def self.historic(clusters:, cluster_id:, user:, opts: {})
       cluster = Clusters.get(clusters: clusters, id: cluster_id)
-      jobs = Handlers.with_adapter(cluster, 'get job history') do
-        cluster.job_adapter.info_historic(opts: opts)
+      jobs = begin
+        Handlers.with_adapter(cluster, 'get job history') do
+          cluster.job_adapter.info_historic(opts: opts.merge(show_steps: true))
+        end
+      rescue AdapterError => e
+        raise unless NO_ACCOUNTING.match?(e.message.to_s.scrub('?'))
+
+        raise NotSupportedError,
+              "Cluster '#{cluster.id}' keeps no record of finished jobs, because its scheduler has job " \
+              'accounting turned off. A job can still be looked up by its id for a few minutes after it ' \
+              "finishes, and a job's output file shows how it ended."
       end
+      jobs = with_step_memory(jobs)
       # Filter by user — some adapters (e.g., Slurm sacct) may return
       # cluster-wide history, not just the current user's jobs.
       jobs = jobs.select { |j| j.job_owner == user } if user
       [jobs, cluster]
+    end
+
+    # A Slurm job step's id: the job's id, a dot, and the step (`batch`,
+    # `extern` or a number).
+    STEP_ID = /\A(?<job>[^.]+)\.[^.]+\z/
+    MEMORY = /\A(?<amount>\d+(?:\.\d+)?)(?<unit>[KMGTP]?)\z/i
+
+    # Slurm records the most memory used on each step of a job, not on the
+    # job itself, so the largest step's figure is put on the job, and the
+    # steps are left out of the list.
+    def self.with_step_memory(jobs)
+      steps, own = jobs.partition { |job| STEP_ID.match?(job.id) }
+      peaks = step_peaks(steps)
+      own.each do |job|
+        native = native_of(job)
+        native[:max_rss] = peaks[job.id] if peaks[job.id] && native[:max_rss].to_s.strip.empty?
+      end
+    end
+
+    # The largest memory-used figure among each job's steps, by job id.
+    def self.step_peaks(steps)
+      steps.group_by { |step| STEP_ID.match(step.id)[:job] }.transform_values do |list|
+        list.map { |step| native_of(step)[:max_rss] }.select { |value| memory_bytes(value) }
+            .max_by { |value| memory_bytes(value) }
+      end
+    end
+
+    def self.native_of(job)
+      job.native.is_a?(Hash) ? job.native : {}
+    end
+
+    # Bytes in a figure such as `214316K` or `0.20G`, or nil when it is not one.
+    def self.memory_bytes(value)
+      match = MEMORY.match(value.to_s.strip)
+      match && (match[:amount].to_f * (1024**' KMGTP'.index(match[:unit].upcase.rjust(1)))).round
     end
 
     # A job id that is not well-formed text reaches the adapter, which shells
