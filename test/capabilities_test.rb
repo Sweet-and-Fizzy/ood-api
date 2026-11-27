@@ -266,6 +266,16 @@ class CapabilitiesTest < Minitest::Test
     ENV.delete('OOD_API_SYS_APPS')
   end
 
+  def test_the_dashboard_beside_this_app_is_an_installed_app
+    beside = Pathname.new(File.join(@dir, 'checkout'))
+    FileUtils.mkdir_p(beside.join('dashboard'))
+
+    assert_equal Pathname.new('/var/www/ood/apps/sys'), OodApi::SiteConfig.sys_apps(beside)
+
+    File.write(beside.join('dashboard', 'manifest.yml'), 'name: Dashboard')
+    assert_equal beside, OodApi::SiteConfig.sys_apps(beside)
+  end
+
   def test_a_hidden_cluster_is_not_offered
     OodApi::App.stubs(:clusters).returns([mock_cluster(id: 'cluster1'), mock_cluster(id: 'secret', hidden: true)])
 

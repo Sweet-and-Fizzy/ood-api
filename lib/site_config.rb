@@ -226,11 +226,13 @@ module OodApi
 
     # The directory the Dashboard is installed in: the one this app is in,
     # when the Dashboard is beside it, as the Dashboard itself works it out.
-    def sys_apps
+    # Only an installed app counts as the Dashboard, so a folder that happens
+    # to be named dashboard, such as one in a repository this app is checked
+    # out inside, does not.
+    def sys_apps(beside = Pathname.new(File.expand_path('../..', __dir__)))
       return Pathname.new(ENV['OOD_API_SYS_APPS']) if ENV['OOD_API_SYS_APPS']
 
-      beside = Pathname.new(File.expand_path('../..', __dir__))
-      beside.join('dashboard').directory? ? beside : Pathname.new('/var/www/ood/apps/sys')
+      beside.join('dashboard', 'manifest.yml').file? ? beside : Pathname.new('/var/www/ood/apps/sys')
     end
 
     # Loads this app's own env file the way the Dashboard loads its own:

@@ -96,6 +96,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and used and how long it ran, where the scheduler reports them. Before, a
   job that ran out of memory, timed out or failed all showed as `completed`.
 
+- A folder named `dashboard` in the directory above this app no longer makes
+  the app treat that directory as Open OnDemand's apps directory. It has to
+  hold an installed Dashboard, with a `manifest.yml`. Before, checking the app
+  out inside another repository with a `dashboard` folder turned off every
+  file tool, because the Files app was not found there.
+
 ## [0.5.0] - 2026-11-23
 
 A site now decides what the app serves, and a fresh install serves less. Read
