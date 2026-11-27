@@ -72,6 +72,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The app no longer appears as "Open OnDemand API" in the Dashboard's System
+  menu. Its manifest gave it a category, which is what puts an app in the
+  menu; it is still served at `/pun/sys/ood-api`.
+
 - The audit log records which MCP client connected for clients of the
   2026-07-28 protocol, which has no `initialize` request. The
   `op=mcp_initialize` line is written the first time a process sees a client's
