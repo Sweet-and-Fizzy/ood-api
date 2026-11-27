@@ -336,6 +336,16 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
+  def test_historic_on_a_cluster_with_no_accounting_says_so
+    @adapter.stubs(:info_historic)
+            .raises(OodCore::JobAdapterError, 'sacct: error: Slurm accounting storage is disabled')
+    error = assert_raises(Handlers::NotSupportedError) do
+      Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'cluster1', user: 'drew')
+    end
+    assert_match(/keeps no record of finished jobs/, error.message)
+    assert_match(/output file/, error.message)
+  end
+
   def test_historic_raises_adapter_error_on_scheduler_failure
     @adapter.stubs(:info_historic).raises(OodCore::JobAdapterError, 'not supported')
     assert_raises(Handlers::AdapterError) do
