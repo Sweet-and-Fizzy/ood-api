@@ -567,13 +567,13 @@ curl -X POST \
 > commonly return **501 `not_implemented`**. Handle that code; it means your
 > site's scheduler, not a broken request.
 
-The Historic Jobs API returns completed jobs from the scheduler's accounting database. Unlike the regular jobs endpoint which shows only active jobs, this endpoint returns jobs that have already finished.
+The Historic Jobs API returns jobs from the scheduler's accounting database, including jobs that have already finished, which the regular jobs endpoint does not show. It lists any still queued or running too. On Slurm, a job's steps are not listed separately.
 
 **Operator note:** Some adapters may call accounting APIs that return more than one user's jobs. The API always **filters results to the authenticated user** by matching `job_owner` to the current user (same behavior for the MCP `list_historic_jobs` tool). If your scheduler reports ownership in an unexpected format, users may see fewer rows than in raw `sacct`/`qstat` output.
 
 #### List Historic Jobs
 
-Returns completed jobs for the authenticated user on a specified cluster.
+Returns the authenticated user's jobs from the accounting database of a specified cluster.
 
 ```
 GET /api/v1/jobs/historic?cluster=:cluster_id

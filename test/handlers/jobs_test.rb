@@ -313,7 +313,8 @@ class HandlersJobsTest < Minitest::Test
   # historic
 
   def test_historic_returns_jobs_and_cluster
-    @adapter.expects(:info_historic).with(opts: {}).returns([mock_job_info(id: '100'), mock_job_info(id: '101')])
+    @adapter.expects(:info_historic).with(opts: { show_steps: true })
+            .returns([mock_job_info(id: '100'), mock_job_info(id: '101')])
     jobs, cluster = Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'cluster1', user: 'testuser')
     assert_equal 2, jobs.size
     assert_equal '100', jobs[0].id
@@ -328,6 +329,40 @@ class HandlersJobsTest < Minitest::Test
     jobs, _cluster = Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'cluster1', user: 'drew')
     assert_equal 1, jobs.size
     assert_equal '201', jobs[0].id
+  end
+
+  # Rows as ood_core builds them from `sacct` with steps: the job row has no
+  # MaxRSS and the step rows have no user.
+  def test_historic_puts_the_largest_step_memory_on_its_job_and_drops_the_steps
+    rows = [
+      mock_job_info(id: '4300001', job_owner: 'drew',
+                    native: { job_id: '4300001', state: 'COMPLETED', req_mem: '0.59G', max_rss: nil, user: 'drew' }),
+      mock_job_info(id: '4300001.batch', job_owner: nil,
+                    native: { job_id: '4300001.batch', state: 'COMPLETED', max_rss: '0.20G', user: nil }),
+      mock_job_info(id: '4300001.extern', job_owner: nil,
+                    native: { job_id: '4300001.extern', state: 'COMPLETED', max_rss: '0.00G', user: nil }),
+      mock_job_info(id: '4300002', job_owner: 'drew', native: { job_id: '4300002', state: 'PENDING', user: 'drew' })
+    ]
+    @adapter.stubs(:info_historic).returns(rows)
+
+    jobs, _cluster = Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'cluster1', user: 'drew')
+    assert_equal ['4300001', '4300002'], jobs.map(&:id)
+    assert_equal '0.20G', jobs[0].native[:max_rss]
+    assert_nil jobs[1].native[:max_rss]
+  end
+
+  def test_historic_compares_step_memory_across_units
+    rows = [
+      mock_job_info(id: '7', job_owner: 'drew', native: { max_rss: nil }),
+      mock_job_info(id: '7.batch', native: { max_rss: '900M' }),
+      mock_job_info(id: '7.0', native: { max_rss: '1.2G' }),
+      mock_job_info(id: '7.1', native: { max_rss: 'Unknown' })
+    ]
+    @adapter.stubs(:info_historic).returns(rows)
+
+    jobs, _cluster = Handlers::Jobs.historic(clusters: @clusters, cluster_id: 'cluster1', user: 'drew')
+    assert_equal ['7'], jobs.map(&:id)
+    assert_equal '1.2G', jobs[0].native[:max_rss]
   end
 
   def test_historic_raises_not_found_for_bad_cluster
