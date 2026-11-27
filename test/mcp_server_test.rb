@@ -324,6 +324,178 @@ class McpServerTest < Minitest::Test
     assert JSON.parse(resp.join)['result'], 'initialize should succeed'
   end
 
+  # The 2026-07-28 protocol has no `initialize`: a client names itself in each
+  # request's `_meta`. The client record must still be written, once.
+  MODERN_VERSION = '2026-07-28'
+
+  def modern_body(id, client_info, method: 'tools/list')
+    meta = { 'io.modelcontextprotocol/protocolVersion'    => MODERN_VERSION,
+             'io.modelcontextprotocol/clientCapabilities' => {} }
+    meta['io.modelcontextprotocol/clientInfo'] = client_info unless client_info.nil?
+    message = { jsonrpc: '2.0', method: method, params: { _meta: meta } }
+    message[:id] = id unless id.nil?
+    JSON.generate(message)
+  end
+
+  # @return [Array(Integer, Hash, String)] status, parsed reply, audit output
+  def post_capturing_audit(body, headers = {})
+    OodApi.forget_mcp_clients! unless @keep_seen_clients
+    env = Rack::MockRequest.env_for('/', { method: 'POST', input: body }.merge(headers))
+    env['CONTENT_TYPE'] = 'application/json'
+    env['HTTP_ACCEPT'] = 'application/json, text/event-stream'
+    if body.include?(MODERN_VERSION)
+      env['HTTP_MCP_PROTOCOL_VERSION'] = MODERN_VERSION
+      env['HTTP_MCP_METHOD'] = JSON.parse(body)['method']
+    end
+    status = reply = nil
+    _out, err = capture_io do
+      status, _headers, resp = OodApi.mcp_rack_app.call(env)
+      text = Array(resp).join
+      reply = text.empty? ? {} : JSON.parse(text)
+    end
+    [status, reply, err]
+  end
+
+  def client_lines(err)
+    err.lines.grep(/op=mcp_initialize/)
+  end
+
+  def test_modern_client_info_is_audited
+    status, reply, err = post_capturing_audit(modern_body(1, { name: 'ood-agent', version: '2.0.1' }))
+    assert_equal 200, status
+    assert reply['result'], "tools/list should succeed: #{reply}"
+    lines = client_lines(err)
+    assert_equal 1, lines.length, err
+    assert_match(/op=mcp_initialize user=\S+ source=mcp client=ood-agent client_version=2\.0\.1 \
+protocol_version=#{MODERN_VERSION}/o, lines.first)
+  end
+
+  def test_modern_client_is_audited_once
+    OodApi.forget_mcp_clients!
+    @keep_seen_clients = true
+    _, _, first = post_capturing_audit(modern_body(1, { name: 'ood-agent', version: '2.0.1' }))
+    _, reply, second = post_capturing_audit(modern_body(2, { name: 'ood-agent', version: '2.0.1' }))
+    assert reply['result']
+    assert_equal 1, client_lines(first).length
+    assert_empty client_lines(second), 'a second request from the same client must not be recorded again'
+  end
+
+  # The HTTP endpoint is one long-lived process for every client of the PUN,
+  # so a second, different client is still recorded.
+  def test_a_different_modern_client_is_audited_too
+    OodApi.forget_mcp_clients!
+    @keep_seen_clients = true
+    post_capturing_audit(modern_body(1, { name: 'ood-agent', version: '2.0.1' }))
+    _, _, err = post_capturing_audit(modern_body(2, { name: 'other-client', version: '1.0' }))
+    assert_match(/client=other-client/, client_lines(err).join)
+  end
+
+  def test_legacy_initialize_line_is_unchanged
+    body = JSON.generate(jsonrpc: '2.0', id: 1, method: 'initialize',
+                         params: { protocolVersion: '2025-06-18', capabilities: {},
+                                   clientInfo: { name: 'probe', version: '9.9' } })
+    _, reply, err = post_capturing_audit(body)
+    assert reply['result']
+    lines = client_lines(err)
+    assert_equal 1, lines.length, err
+    assert_match(/ op=mcp_initialize user=\S+ source=mcp client=probe client_version=9\.9$/, lines.first.chomp)
+  end
+
+  def test_modern_request_without_client_info_is_served_and_not_audited
+    _, reply, err = post_capturing_audit(modern_body(1, nil))
+    assert reply['result']
+    assert_empty client_lines(err)
+  end
+
+  # Self-reported and caller-controlled: a malformed identity never fails the
+  # request and is never written.
+  def test_malformed_modern_client_info_never_breaks_the_request
+    [{ name: 42, version: '1' }, { name: 'x', version: ['1'] }, { version: '1' }, { name: '' },
+     { name: { a: 1 }, version: '1' }].each do |info|
+      status, reply, err = post_capturing_audit(modern_body(1, info))
+      assert_equal 200, status
+      assert reply['result'], "clientInfo=#{info} should still be served: #{reply}"
+      assert_empty client_lines(err), "clientInfo=#{info} must not be recorded"
+      refute_match(/mcp_instrumentation_failed/, err)
+    end
+  end
+
+  # A non-object clientInfo or _meta is refused by the gem as invalid params,
+  # cleanly, and nothing is recorded.
+  def test_non_object_modern_client_info_or_meta_is_refused_cleanly
+    meta_scalar = JSON.generate(jsonrpc: '2.0', id: 1, method: 'tools/list', params: { _meta: 'pwned' })
+    [modern_body(1, 'pwned'), modern_body(1, [1, 2]), meta_scalar].each do |body|
+      status, reply, err = post_capturing_audit(body)
+      assert_operator status, :<, 500, body
+      assert_equal(-32_602, reply.dig('error', 'code'), "#{body} should be invalid params: #{reply}")
+      assert_empty client_lines(err)
+      refute_match(/mcp_instrumentation_failed/, err)
+    end
+  end
+
+  def test_huge_modern_client_name_is_truncated
+    _, reply, err = post_capturing_audit(modern_body(1, { name: 'a' * 100_000, version: 'v' * 100_000 }))
+    assert reply['result']
+    line = client_lines(err).first
+    refute_nil line
+    assert_operator line.bytesize, :<, 2_000
+  end
+
+  # The HTTP endpoint serves every app token from one process, so the same
+  # client connecting under a second token is a second record.
+  def test_same_modern_client_under_another_token_is_audited_again
+    setup_token_storage
+    OodApi.forget_mcp_clients!
+    @keep_seen_clients = true
+    body = modern_body(1, { name: 'ood-agent', version: '2.0.1' })
+    first = create_test_token('A')
+    second = create_test_token('B')
+    _, _, err_a = post_capturing_audit(body, 'HTTP_X_OOD_API_TOKEN' => first.token)
+    _, _, err_b = post_capturing_audit(body, 'HTTP_X_OOD_API_TOKEN' => second.token)
+    assert_match(/token_id=#{first.id}/, client_lines(err_a).join)
+    assert_match(/token_id=#{second.id}/, client_lines(err_b).join)
+  ensure
+    Handlers::Audit.context = nil
+    teardown_token_storage
+  end
+
+  # Past the bound on remembered clients, the first refusal is said once
+  # rather than new clients going unrecorded without a trace.
+  def test_reaching_the_client_limit_is_recorded_once
+    OodApi.forget_mcp_clients!
+    @keep_seen_clients = true
+    OodApi::MCP_CLIENTS_SEEN_LIMIT.times { |i| OodApi.remember_mcp_client("c#{i}", '1', nil) }
+    _, reply, first = post_capturing_audit(modern_body(1, { name: 'late', version: '1' }))
+    _, _, second = post_capturing_audit(modern_body(2, { name: 'later', version: '1' }))
+    assert reply['result']
+    assert_empty client_lines(first + second)
+    assert_equal 1, (first + second).lines.grep(/op=mcp_clients_limit /).length, first + second
+  end
+
+  # The gem only validates the envelope of requests it dispatches, so these
+  # reach the hook with `_meta` the gem never accepted. None is recorded.
+  def test_unvalidated_envelopes_are_not_audited
+    info = { name: 'ghost', version: '1' }
+    [modern_body(1, info, method: 'no/such_method'),
+     modern_body(nil, info, method: 'notifications/initialized')].each do |body|
+      _, _, err = post_capturing_audit(body)
+      assert_empty client_lines(err), body
+    end
+  end
+
+  # The `_meta` noted for one request must not be read for the next: here the
+  # first is refused before the gem runs, so a stale note would be recorded
+  # against the second request, which carries no client info at all.
+  def test_a_refused_requests_client_info_is_not_read_for_the_next_request
+    OodApi.forget_mcp_clients!
+    @keep_seen_clients = true
+    _, refused, = post_capturing_audit(modern_body(1, { name: 'ghost', version: '1' }, method: 'prompts/list'))
+    assert_equal(-32_601, refused.dig('error', 'code'))
+    _, reply, err = post_capturing_audit(JSON.generate(jsonrpc: '2.0', id: 2, method: 'tools/list'))
+    assert reply['result']
+    assert_empty client_lines(err)
+  end
+
   # mcp 1.0.0 added DNS-rebinding protection defaulting to an allowlist of
   # loopback only, so every request whose Host is a real hostname 403s. That
   # is every OOD site. It shipped broken in v0.2.0 because every check — unit

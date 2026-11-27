@@ -5,6 +5,7 @@
 
 require 'mcp'
 require 'json'
+require 'set'
 require 'stringio'
 require_relative '../lib/app_auth'
 require_relative '../lib/origin_check'
@@ -40,10 +41,13 @@ MCP.configure do |config|
           op:             'mcp_initialize',
           user:           user,
           source:         'mcp',
-          client:         client[:name],
-          client_version: client[:version],
+          client:         OodApi.clip_client_field(client[:name]),
+          client_version: OodApi.clip_client_field(client[:version]),
           duration:       data[:duration]&.round(4)
         )
+        OodApi.remember_mcp_client(client[:name], client[:version], Handlers::Audit.context[:token_id])
+      elsif data[:error].nil?
+        OodApi.audit_stateless_client(data)
       end
     rescue StandardError => e
       OodApi::Log.line "op=mcp_instrumentation_failed status=error error=#{e.class}"
@@ -85,6 +89,105 @@ module OodApi
     "Open OnDemand HPC cluster tools. Use these tools to #{parts.join('; ')}. " \
       'This site may not have every tool enabled. ' \
       'Read the ood://context resource for site-specific policies before acting.'
+  end
+
+  # The 2026-07-28 protocol is stateless: there is no `initialize`, and a
+  # client names itself in every request's `_meta` instead. The gem validates
+  # that envelope but does not pass it to `around_request` (`data[:client]` is
+  # only ever set by `initialize`), so each transport hands the parsed `_meta`
+  # over here, per thread, before the gem runs.
+  MCP_REQUEST_META_KEY = :ood_api_mcp_request_meta
+
+  # A client is recorded once per process. Over stdio that is once per
+  # connection; the HTTP endpoint serves every client of the PUN from one
+  # long-lived process, so there it is once per distinct client and app token
+  # until the process is recycled. The set is bounded because the identity is
+  # whatever the caller says it is; past the bound, new identities go
+  # unrecorded, and the first one refused is recorded as `mcp_clients_limit`.
+  MCP_CLIENTS_SEEN_LIMIT = 64
+  MCP_CLIENT_FIELD_LIMIT = 256
+  MCP_CLIENTS_LOCK = Mutex.new
+
+  def self.note_mcp_request(parsed)
+    params = parsed.is_a?(Hash) ? parsed['params'] : nil
+    meta = params.is_a?(Hash) ? params['_meta'] : nil
+    Thread.current[MCP_REQUEST_META_KEY] = meta.is_a?(Hash) ? meta : nil
+  end
+
+  # Called after the gem has served a request without error. That alone does
+  # not mean the gem accepted the envelope: it never reads one for a
+  # notification, for a method it has no handler for (instrumented as
+  # `unsupported_method`, with no error set), or for `server/discover` outside
+  # the modern era. So those are skipped, and the protocol version must be one
+  # the gem serves.
+  def self.audit_stateless_client(data)
+    method = data[:method]
+    return if method == 'unsupported_method' || MCP::Methods.notification?(method)
+
+    name, version, protocol_version = stateless_client_identity(Thread.current[MCP_REQUEST_META_KEY])
+    return unless name && remember_mcp_client(name, version, Handlers::Audit.context[:token_id])
+
+    Handlers::Audit.emit_event(
+      op:               'mcp_initialize',
+      user:             ENV['USER'] || ENV['LOGNAME'] || 'unknown',
+      source:           'mcp',
+      client:           clip_client_field(name),
+      client_version:   clip_client_field(version),
+      protocol_version: clip_client_field(protocol_version),
+      duration:         data[:duration]&.round(4)
+    )
+  end
+
+  # @return [Array(String, String, String), nil] name, version and protocol
+  #   version, or nil unless all three are present and are strings
+  def self.stateless_client_identity(meta)
+    return unless meta.is_a?(Hash)
+
+    protocol_version = meta[MCP::RequestEnvelope::PROTOCOL_VERSION_META_KEY]
+    info = meta[MCP::RequestEnvelope::CLIENT_INFO_META_KEY]
+    return unless MCP::Configuration.modern_protocol_version?(protocol_version) && info.is_a?(Hash)
+
+    identity = [info['name'], info['version'], protocol_version]
+    identity if identity.all?(String) && !identity.first.empty?
+  end
+
+  # @param token_id [String, nil] the app token the request came with
+  # @return [Boolean] true the first time this process sees the client
+  def self.remember_mcp_client(name, version, token_id)
+    key = [clip_client_field(name), clip_client_field(version), token_id]
+    first_refusal = false
+    remembered = MCP_CLIENTS_LOCK.synchronize do
+      @mcp_clients_seen ||= Set.new
+      next false if @mcp_clients_seen.include?(key)
+
+      if @mcp_clients_seen.size >= MCP_CLIENTS_SEEN_LIMIT
+        first_refusal = !@mcp_clients_limit_reported
+        @mcp_clients_limit_reported = true
+        next false
+      end
+
+      @mcp_clients_seen << key
+      true
+    end
+    if first_refusal
+      Handlers::Audit.emit_event(op: 'mcp_clients_limit', user: ENV['USER'] || ENV['LOGNAME'] || 'unknown',
+                                 source: 'mcp', limit: MCP_CLIENTS_SEEN_LIMIT)
+    end
+    remembered
+  end
+
+  def self.forget_mcp_clients!
+    MCP_CLIENTS_LOCK.synchronize do
+      @mcp_clients_seen = nil
+      @mcp_clients_limit_reported = false
+    end
+  end
+
+  # Self-reported values, so a client cannot make the audit line arbitrarily long.
+  def self.clip_client_field(value)
+    return value unless value.is_a?(String) && value.length > MCP_CLIENT_FIELD_LIMIT
+
+    "#{value[0, MCP_CLIENT_FIELD_LIMIT]}..."
   end
 
   def self.build_mcp_server
@@ -274,12 +377,14 @@ module OodApi
   # return the JSON-RPC error the lambda should send — or nil to let the
   # request through to the transport.
   def self.precheck_request_body(request)
+    note_mcp_request(nil)
     return nil unless request.body
 
     body = read_bounded_body(request)
     return jsonrpc_error(413, 'Request body too large', JSONRPC_INVALID_REQUEST) if body.nil?
 
     parsed = parse_json(body)
+    note_mcp_request(parsed)
     return nil unless parsed
 
     return jsonrpc_error(400, 'Method not found', JSONRPC_METHOD_NOT_FOUND) if unsupported_method?(parsed)

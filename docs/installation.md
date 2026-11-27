@@ -449,7 +449,7 @@ ood_api_audit ts=2026-11-21T15:25:15.624Z op=list_files user=alice source=rest s
 | Field | Meaning |
 |---|---|
 | `ts` | UTC time of the record |
-| `op` | The tool name, or `authenticate`, `capabilities`, `site_config`, `file_access`, `mcp_initialize`, `unhandled_error` |
+| `op` | The tool name, or `authenticate`, `capabilities`, `site_config`, `file_access`, `mcp_initialize`, `mcp_clients_limit`, `unhandled_error` |
 | `user` | The user the PUN runs as |
 | `source` | `rest` or `mcp` |
 | `status` | `ok`; `error` (the operation failed or was refused by the path rules, with the reason in `error`); `disabled` (the tool is switched off at this site); `denied` (no valid application token); `expired` (an expired application token) |
@@ -457,10 +457,25 @@ ood_api_audit ts=2026-11-21T15:25:15.624Z op=list_files user=alice source=rest s
 | `path`, `cluster`, `job_id` | What the operation was about |
 | `script_sha256`, `script_bytes` | On job submission, the digest and size of the script |
 | `token_id` | The application token that made the request, when tokens are on |
+| `client`, `client_version` | On `mcp_initialize`, the name and version the MCP client gave for itself, cut at 256 characters |
+| `protocol_version` | On `mcp_initialize`, the MCP protocol version, for clients of the 2026-07-28 protocol |
 
 Values are quoted and control characters escaped, so a file name cannot
 forge a line. There is no request id or client address; match against
 Apache's access log by time and user.
+
+`op=mcp_initialize` records which MCP client connected. A client of an older
+protocol announces itself with an `initialize` request, and each one is
+recorded. A client of the 2026-07-28 protocol sends no `initialize`, and
+names itself on every request instead, so it is recorded the first time a
+process sees that name and version from that application token: once per
+connection over `bin/mcp-stdio`, and once per PUN process for `/mcp`, which
+serves every client of the PUN until Passenger recycles it. A process
+remembers up to 64 clients; the first one past that is recorded as
+`op=mcp_clients_limit`, and later new clients in that process are not
+recorded. A name or version that is missing or not a string is not recorded,
+and the request is served as usual. The client identity is whatever the
+client says it is.
 
 ## Troubleshooting
 
