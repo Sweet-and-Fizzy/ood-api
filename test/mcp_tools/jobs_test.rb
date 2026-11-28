@@ -31,6 +31,29 @@ class ListJobsToolTest < Minitest::Test
     assert_includes text, 'sim1'
   end
 
+  def test_a_waiting_job_says_why_and_when_it_should_start
+    saved = ENV.fetch('TZ', nil)
+    ENV['TZ'] = 'UTC'
+    jobs = [
+      mock_job_info(id: '13', job_name: 'long-fit', status: :queued,
+                    native: { reason: 'BeginTime', start_time: '2026-11-28T20:59:35' }),
+      mock_job_info(id: '14', job_name: 'held', status: :queued_held,
+                    native: { reason: 'JobHeldUser', start_time: 'N/A' }),
+      mock_job_info(id: '15', job_name: 'now', status: :running, native: { reason: 'None' })
+    ]
+    adapter = mock('adapter')
+    adapter.stubs(:info_where_owner).returns(jobs)
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    text = ListJobsTool.call(server_context: nil, cluster_id: 'cluster1').to_h[:content].first[:text]
+    assert_includes text,
+                    '- 13: long-fit [queued] queue=batch reason=BeginTime, expected start 2026-11-28T20:59:35+00:00'
+    assert_includes text, '- 14: held [queued_held] queue=batch reason=JobHeldUser'
+    refute_match(/15: now .*reason/, text)
+  ensure
+    saved ? ENV['TZ'] = saved : ENV.delete('TZ')
+  end
+
   def test_empty_jobs
     adapter = mock('adapter')
     adapter.stubs(:info_where_owner).returns([])

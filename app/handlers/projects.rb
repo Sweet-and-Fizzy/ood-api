@@ -8,6 +8,7 @@ require 'yaml'
 require_relative 'clusters'
 require_relative 'errors'
 require_relative 'files'
+require_relative 'job_details'
 require_relative 'sessions'
 require_relative '../../lib/site_config'
 
@@ -247,9 +248,23 @@ module Handlers
 
       data.select { |job| job.is_a?(Hash) && !job['id'].to_s.empty? }.map do |job|
         Job.new(id: job['id'].to_s, cluster_id: job['cluster'].to_s, name: job['job_name'].to_s,
-                last_known_status: job['status'].to_s.empty? ? 'unknown' : job['status'].to_s,
+                last_known_status: logged_status(job),
                 submitted_at: time(job['submission_time']))
       end
+    end
+
+    # The status the Project Manager last saw, with the scheduler's own word
+    # for a finished job when the log kept it, such as "completed (failed)".
+    def logged_status(job)
+      status = job['status'].to_s
+      return 'unknown' if status.empty?
+
+      native = job['native'].is_a?(Hash) ? job['native'] : {}
+      JobDetails.status_text(status, native['state'] || native[:state])
+    end
+
+    def finished?(status)
+      status == 'completed' || status.start_with?('completed (')
     end
 
     # Whether a file is simply not there. One that cannot be looked at, or a
@@ -272,7 +287,7 @@ module Handlers
     # Project Manager does. On a cluster the site does not offer, or whose
     # scheduler did not answer the first query, the status now is unknown.
     def with_live_status(jobs, clusters, user)
-      open = jobs.reject { |job| job.last_known_status == 'completed' }
+      open = jobs.reject { |job| finished?(job.last_known_status) }
       live = open.map(&:cluster_id).uniq.to_h do |cluster_id|
         [cluster_id, Sessions.current_jobs(find_cluster(clusters, cluster_id), user)]
       end
@@ -280,7 +295,7 @@ module Handlers
     end
 
     def status_now(job, statuses, clusters)
-      return 'completed' if job.last_known_status == 'completed'
+      return job.last_known_status if finished?(job.last_known_status)
       return 'unknown' if statuses.nil?
 
       statuses.fetch(job.id) { job_status(find_cluster(clusters, job.cluster_id), job.id) }
@@ -293,8 +308,11 @@ module Handlers
     def job_status(cluster, job_id)
       return 'unknown' unless cluster
 
-      status = cluster.job_adapter.info(job_id).status.to_s
-      status == 'undetermined' || status.empty? ? 'unknown' : status
+      info = cluster.job_adapter.info(job_id)
+      status = info.status.to_s
+      return 'unknown' if status == 'undetermined' || status.empty?
+
+      JobDetails.status_text(status, info.native.is_a?(Hash) ? info.native[:state] : nil)
     rescue StandardError
       'unknown'
     end

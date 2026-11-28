@@ -63,6 +63,31 @@ module Handlers
       text.nil? || text.match?(/\A0+[KMGT]?\z/i) ? nil : text
     end
 
+    # The portable status, followed by the scheduler's own word for a
+    # finished job whose state the portable status hides ("completed" for a
+    # failed, timed-out or out-of-memory job).
+    def status_text(status, native_state)
+      native = value(native_state)&.downcase
+      return status.to_s unless status.to_s == 'completed' && native && native != 'completed'
+
+      "#{status} (#{native})"
+    end
+
+    # Why a waiting job is waiting and when the scheduler expects it to
+    # start, such as "reason=BeginTime, expected start 2026-11-28T20:59:00+00:00";
+    # nil for a job that is not waiting or has neither.
+    def waiting_text(info)
+      return nil unless info.status.queued? || info.status.queued_held?
+
+      native = info.native.is_a?(Hash) ? info.native : {}
+      parts = []
+      reason = value(native[:reason])
+      parts << "reason=#{reason}" if reason
+      start = expected_start(info, native)
+      parts << "expected start #{start}" if start
+      parts.empty? ? nil : parts.join(', ')
+    end
+
     def value(raw)
       text = raw.to_s.scrub.strip
       EMPTY.include?(text.downcase) ? nil : text

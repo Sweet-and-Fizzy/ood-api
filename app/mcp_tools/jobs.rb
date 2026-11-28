@@ -11,7 +11,8 @@ module OodApi
     class ListJobsTool < Base
       tool_name 'list_jobs'
       annotations(read_only_hint: true, destructive_hint: false, idempotent_hint: true, open_world_hint: false)
-      description 'List jobs on a cluster for the current user'
+      description 'List the current user\'s jobs on a cluster that are queued, held or running, with why ' \
+                  'each waiting job is waiting and when the scheduler expects it to start'
       input_schema({
         type:       'object',
         properties: {
@@ -32,7 +33,9 @@ module OodApi
           text = "No jobs found on cluster #{cluster_id} for user #{current_user}."
         else
           lines = jobs.map do |j|
-            "- #{j.id}: #{j.job_name || '(unnamed)'} [#{status_text(j)}] queue=#{j.queue_name}"
+            waiting = Handlers::JobDetails.waiting_text(j)
+            "- #{j.id}: #{j.job_name || '(unnamed)'} [#{status_text(j)}] queue=#{j.queue_name}" \
+              "#{" #{waiting}" if waiting}"
           end
           text = "Found #{jobs.size} job(s) on #{cluster_id}:\n#{lines.join("\n")}"
         end
@@ -43,10 +46,7 @@ module OodApi
       # failed, timed out or ran out of memory, so the scheduler's own word
       # follows it.
       def self.status_text(job)
-        native = Handlers::JobDetails.value(job.native.is_a?(Hash) ? job.native[:state] : nil)&.downcase
-        return job.status.to_s unless job.status.completed? && native && native != 'completed'
-
-        "#{job.status} (#{native})"
+        Handlers::JobDetails.status_text(job.status, job.native.is_a?(Hash) ? job.native[:state] : nil)
       end
     end
 

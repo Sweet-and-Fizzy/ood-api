@@ -380,4 +380,23 @@ class HandlersProjectsTest < Minitest::Test
     roots = Projects.allowed_roots
     assert_includes roots, Pathname.new(Dir.home).realpath
   end
+
+  def test_a_finished_job_carries_the_schedulers_own_state
+    dir = project('abc12345', 'Cell growth')
+    log = [{ 'id' => '101', 'cluster' => 'hpc', 'status' => 'completed', 'native' => { 'state' => 'FAILED' } },
+           { 'id' => '102', 'cluster' => 'hpc', 'status' => 'running', 'job_owner' => 'bob' }]
+    File.write(File.join(dir, '.ondemand', 'job_log.yml'), log.to_yaml)
+    lookup('abc12345' => dir)
+    adapter = mock('adapter')
+    adapter.stubs(:info_where_owner).returns([])
+    adapter.stubs(:info).with('102').returns(mock_job_info(id: '102', status: :completed,
+                                                           native: { state: 'OUT_OF_MEMORY' }))
+    @cluster.stubs(:job_adapter).returns(adapter)
+
+    jobs = Projects.get('abc12345', clusters: [@cluster], user: 'jesse').jobs.to_h do |j|
+      [j.id, [j.last_known_status, j.status]]
+    end
+    assert_equal ['completed (failed)', 'completed (failed)'], jobs['101']
+    assert_equal ['running', 'completed (out_of_memory)'], jobs['102']
+  end
 end
