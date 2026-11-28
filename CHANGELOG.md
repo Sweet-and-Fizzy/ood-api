@@ -89,6 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `submit_job` reads a relative `output_path` or `error_path` against the
+  job's working directory, as sbatch does. It was checked against this app's
+  own directory and refused.
 - `get_project` gives a finished job's scheduler state with its status, such
   as `completed (failed)`, as `list_jobs` and `get_job` do, instead of a bare
   `completed` that read as success.

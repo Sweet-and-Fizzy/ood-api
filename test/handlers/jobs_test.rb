@@ -480,6 +480,40 @@ class HandlersJobsTest < Minitest::Test
     end
   end
 
+  # sbatch reads a relative --output against the job's working directory,
+  # so a relative output_path is checked there, not against this app's own
+  # directory, which refused it.
+  def test_a_relative_output_path_is_in_the_working_directory
+    with_fake_home do |home|
+      FileUtils.mkdir_p(File.join(home, 'project', 'logs'))
+      captured = nil
+      @adapter.expects(:submit).with do |script|
+        captured = script
+        true
+      end.returns('790')
+      @adapter.expects(:info).with('790').returns(mock_job_info(id: '790'))
+
+      Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: 'echo hi',
+                            workdir: File.join(home, 'project'), output_path: 'logs/fit-%j.out',
+                            error_path: 'logs/fit-%j.err')
+
+      assert_equal File.join(home, 'project', 'logs', 'fit-%j.out'), captured.output_path.to_s
+      assert_equal File.join(home, 'project', 'logs', 'fit-%j.err'), captured.error_path.to_s
+    end
+  end
+
+  def test_a_relative_output_path_cannot_climb_out_of_the_allowed_places
+    with_fake_home do |home|
+      FileUtils.mkdir_p(File.join(home, 'project'))
+      @adapter.expects(:submit).never
+
+      assert_raises(Handlers::ForbiddenError) do
+        Handlers::Jobs.submit(clusters: @clusters, cluster_id: 'cluster1', script_content: 'echo hi',
+                              workdir: File.join(home, 'project'), output_path: '../../../../etc/out.log')
+      end
+    end
+  end
+
   def test_script_audit_records_digest_and_size_not_content
     fields = Handlers::Jobs.script_audit("#!/bin/bash\necho hi\n")
 
