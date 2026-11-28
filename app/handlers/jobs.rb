@@ -384,6 +384,15 @@ module Handlers
       end
     end
 
+    # A relative output or error path names a file in the job's working
+    # directory, as it does for sbatch, so it is checked there and not
+    # against this app's own directory.
+    def self.in_workdir(path, workdir)
+      return path unless path.is_a?(String) && !path.empty? && !path.start_with?('/', '~')
+
+      File.join(workdir.to_s, path)
+    end
+
     # The caller's options with the output and error paths checked,
     # normalised and defaulted, and `native` refused unless the site allows it.
     # Only the dependencies that were given. `false` and an empty list are
@@ -394,8 +403,8 @@ module Handlers
     end
 
     def self.with_checked_paths(cluster, workdir, options)
-      options = options.merge(output_path: job_path!(options[:output_path]),
-                              error_path:  job_path!(options[:error_path]))
+      options = options.merge(output_path: job_path!(in_workdir(options[:output_path], workdir)),
+                              error_path:  job_path!(in_workdir(options[:error_path], workdir)))
       reject_native!(options[:native])
 
       # Always give the adapter an output path, even when the caller omitted
