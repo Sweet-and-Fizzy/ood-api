@@ -745,7 +745,8 @@ module Handlers
     # Dashboard file browser (OOD_ALLOWLIST_PATH, or allowlist_path in
     # ondemand.d) gets exactly those paths here too, so there is one policy.
     # With no allowlist the Dashboard allows everything; this app is narrower
-    # and keeps to the home and temp directories.
+    # and keeps to the home and temp directories. The project tools read
+    # within the same roots.
     def self.allowed_path_roots
       configured = OodApi::SiteConfig.allowlist_paths
       roots = configured.empty? ? [Pathname.new(Dir.home), Pathname.new('/tmp'), Pathname.new(Dir.tmpdir)] : configured
@@ -806,7 +807,7 @@ module Handlers
       path
     end
 
-    private_class_method :allowed_path_roots, :path_under?, :find_real_parent,
+    private_class_method :path_under?, :find_real_parent,
                          :deny_sensitive!, :relative_to_home,
                          :deny_by_inode!, :denied_inodes, :record_inode, :safe_lstat
   end

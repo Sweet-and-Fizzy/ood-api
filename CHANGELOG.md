@@ -86,6 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `list_projects`, `get_project` and `open_launcher` failed for any user with a
+  project, because they called a file-tools method that was private.
 - The app no longer appears as "Open OnDemand API" in the Dashboard's System
   menu. Its manifest gave it a category, which is what puts an app in the
   menu; it is still served at `/pun/sys/ood-api`.

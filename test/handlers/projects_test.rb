@@ -14,7 +14,7 @@ class HandlersProjectsTest < Minitest::Test
     @data = File.join(@home, 'ondemand/data/sys/dashboard')
     OodApi::SiteConfig.stubs(:dashboard_env).returns({ 'OOD_DATAROOT' => @data })
     OodApi::SiteConfig.stubs(:shared_project_paths).returns([])
-    Projects.stubs(:file_roots).returns([Pathname.new(@home)])
+    OodApi::SiteConfig.stubs(:allowlist_paths).returns([Pathname.new(@home)])
     FileUtils.mkdir_p(File.join(@data, 'projects'))
     @cluster = mock_cluster(id: 'hpc')
   end
@@ -372,5 +372,12 @@ class HandlersProjectsTest < Minitest::Test
 
     error = assert_raises(Projects::LauncherUnavailable) { Projects.launcher('abc12345', 'aaaa0001') }
     assert_kind_of Handlers::Error, error
+  end
+
+  def test_without_an_allowlist_the_file_tools_roots_are_used
+    OodApi::SiteConfig.stubs(:allowlist_paths).returns([])
+
+    roots = Projects.allowed_roots
+    assert_includes roots, Pathname.new(Dir.home).realpath
   end
 end
