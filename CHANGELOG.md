@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `list_jobs` gives each waiting job's reason and, when the scheduler has
+  one, its expected start, so an assistant does not have to guess why a job
+  has not started.
 - `list_projects`, `get_project` and `open_launcher` show the user's projects
   in the Dashboard's Project Manager. They read the Project Manager's own
   files under the Dashboard's data root and report only what those files
@@ -86,6 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `get_project` gives a finished job's scheduler state with its status, such
+  as `completed (failed)`, as `list_jobs` and `get_job` do, instead of a bare
+  `completed` that read as success.
 - `list_projects`, `get_project` and `open_launcher` failed for any user with a
   project, because they called a file-tools method that was private.
 - The app no longer appears as "Open OnDemand API" in the Dashboard's System
