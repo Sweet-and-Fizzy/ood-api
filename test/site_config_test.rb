@@ -23,6 +23,29 @@ class SiteConfigTest < Minitest::Test
     OodApi::SiteConfig.reset!
   end
 
+  def test_shared_project_paths_as_the_dashboard_reads_them
+    File.write(File.join(@dir, 'projects.yml'), "shared_project_path: [/fs/project, /fs/lab]\n")
+    OodApi::SiteConfig.reset!
+    assert_equal [Pathname.new('/fs/project'), Pathname.new('/fs/lab')], OodApi::SiteConfig.shared_project_paths
+
+    File.write(File.join(@dir, 'dashboard.env'), "OOD_SHARED_PROJECT_PATH=/fs/a:/fs/b\n")
+    OodApi::SiteConfig.reset!
+    assert_equal [Pathname.new('/fs/a'), Pathname.new('/fs/b')], OodApi::SiteConfig.shared_project_paths
+
+    File.write(File.join(@dir, 'dashboard.env'), "OOD_SHARED_PROJECT_PATH=\n")
+    OodApi::SiteConfig.reset!
+    assert_empty OodApi::SiteConfig.shared_project_paths
+  end
+
+  def test_the_dashboards_data_root_ignores_this_apps_own
+    ENV['OOD_DATAROOT'] = '/var/lib/ood-api-own'
+    File.write(File.join(@dir, 'dashboard.env'), "OOD_DATAROOT=/scratch/dash\n")
+    OodApi::SiteConfig.reset!
+    assert_equal Pathname.new('/scratch/dash'), OodApi::SiteConfig.dashboard_data_root
+  ensure
+    ENV.delete('OOD_DATAROOT')
+  end
+
   def test_no_allowlist_by_default
     assert_empty OodApi::SiteConfig.allowlist_paths
   end

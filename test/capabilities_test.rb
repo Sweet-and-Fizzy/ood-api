@@ -266,6 +266,34 @@ class CapabilitiesTest < Minitest::Test
     ENV.delete('OOD_API_SYS_APPS')
   end
 
+  def test_no_project_manager_means_no_project_tools
+    apps = File.join(@dir, 'sys')
+    FileUtils.mkdir_p(File.join(apps, 'dashboard'))
+    ENV['OOD_API_SYS_APPS'] = apps
+
+    assert_empty caps.enabled_tools.to_a & caps::PROJECT_TOOLS
+    assert caps.enabled?('list_jobs')
+
+    FileUtils.mkdir_p(File.join(apps, 'projects'))
+    File.write(File.join(apps, 'projects', 'manifest.yml'), 'name: Projects')
+    # A Dashboard from before 4.0 keeps scripts, not launchers.
+    assert_empty caps.enabled_tools.to_a & caps::PROJECT_TOOLS
+
+    FileUtils.mkdir_p(File.join(apps, 'dashboard', 'app', 'models'))
+    File.write(File.join(apps, 'dashboard', 'app', 'models', 'launcher.rb'), '')
+    assert_equal caps::PROJECT_TOOLS, caps.enabled_tools.to_a & caps::PROJECT_TOOLS
+  ensure
+    ENV.delete('OOD_API_SYS_APPS')
+  end
+
+  def test_with_no_apps_directory_to_look_in_the_project_tools_stay_on
+    ENV['OOD_API_SYS_APPS'] = File.join(@dir, 'no-such-apps')
+
+    assert_equal caps::PROJECT_TOOLS, caps.enabled_tools.to_a & caps::PROJECT_TOOLS
+  ensure
+    ENV.delete('OOD_API_SYS_APPS')
+  end
+
   def test_the_dashboard_beside_this_app_is_an_installed_app
     beside = Pathname.new(File.join(@dir, 'checkout'))
     FileUtils.mkdir_p(beside.join('dashboard'))

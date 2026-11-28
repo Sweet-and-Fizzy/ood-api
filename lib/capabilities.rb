@@ -25,7 +25,7 @@ module OodApi
       'read'        => ['list_clusters', 'get_cluster', 'list_accounts', 'list_queues', 'get_cluster_info',
                         'list_jobs', 'get_job', 'list_historic_jobs', 'list_files', 'find_files', 'read_file',
                         'list_env', 'get_env', 'list_interactive_sessions', 'list_interactive_apps',
-                        'list_software', 'get_quota_and_balance'],
+                        'list_software', 'get_quota_and_balance', 'list_projects', 'get_project', 'open_launcher'],
       'jobs'        => ['submit_job', 'cancel_job', 'hold_job', 'release_job'],
       'files_write' => ['write_file', 'create_directory', 'delete_file']
     }.freeze
@@ -125,15 +125,17 @@ module OodApi
     end
 
     FILE_TOOLS = ['list_files', 'read_file', 'write_file', 'create_directory', 'delete_file'].freeze
+    PROJECT_TOOLS = ['list_projects', 'get_project', 'open_launcher'].freeze
 
     # What the site has already switched off in the Dashboard's file browser
     # stays off here, whatever this app's settings ask for: no Files app means no file
     # tools, `download_enabled: false` means file contents cannot be read,
-    # and `upload_enabled: false` means they cannot be written.
+    # and `upload_enabled: false` means they cannot be written. A site that
+    # does not install the Project Manager has no projects to show.
     def off_in_dashboard
-      return FILE_TOOLS unless SiteConfig.files_app_installed?
+      off = SiteConfig.projects_app_installed? ? [] : PROJECT_TOOLS.dup
+      return off + FILE_TOOLS unless SiteConfig.files_app_installed?
 
-      off = []
       off << 'read_file' unless SiteConfig.dashboard_switch?(:download_enabled)
       off << 'write_file' unless SiteConfig.dashboard_switch?(:upload_enabled)
       off

@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `list_projects`, `get_project` and `open_launcher` show the user's projects
+  in the Dashboard's Project Manager. They read the Project Manager's own
+  files under the Dashboard's data root and report only what those files
+  hold: a launcher gives its title and the ids of its form's fields, since
+  its defaults and choices are worked out by the Dashboard. A project's
+  logged jobs show the status the Project Manager last saw and the status
+  now from the scheduler. `open_launcher` gives the launcher's Dashboard
+  page and submits nothing. A project is read only when its directory is
+  where the file tools may read, in the Dashboard's data root or in a shared
+  project location (`OOD_SHARED_PROJECT_PATH`). Values from a project's files
+  are kept to one short line each and a reply to 32 KiB, and a file that
+  cannot be read is reported as unavailable. They are read
+  tools, and are off when the Project Manager is not installed or Open
+  OnDemand is older than 4.0, whose projects are laid out differently.
 - `bin/mcp-stdio` serves the MCP tools over standard input and output to a
   program on the portal host that runs as the signed-in user, such as an
   assistant a site runs inside Open OnDemand. It is off until the site sets

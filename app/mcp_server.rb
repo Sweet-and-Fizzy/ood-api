@@ -15,6 +15,7 @@ require_relative 'mcp_tools/jobs'
 require_relative 'mcp_tools/files'
 require_relative 'mcp_tools/env'
 require_relative 'mcp_tools/sessions'
+require_relative 'mcp_tools/projects'
 require_relative 'mcp_tools/software'
 require_relative 'mcp_tools/usage'
 require_relative 'mcp_tools/context'
@@ -67,6 +68,7 @@ module OodApi
     Tools::DeleteFileTool,
     Tools::ListEnvTool, Tools::GetEnvTool,
     Tools::ListInteractiveSessionsTool, Tools::ListInteractiveAppsTool,
+    Tools::ListProjectsTool, Tools::GetProjectTool, Tools::OpenLauncherTool,
     Tools::ListSoftwareTool, Tools::GetQuotaAndBalanceTool
   ].freeze
 
@@ -85,8 +87,12 @@ module OodApi
              'list and read files, and query environment variables']
     parts << 'submit, cancel, hold and release jobs' if Capabilities.enabled?('submit_job')
     parts << 'write files, create directories and delete files' if Capabilities.enabled?('write_file')
+    launchers = if Capabilities.enabled?('open_launcher')
+                  'open_launcher only gives the page where the user submits a launcher; it submits nothing, so ' \
+                    'never say it started or submitted a job. '
+                end
     "Open OnDemand HPC cluster tools. Use these tools to #{parts.join('; ')}. " \
-      'This site may not have every tool enabled. ' \
+      "#{launchers}This site may not have every tool enabled. " \
       'Read the ood://context resource for site-specific policies before acting.'
   end
 

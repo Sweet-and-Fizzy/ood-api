@@ -98,6 +98,9 @@ class McpServerTest < Minitest::Test
     'list_interactive_apps'     => [true, false, true],
     'list_software'             => [true, false, true],
     'get_quota_and_balance'     => [true, false, true],
+    'list_projects'             => [true, false, true],
+    'get_project'               => [true, false, true],
+    'open_launcher'             => [true, false, true],
     'read_file'                 => [true,  false, true],
     'list_env'                  => [true,  false, true],
     'get_env'                   => [true,  false, true],
@@ -109,6 +112,15 @@ class McpServerTest < Minitest::Test
     'cancel_job'                => [false, true,  true],
     'delete_file'               => [false, true,  true]
   }.freeze
+
+  def test_the_instructions_say_open_launcher_submits_nothing
+    assert_includes OodApi.mcp_instructions, 'open_launcher only gives the page where the user submits a launcher'
+    assert_includes OodApi.mcp_instructions, 'never say it started or submitted a job'
+
+    OodApi::Capabilities.stubs(:enabled?).returns(true)
+    OodApi::Capabilities.stubs(:enabled?).with('open_launcher').returns(false)
+    refute_includes OodApi.mcp_instructions, 'open_launcher'
+  end
 
   def test_every_tool_declares_annotations
     server = OodApi.build_mcp_server
